@@ -1,97 +1,119 @@
-# Web Hosting Control Panel
-
-A comprehensive web hosting control panel with support for managing databases, email accounts, SSL certificates, DNS records, virtual hosts, and FTP accounts.
-
-## Features
-
-- Database Management (MySQL/PostgreSQL)
-- Email Account Management
-- SSL Certificate Management
-- DNS Record Management
-- Virtual Host Management
-- FTP/SFTP Account Management
-- System User Integration with SSO
-- Modern React-based UI
-
-## Quick Installation
-
-```bash
-# Download installer
-wget https://raw.githubusercontent.com/kingG4e/web-control-panel/main/install.sh
-
-# Make it executable
-chmod +x install.sh
-
-# Run installer
-sudo ./install.sh
-```
-
-The installer will:
-1. Install all required dependencies
-2. Set up the database
-3. Configure Nginx
-4. Set up SSL with Let's Encrypt
-5. Create systemd service
-6. Configure firewall
+# Web Hosting Control Panel Installation Guide
 
 ## System Requirements
-
 - Ubuntu Server 20.04 LTS or newer
 - Python 3.8+
 - Node.js 16+
 - PostgreSQL 12+
 - Nginx
 
-## Manual Installation
+## Installation Steps
 
-See [INSTALL.md](INSTALL.md) for detailed installation instructions.
-
-## Development
-
-### Backend Setup
+### 1. System Dependencies
 ```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python manage.py db upgrade
-python app.py
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install system dependencies
+sudo apt install -y python3-pip python3-venv nginx postgresql postgresql-contrib
+
+# Install Node.js
+curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+sudo apt install -y nodejs
 ```
 
-### Frontend Setup
+### 2. Clone Repository
+```bash
+git clone https://github.com/yourusername/controlpanel.git
+cd controlpanel
+```
+
+### 3. Backend Setup
+```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Setup database
+sudo -u postgres psql
+CREATE DATABASE controlpanel;
+CREATE USER cpanel WITH PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE controlpanel TO cpanel;
+\q
+
+# Run migrations
+python manage.py db upgrade
+```
+
+### 4. Frontend Setup
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run build
 ```
 
-## Management Commands
-
-After installation, use these commands to manage the control panel:
+### 5. Configure Nginx
 ```bash
-cpanel start   # Start the control panel
-cpanel stop    # Stop the control panel
-cpanel restart # Restart the control panel
-cpanel status  # Check control panel status
-cpanel logs    # View control panel logs
+sudo nano /etc/nginx/sites-available/controlpanel
+
+# Add this configuration:
+server {
+    listen 80;
+    server_name your_domain.com;
+
+    location / {
+        root /path/to/controlpanel/frontend/dist;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+
+# Enable the site
+sudo ln -s /etc/nginx/sites-available/controlpanel /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl restart nginx
 ```
 
-## Security
+### 6. Setup Systemd Service
+```bash
+sudo nano /etc/systemd/system/controlpanel.service
 
-- Uses system user authentication
-- SSL/TLS encryption
-- Firewall configuration
-- Regular security updates
-- Database backup support
+# Add this configuration:
+[Unit]
+Description=Control Panel Backend
+After=network.target
 
-## Contributing
+[Service]
+User=www-data
+WorkingDirectory=/path/to/controlpanel/backend
+Environment="PATH=/path/to/controlpanel/backend/venv/bin"
+ExecStart=/path/to/controlpanel/backend/venv/bin/python app.py
+Restart=always
 
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+[Install]
+WantedBy=multi-user.target
 
-## License
+# Start the service
+sudo systemctl enable controlpanel
+sudo systemctl start controlpanel
+```
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
+## Security Recommendations
+1. Enable SSL/TLS using Let's Encrypt
+2. Configure UFW firewall
+3. Set up fail2ban
+4. Regular system updates
+5. Database backups
+
+## Monitoring
+1. Set up system monitoring using Prometheus/Grafana
+2. Configure log rotation
+3. Set up email alerts for critical events 

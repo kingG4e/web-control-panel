@@ -51,7 +51,7 @@ apt update && apt upgrade -y
 
 # Install dependencies
 echo -e "${BLUE}Installing system dependencies...${NC}"
-apt install -y python3-pip python3-venv postgresql postgresql-contrib git
+apt install -y python3-pip python3-venv nginx postgresql postgresql-contrib git
 
 # Install Node.js
 echo -e "${BLUE}Installing Node.js...${NC}"
@@ -64,7 +64,7 @@ cd $INSTALL_DIR
 
 # Clone repository
 echo -e "${BLUE}Cloning repository...${NC}"
-git clone https://github.com/kingG4e/web-control-panel.git .
+git clone https://github.com/yourusername/controlpanel.git .
 
 # Setup Python virtual environment
 echo -e "${BLUE}Setting up Python environment...${NC}"
@@ -85,7 +85,6 @@ cat > backend/config.py << EOF
 SQLALCHEMY_DATABASE_URI = 'postgresql://cpanel:$DB_PASSWORD@localhost/controlpanel'
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 SECRET_KEY = '$(openssl rand -hex 32)'
-PORT = 12345
 EOF
 
 # Create initial admin user in database
@@ -105,20 +104,42 @@ cd ..
 # Build frontend
 echo -e "${BLUE}Building frontend...${NC}"
 cd frontend
-# Update package.json for port 12345
-sed -i 's/"dev": "vite"/"dev": "vite --port 12345"/' package.json
 npm install
 npm run build
 cd ..
 
-# Configure systemd services
-echo -e "${BLUE}Configuring system services...${NC}"
+# Configure Nginx for both localhost and domain access
+echo -e "${BLUE}Configuring Nginx...${NC}"
+cat > /etc/nginx/sites-available/controlpanel << EOF
+# Default server for localhost access
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name localhost 127.0.0.1;
 
-# Backend service
-cat > /etc/systemd/system/cpanel-backend.service << EOF
+    location / {
+        root $INSTALL_DIR/frontend/dist;
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+EOF
+
+ln -sf /etc/nginx/sites-available/controlpanel /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default  # Remove default nginx site
+nginx -t && systemctl restart nginx
+
+# Configure systemd service
+echo -e "${BLUE}Configuring system service...${NC}"
+cat > /etc/systemd/system/controlpanel.service << EOF
 [Unit]
 Description=Control Panel Backend
-After=network.target postgresql.service
+After=network.target
 
 [Service]
 User=www-data
@@ -131,68 +152,49 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-# Frontend service
-cat > /etc/systemd/system/cpanel-frontend.service << EOF
-[Unit]
-Description=Control Panel Frontend
-After=network.target
-
-[Service]
-User=www-data
-WorkingDirectory=$INSTALL_DIR/frontend
-Environment="PATH=/usr/bin"
-ExecStart=/usr/bin/npm run dev
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
 # Set permissions
 chown -R www-data:www-data $INSTALL_DIR
 chmod -R 755 $INSTALL_DIR
 
-# Start and enable services
+# Start and enable service
 systemctl daemon-reload
-systemctl enable cpanel-backend cpanel-frontend
-systemctl start cpanel-backend cpanel-frontend
+systemctl enable controlpanel
+systemctl start controlpanel
 
-# Configure firewall if enabled
-if command -v ufw >/dev/null; then
-    echo -e "${BLUE}Configuring firewall...${NC}"
-    ufw allow 12345/tcp
-    ufw allow OpenSSH
-fi
+# Configure firewall
+echo -e "${BLUE}Configuring firewall...${NC}"
+ufw allow 80/tcp
+ufw allow OpenSSH
 
 # Final steps
 echo -e "${GREEN}Installation completed!${NC}"
-echo -e "Your control panel is now available at: http://localhost:12345"
+echo -e "Your control panel is now available at:"
+echo -e "http://localhost"
+echo -e "or"
+echo -e "http://127.0.0.1"
+
 echo -e "\nAdmin access:"
 echo -e "Username: $ADMIN_USER (your system user)"
 echo -e "Password: Your system user password"
-echo -e "\n${BLUE}Note: Login using your system user credentials${NC}"
 
 # Create quick management script
 cat > /usr/local/bin/cpanel << EOF
 #!/bin/bash
 case "\$1" in
     start)
-        systemctl start cpanel-backend cpanel-frontend
+        systemctl start controlpanel
         ;;
     stop)
-        systemctl stop cpanel-backend cpanel-frontend
+        systemctl stop controlpanel
         ;;
     restart)
-        systemctl restart cpanel-backend cpanel-frontend
+        systemctl restart controlpanel
         ;;
     status)
-        systemctl status cpanel-backend cpanel-frontend
+        systemctl status controlpanel
         ;;
     logs)
-        echo "Backend logs:"
-        journalctl -u cpanel-backend -f &
-        echo "Frontend logs:"
-        journalctl -u cpanel-frontend -f
+        journalctl -u controlpanel -f
         ;;
     *)
         echo "Usage: cpanel {start|stop|restart|status|logs}"
@@ -210,17 +212,10 @@ echo "cpanel restart - Restart the control panel"
 echo "cpanel status  - Check control panel status"
 echo "cpanel logs    - View control panel logs"
 
-# เริ่มต้น git repository
-git init
+# Add hosts entry
+echo -e "\n${BLUE}Adding localhost entry to hosts file...${NC}"
+if ! grep -q "controlpanel.local" /etc/hosts; then
+    echo "127.0.0.1 controlpanel.local" >> /etc/hosts
+fi
 
-# เพิ่มไฟล์ทั้งหมด
-git add .
-
-# Commit ครั้งแรก
-git commit -m "Initial commit"
-
-# เพิ่ม remote repository
-git remote add origin https://github.com/yourusername/controlpanel.git
-
-# Push ขึ้น GitHub
-git push -u origin main 
+echo -e "\n${GREEN}You can also access the control panel at: http://controlpanel.local${NC}" 
