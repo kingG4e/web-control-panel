@@ -5,6 +5,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Default ports (ไม่ชนกับ Virtualmin)
@@ -83,6 +84,9 @@ install_packages() {
         lsb-release \
         > /dev/null 2>&1
     
+    # Add MariaDB repository
+    curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | sudo bash -s -- --mariadb-server-version="10.6" > /dev/null 2>&1
+    
     # Add PHP repository
     add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1
     apt update -qq
@@ -90,7 +94,7 @@ install_packages() {
     # Install main packages
     DEBIAN_FRONTEND=noninteractive apt install -y \
         nginx \
-        mysql-server \
+        mariadb-server \
         php8.1-fpm \
         php8.1-mysql \
         php8.1-curl \
@@ -118,19 +122,48 @@ configure_services() {
     DB_ROOT_PASSWORD=$(openssl rand -base64 12)
     DB_USER_PASSWORD=$(openssl rand -base64 12)
     
-    # Configure MySQL
+    # Configure MariaDB
     mkdir -p /var/run/mysqld
     chown mysql:mysql /var/run/mysqld
     chmod 777 /var/run/mysqld
     
-    # Start MySQL with safe settings
-    mysqld --initialize-insecure --user=mysql > /dev/null 2>&1
-    systemctl start mysql
+    # Create MariaDB configuration
+    cat > /etc/mysql/mariadb.conf.d/50-server.cnf << EOF
+[mysqld]
+bind-address = 127.0.0.1
+port = 3306
+user = mysql
+pid-file = /run/mysqld/mysqld.pid
+socket = /run/mysqld/mysqld.sock
+basedir = /usr
+datadir = /var/lib/mysql
+tmpdir = /tmp
+lc-messages-dir = /usr/share/mysql
+skip-external-locking
+max_connections = 100
+connect_timeout = 5
+wait_timeout = 600
+max_allowed_packet = 16M
+thread_cache_size = 128
+sort_buffer_size = 4M
+bulk_insert_buffer_size = 16M
+tmp_table_size = 32M
+max_heap_table_size = 32M
+character-set-server = utf8mb4
+collation-server = utf8mb4_general_ci
+EOF
     
-    # Set root password and create database
+    # Start MariaDB
+    systemctl start mariadb
+    
+    # Secure MariaDB installation
     mysql -u root << EOF
-ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '${DB_ROOT_PASSWORD}';
-CREATE DATABASE IF NOT EXISTS cpanel;
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_ROOT_PASSWORD}';
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+CREATE DATABASE IF NOT EXISTS cpanel CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 CREATE USER IF NOT EXISTS 'cpanel'@'localhost' IDENTIFIED BY '${DB_USER_PASSWORD}';
 GRANT ALL PRIVILEGES ON cpanel.* TO 'cpanel'@'localhost';
 FLUSH PRIVILEGES;
@@ -155,6 +188,11 @@ server {
     ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem;
     ssl_certificate_key /etc/ssl/private/ssl-cert-snakeoil.key;
     
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff";
+    
     location / {
         try_files \$uri \$uri/ /index.php?\$args;
     }
@@ -162,6 +200,15 @@ server {
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+    
+    # Deny access to . files
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
     }
 }
 EOF
@@ -179,9 +226,9 @@ EOF
     cat > /root/cpanel-credentials.txt << EOF
 Control Panel Credentials
 =======================
-MySQL Root Password: ${DB_ROOT_PASSWORD}
-MySQL User: cpanel
-MySQL Password: ${DB_USER_PASSWORD}
+MariaDB Root Password: ${DB_ROOT_PASSWORD}
+MariaDB User: cpanel
+MariaDB Password: ${DB_USER_PASSWORD}
 Installation Date: $(date)
 
 Ports:
@@ -189,12 +236,18 @@ HTTP: ${CPANEL_HTTP_PORT}
 HTTPS: ${CPANEL_HTTPS_PORT}
 FTP: ${CPANEL_FTP_PORT}
 SSH: ${CPANEL_SSH_PORT}
+
+Database Information:
+Server: localhost
+Port: 3306
+Default Character Set: utf8mb4
+Default Collation: utf8mb4_general_ci
 EOF
     
     chmod 600 /root/cpanel-credentials.txt
     
     # Restart services
-    systemctl restart mysql php8.1-fpm nginx vsftpd
+    systemctl restart mariadb php8.1-fpm nginx vsftpd
     
     echo -e "${GREEN}✓${NC} ตั้งค่าบริการเสร็จสมบูรณ์"
 }
