@@ -171,7 +171,7 @@ User=www-data
 WorkingDirectory=$INSTALL_DIR/backend
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PORT=$BACKEND_PORT"
-ExecStart=$INSTALL_DIR/venv/bin/python app.py
+ExecStart=$INSTALL_DIR/backend/venv/bin/python app.py
 Restart=always
 
 [Install]
