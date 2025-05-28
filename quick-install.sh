@@ -66,7 +66,7 @@ apt install -y git curl wget
 
 # Set installation directory
 INSTALL_DIR="/opt/cpanel"
-REPO_URL="https://github.com/yourusername/controlpanel.git"
+REPO_URL="https://github.com/kingG4e/web-control-panel.git"
 
 # Download control panel
 echo -e "\n${YELLOW}Downloading Control Panel...${NC}"
