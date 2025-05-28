@@ -571,25 +571,52 @@ configure_system() {
 configure_mysql() {
     echo -e "${BLUE}Configuring MySQL...${NC}"
     
-    # Stop MySQL
+    # Stop MySQL and ensure no existing process
     systemctl stop mysql
-
+    pkill mysqld || true
+    sleep 5
+    
+    # Backup existing MySQL data if it exists
+    if [ -d "/var/lib/mysql" ]; then
+        mv /var/lib/mysql /var/lib/mysql.bak
+    fi
+    
+    # Create fresh MySQL data directory
+    mkdir -p /var/lib/mysql
+    chown mysql:mysql /var/lib/mysql
+    chmod 750 /var/lib/mysql
+    
     # Initialize MySQL with safe settings
-    rm -rf /var/lib/mysql/*
-    mysqld --initialize-insecure > /dev/null 2>&1
+    mysqld --initialize-insecure --user=mysql > /dev/null 2>&1
     
-    # Start MySQL
+    # Start MySQL with safe mode first
+    mkdir -p /var/run/mysqld
+    chown mysql:mysql /var/run/mysqld
+    mysqld_safe --skip-grant-tables --skip-networking &
+    sleep 10
+    
+    # Reset root password and configure settings
+    mysql -u root << EOF
+FLUSH PRIVILEGES;
+ALTER USER 'root'@'localhost' IDENTIFIED BY '$DB_ROOT_PASSWORD';
+FLUSH PRIVILEGES;
+EOF
+
+    # Stop MySQL safe mode
+    pkill mysqld
+    sleep 5
+    
+    # Start MySQL normally
     systemctl start mysql
+    sleep 5
     
-    # Disable password validation plugin and set simple password policy
-    mysql --user=root << EOF
+    # Configure MySQL with root password
+    mysql -u root -p"$DB_ROOT_PASSWORD" << EOF
 SET GLOBAL validate_password.policy=LOW;
 SET GLOBAL validate_password.length=6;
 SET GLOBAL validate_password.mixed_case_count=0;
 SET GLOBAL validate_password.number_count=0;
 SET GLOBAL validate_password.special_char_count=0;
-ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_ROOT_PASSWORD';
-FLUSH PRIVILEGES;
 
 CREATE DATABASE IF NOT EXISTS cpanel;
 CREATE USER IF NOT EXISTS 'cpanel'@'localhost' IDENTIFIED BY '$DB_USER_PASSWORD';
