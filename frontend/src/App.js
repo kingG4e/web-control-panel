@@ -50,13 +50,62 @@ function App() {
                     </ProtectedRoute>
                   }
                 />
-                <Route path="/virtual-hosts" element={<VirtualHosts />} />
-                <Route path="/dns" element={<DNSManagement />} />
-                <Route path="/email" element={<EmailSettings />} />
-                <Route path="/database" element={<Database />} />
-                <Route path="/users" element={<Users />} />
-                <Route path="/ssl" element={<SSLCertificates />} />
-                <Route path="/ftp" element={<FTPManagement />} />
+                <Route 
+                  path="/virtual-hosts" 
+                  element={
+                    <ProtectedRoute>
+                      <VirtualHosts />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/dns" 
+                  element={
+                    <ProtectedRoute>
+                      <DNSManagement />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/email" 
+                  element={
+                    <ProtectedRoute>
+                      <EmailSettings />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/database" 
+                  element={
+                    <ProtectedRoute>
+                      <Database />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/users" 
+                  element={
+                    <ProtectedRoute>
+                      <Users />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/ssl" 
+                  element={
+                    <ProtectedRoute>
+                      <SSLCertificates />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/ftp" 
+                  element={
+                    <ProtectedRoute>
+                      <FTPManagement />
+                    </ProtectedRoute>
+                  } 
+                />
               </Routes>
             </div>
           </main>
