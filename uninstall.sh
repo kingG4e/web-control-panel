@@ -1,66 +1,106 @@
 #!/bin/bash
 
-# Exit on error
-set -e
-
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then 
     echo -e "${RED}Please run as root${NC}"
+    echo "Usage: sudo ./uninstall.sh"
     exit 1
 fi
 
-echo -e "${YELLOW}This will completely remove the Control Panel and all its data.${NC}"
-echo -e "${RED}This action cannot be undone!${NC}"
+# Function to show progress
+show_progress() {
+    local current=$1
+    local total=$2
+    local task=$3
+    local percentage=$((current * 100 / total))
+    printf "\r[%-50s] %d%% - %s" $(printf "#%.0s" $(seq 1 $((percentage/2)))) $percentage "$task"
+    if [ $current -eq $total ]; then
+        echo -e "\n"
+    fi
+}
+
+# Confirm uninstallation
+echo -e "${RED}╔════════════════════════════════════════╗${NC}"
+echo -e "${RED}║        Control Panel Uninstaller       ║${NC}"
+echo -e "${RED}╚════════════════════════════════════════╝${NC}"
+echo
+echo -e "${RED}WARNING: This will remove Control Panel and all its data!${NC}"
 read -p "Are you sure you want to continue? (y/N) " -n 1 -r
 echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]
-then
-    echo -e "${GREEN}Uninstallation cancelled.${NC}"
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo -e "${BLUE}Uninstallation cancelled.${NC}"
     exit 1
 fi
 
-# Stop and disable services
-echo -e "${YELLOW}Stopping services...${NC}"
-systemctl stop cpanel
-systemctl disable cpanel
+TOTAL_STEPS=6
+CURRENT_STEP=0
 
-# Remove systemd service
-echo -e "${YELLOW}Removing systemd service...${NC}"
-rm -f /etc/systemd/system/cpanel.service
-systemctl daemon-reload
+# Stop services
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Stopping services"
+systemctl stop nginx php8.1-fpm mysql vsftpd
 
-# Remove nginx configuration
-echo -e "${YELLOW}Removing nginx configuration...${NC}"
-rm -f /etc/nginx/sites-enabled/cpanel.conf
-rm -f /etc/nginx/sites-available/cpanel.conf
-systemctl reload nginx
+# Remove database and users
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Removing database"
+mysql -e "DROP DATABASE IF EXISTS cpanel;"
+mysql -e "DROP USER IF EXISTS 'cpanel'@'localhost';"
 
-# Remove logrotate configuration
-echo -e "${YELLOW}Removing logrotate configuration...${NC}"
-rm -f /etc/logrotate.d/cpanel
+# Remove installed packages
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Removing packages"
+apt purge -y nginx mysql* php8.1* vsftpd bind9 certbot python3-certbot-nginx nodejs npm \
+    libpam-mysql libnss-mysql fail2ban > /dev/null 2>&1
+apt autoremove -y > /dev/null 2>&1
 
-# Remove database
-echo -e "${YELLOW}Removing database...${NC}"
-sudo -u postgres psql -c "DROP DATABASE IF EXISTS cpanel;"
-sudo -u postgres psql -c "DROP USER IF EXISTS cpanel;"
+# Remove configuration files
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Removing configuration files"
+rm -rf /etc/nginx/sites-available/cpanel.conf
+rm -rf /etc/nginx/sites-enabled/cpanel.conf
+rm -rf /etc/php
+rm -rf /etc/mysql
+rm -rf /etc/vsftpd.conf
+rm -rf /etc/cpanel
+rm -rf /var/lib/mysql
+rm -rf /var/www/html/*
+rm -f /etc/pam.d/cpanel
+rm -f /etc/libnss-mysql.cfg
+rm -f /usr/local/bin/cpanel-add-system-user
 
 # Remove installation directory
-echo -e "${YELLOW}Removing installation directory...${NC}"
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Removing installation files"
 rm -rf /opt/cpanel
+rm -f /root/cpanel-credentials.txt
 
-# Remove logs
-echo -e "${YELLOW}Removing logs...${NC}"
-rm -rf /var/log/cpanel
+# Reset firewall rules
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Resetting firewall rules"
+# Read custom ports if they exist
+if [ -f /etc/cpanel/ports.conf ]; then
+    source /etc/cpanel/ports.conf
+    ufw delete allow ${HTTP_PORT}/tcp
+    ufw delete allow ${HTTPS_PORT}/tcp
+    ufw delete allow ${FTP_PORT}/tcp
+    ufw delete allow ${SSH_PORT}/tcp
+else
+    # Delete default ports
+    ufw delete allow 9000/tcp
+    ufw delete allow 9001/tcp
+    ufw delete allow 9021/tcp
+    ufw delete allow 9022/tcp
+fi
 
-echo -e "${GREEN}Control Panel has been successfully uninstalled.${NC}"
-echo -e "${YELLOW}Note: This script did not remove the following:${NC}"
-echo -e "1. System packages (nginx, postgresql, etc.)"
-echo -e "2. SSL certificates"
-echo -e "3. Node.js"
-echo -e "If you want to remove these, please do so manually." 
+# Final message
+echo -e "\n${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║      Uninstallation Complete! 🗑️        ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+echo -e "\n${BLUE}The Control Panel has been completely removed from your system.${NC}"
+echo -e "${BLUE}If you want to reinstall, run: sudo ./quick-install.sh${NC}" 

@@ -14,6 +14,12 @@ NC='\033[0m'
 AUTO_MODE=false
 CONFIG_FILE=""
 
+# Default ports configuration
+CPANEL_HTTP_PORT=9000
+CPANEL_HTTPS_PORT=9001
+CPANEL_FTP_PORT=9021
+CPANEL_SSH_PORT=9022
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -182,8 +188,14 @@ cd ..
 echo -e "${YELLOW}Configuring Nginx...${NC}"
 cat > /etc/nginx/sites-available/cpanel.conf << EOF
 server {
-    listen 80;
+    listen ${CPANEL_HTTP_PORT};
+    listen ${CPANEL_HTTPS_PORT} ssl;
     server_name ${DOMAIN:-$SERVER_IP};
+    
+    # SSL configuration
+    ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem;
+    ssl_certificate_key /etc/ssl/private/ssl-cert-snakeoil.key;
+    
     client_max_body_size 64M;
     
     # Security headers
@@ -231,7 +243,12 @@ sed -i 's/anonymous_enable=.*/anonymous_enable=NO/' /etc/vsftpd.conf
 sed -i 's/#local_enable=.*/local_enable=YES/' /etc/vsftpd.conf
 sed -i 's/#write_enable=.*/write_enable=YES/' /etc/vsftpd.conf
 sed -i 's/#chroot_local_user=.*/chroot_local_user=YES/' /etc/vsftpd.conf
+sed -i "s/^listen_port=.*/listen_port=${CPANEL_FTP_PORT}/" /etc/vsftpd.conf
 systemctl restart vsftpd
+
+# Configure SSH
+sed -i "s/^#Port .*/Port ${CPANEL_SSH_PORT}/" /etc/ssh/sshd_config
+sed -i "s/^Port .*/Port ${CPANEL_SSH_PORT}/" /etc/ssh/sshd_config
 
 # Setup directories and permissions
 echo -e "${YELLOW}Setting up directories and permissions...${NC}"
@@ -307,7 +324,7 @@ echo -e "${YELLOW}Saving credentials...${NC}"
 cat > $INSTALL_DIR/credentials.txt << EOF
 Control Panel Credentials
 =======================
-URL: http://${DOMAIN:-$SERVER_IP}
+URL: http://${DOMAIN:-$SERVER_IP}:${CPANEL_HTTP_PORT}
 Admin Username: admin
 Admin Password: $ADMIN_PASSWORD
 MySQL Root Password: $DB_ROOT_PASSWORD
@@ -326,9 +343,11 @@ show_progress $CURRENT_STEP $TOTAL_STEPS "Finalizing installation"
 
 # Final message
 echo -e "\n${GREEN}Installation completed successfully!${NC}"
-echo -e "Control Panel URL: http://${DOMAIN:-$SERVER_IP}"
-echo -e "Admin Username: admin"
-echo -e "Admin Password: $ADMIN_PASSWORD"
+echo -e "Control Panel URLs:"
+echo -e "HTTP: http://${DOMAIN:-$SERVER_IP}:${CPANEL_HTTP_PORT}"
+echo -e "HTTPS: https://${DOMAIN:-$SERVER_IP}:${CPANEL_HTTPS_PORT}"
+echo -e "FTP Port: ${CPANEL_FTP_PORT}"
+echo -e "SSH Port: ${CPANEL_SSH_PORT}"
 echo -e "\n${YELLOW}All credentials have been saved to: $INSTALL_DIR/credentials.txt${NC}"
 echo -e "${YELLOW}IMPORTANT: Save these credentials and delete the credentials.txt file!${NC}"
 
@@ -342,7 +361,7 @@ ufw allow 53/udp
 ufw allow 21/tcp
 ufw allow 'Nginx Full'
 
-echo -e "${GREEN}Setup complete! You can now access your control panel at: http://${DOMAIN:-$SERVER_IP}${NC}"
+echo -e "${GREEN}Setup complete! You can now access your control panel at: http://${DOMAIN:-$SERVER_IP}:${CPANEL_HTTP_PORT}${NC}"
 
 # Configure SSO with System Users
 configure_sso() {
@@ -457,12 +476,93 @@ EOF
     echo -e "${GREEN}✓${NC} SSO configuration completed"
 }
 
+# Configure custom ports
+configure_ports() {
+    echo -e "${BLUE}Configuring custom ports...${NC}"
+    
+    # Configure Nginx for Control Panel
+    cat > /etc/nginx/sites-available/cpanel.conf << EOF
+server {
+    listen ${CPANEL_HTTP_PORT};
+    listen ${CPANEL_HTTPS_PORT} ssl;
+    server_name ${DOMAIN:-$SERVER_IP};
+    
+    # SSL configuration
+    ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem;
+    ssl_certificate_key /etc/ssl/private/ssl-cert-snakeoil.key;
+    
+    client_max_body_size 64M;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff";
+    
+    # Gzip compression
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+    
+    location / {
+        root $INSTALL_DIR/frontend/build;
+        try_files \$uri \$uri/ /index.html;
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    location /api {
+        proxy_pass http://localhost:8889;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+
+    # Configure VSFTPD for custom port
+    sed -i "s/^listen_port=.*/listen_port=${CPANEL_FTP_PORT}/" /etc/vsftpd.conf
+    
+    # Configure SSH for custom port
+    sed -i "s/^#Port .*/Port ${CPANEL_SSH_PORT}/" /etc/ssh/sshd_config
+    sed -i "s/^Port .*/Port ${CPANEL_SSH_PORT}/" /etc/ssh/sshd_config
+
+    # Update firewall rules
+    ufw allow ${CPANEL_HTTP_PORT}/tcp > /dev/null 2>&1
+    ufw allow ${CPANEL_HTTPS_PORT}/tcp > /dev/null 2>&1
+    ufw allow ${CPANEL_FTP_PORT}/tcp > /dev/null 2>&1
+    ufw allow ${CPANEL_SSH_PORT}/tcp > /dev/null 2>&1
+
+    # Create port configuration file
+    cat > /etc/cpanel/ports.conf << EOF
+# Control Panel Port Configuration
+HTTP_PORT=${CPANEL_HTTP_PORT}
+HTTPS_PORT=${CPANEL_HTTPS_PORT}
+FTP_PORT=${CPANEL_FTP_PORT}
+SSH_PORT=${CPANEL_SSH_PORT}
+EOF
+
+    # Restart services
+    systemctl restart nginx vsftpd ssh
+
+    echo -e "${GREEN}✓${NC} Custom ports configured"
+    echo -e "HTTP Port: ${CPANEL_HTTP_PORT}"
+    echo -e "HTTPS Port: ${CPANEL_HTTPS_PORT}"
+    echo -e "FTP Port: ${CPANEL_FTP_PORT}"
+    echo -e "SSH Port: ${CPANEL_SSH_PORT}"
+}
+
 # Add SSO configuration to the main installation process
 configure_system() {
     # ... existing configuration code ...
     
     # Configure SSO
     configure_sso
+    
+    # Configure custom ports
+    configure_ports
     
     # ... rest of existing code ...
 } 
