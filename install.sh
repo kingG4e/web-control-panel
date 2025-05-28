@@ -7,6 +7,7 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Default values
@@ -55,59 +56,95 @@ if ! grep -q "Ubuntu" /etc/os-release; then
     exit 1
 fi
 
+# Progress function
+show_progress() {
+    local current=$1
+    local total=$2
+    local task=$3
+    local percentage=$((current * 100 / total))
+    printf "\r[%-50s] %d%% - %s" $(printf "#%.0s" $(seq 1 $((percentage/2)))) $percentage "$task"
+    if [ $current -eq $total ]; then
+        echo -e "\n"
+    fi
+}
+
+# Total installation steps
+TOTAL_STEPS=8
+CURRENT_STEP=0
+
 # Welcome message
-echo -e "${GREEN}Welcome to Control Panel Installation${NC}"
-echo -e "${YELLOW}This script will automatically install and configure the Control Panel.${NC}"
-
-# Get server IP
-SERVER_IP=$(hostname -I | cut -d' ' -f1)
-echo -e "${YELLOW}Detected Server IP: ${SERVER_IP}${NC}"
-
-# Generate secure passwords
-DB_ROOT_PASSWORD=$(openssl rand -base64 12)
-DB_USER_PASSWORD=$(openssl rand -base64 12)
-ADMIN_PASSWORD=$(openssl rand -base64 12)
-JWT_SECRET=$(openssl rand -base64 32)
-APP_SECRET=$(openssl rand -base64 32)
+clear
+echo -e "${GREEN}Control Panel Installation${NC}"
+echo -e "${BLUE}System Requirements Check...${NC}"
 
 # Update system
-echo -e "${YELLOW}Updating system packages...${NC}"
-apt update && apt upgrade -y
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Updating system packages"
+apt update -qq && apt upgrade -y -qq > /dev/null 2>&1
 
-# Add PHP 8.1 repository
-echo -e "${YELLOW}Adding PHP 8.1 repository...${NC}"
-apt install -y software-properties-common
-add-apt-repository -y ppa:ondrej/php
-apt update
+# Install PHP repository
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Adding PHP repository"
+apt install -y software-properties-common > /dev/null 2>&1
+add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1
+apt update -qq > /dev/null 2>&1
 
-# Install LAMP stack and other requirements
-echo -e "${YELLOW}Installing required packages...${NC}"
-apt install -y python3 python3-pip python3-venv nginx mysql-server \
+# Install required packages
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Installing required packages"
+DEBIAN_FRONTEND=noninteractive apt install -y python3 python3-pip python3-venv nginx mysql-server \
     php8.1 php8.1-fpm php8.1-mysql php8.1-curl php8.1-gd php8.1-mbstring php8.1-xml php8.1-cli \
-    bind9 vsftpd postfix certbot python3-certbot-nginx \
-    fail2ban ufw
+    bind9 vsftpd postfix certbot python3-certbot-nginx fail2ban ufw > /dev/null 2>&1
 
 # Install Node.js
-echo -e "${YELLOW}Installing Node.js...${NC}"
-curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-apt install -y nodejs
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Installing Node.js"
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash - > /dev/null 2>&1
+DEBIAN_FRONTEND=noninteractive apt install -y nodejs > /dev/null 2>&1
 
 # Configure MySQL
-echo -e "${YELLOW}Configuring MySQL...${NC}"
-mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_ROOT_PASSWORD';"
-mysql -e "CREATE DATABASE cpanel;"
-mysql -e "CREATE USER 'cpanel'@'localhost' IDENTIFIED BY '$DB_USER_PASSWORD';"
-mysql -e "GRANT ALL PRIVILEGES ON cpanel.* TO 'cpanel'@'localhost';"
-mysql -e "FLUSH PRIVILEGES;"
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Configuring MySQL"
+
+# Reset MySQL root password
+systemctl stop mysql
+mkdir -p /var/run/mysqld
+chown mysql:mysql /var/run/mysqld
+mysqld_safe --skip-grant-tables --skip-networking &
+sleep 5
+
+# Update root password
+mysql -u root << EOF
+FLUSH PRIVILEGES;
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_ROOT_PASSWORD';
+FLUSH PRIVILEGES;
+EOF
+
+# Stop MySQL in safe mode and restart normally
+pkill mysqld
+sleep 5
+systemctl start mysql
+sleep 5
+
+# Create database and user
+mysql -u root -p"$DB_ROOT_PASSWORD" << EOF
+CREATE DATABASE IF NOT EXISTS cpanel;
+CREATE USER IF NOT EXISTS 'cpanel'@'localhost' IDENTIFIED BY '$DB_USER_PASSWORD';
+GRANT ALL PRIVILEGES ON cpanel.* TO 'cpanel'@'localhost';
+FLUSH PRIVILEGES;
+EOF
 
 # Configure PHP
-echo -e "${YELLOW}Configuring PHP...${NC}"
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Configuring PHP"
 sed -i 's/upload_max_filesize = .*/upload_max_filesize = 64M/' /etc/php/8.1/fpm/php.ini
 sed -i 's/post_max_size = .*/post_max_size = 64M/' /etc/php/8.1/fpm/php.ini
 sed -i 's/memory_limit = .*/memory_limit = 256M/' /etc/php/8.1/fpm/php.ini
 systemctl restart php8.1-fpm
 
 # Setup application
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Setting up application"
 INSTALL_DIR=${INSTALL_DIR:-"/opt/cpanel"}
 echo -e "${YELLOW}Setting up application in ${INSTALL_DIR}...${NC}"
 
@@ -283,8 +320,12 @@ EOF
 
 chmod 600 $INSTALL_DIR/credentials.txt
 
+# Final configuration
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_progress $CURRENT_STEP $TOTAL_STEPS "Finalizing installation"
+
 # Final message
-echo -e "${GREEN}Installation completed successfully!${NC}"
+echo -e "\n${GREEN}Installation completed successfully!${NC}"
 echo -e "Control Panel URL: http://${DOMAIN:-$SERVER_IP}"
 echo -e "Admin Username: admin"
 echo -e "Admin Password: $ADMIN_PASSWORD"
@@ -301,4 +342,127 @@ ufw allow 53/udp
 ufw allow 21/tcp
 ufw allow 'Nginx Full'
 
-echo -e "${GREEN}Setup complete! You can now access your control panel at: http://${DOMAIN:-$SERVER_IP}${NC}" 
+echo -e "${GREEN}Setup complete! You can now access your control panel at: http://${DOMAIN:-$SERVER_IP}${NC}"
+
+# Configure SSO with System Users
+configure_sso() {
+    echo -e "${BLUE}Configuring Single Sign-On with System Users...${NC}"
+    
+    # Install required packages
+    DEBIAN_FRONTEND=noninteractive apt install -y \
+        libpam-mysql \
+        libnss-mysql \
+        pamtester \
+        > /dev/null 2>&1
+
+    # Create SSO configuration directory
+    mkdir -p /etc/cpanel/sso
+    chmod 700 /etc/cpanel/sso
+
+    # Configure PAM for MySQL authentication
+    cat > /etc/pam.d/cpanel << EOF
+#%PAM-1.0
+auth required pam_mysql.so user=cpanel passwd=$DB_USER_PASSWORD host=localhost db=cpanel table=system_users usercolumn=username passwdcolumn=password crypt=2
+account required pam_mysql.so user=cpanel passwd=$DB_USER_PASSWORD host=localhost db=cpanel table=system_users usercolumn=username passwdcolumn=password crypt=2
+EOF
+
+    # Create system_users table in MySQL
+    mysql -u root -p"$DB_ROOT_PASSWORD" cpanel << EOF
+CREATE TABLE IF NOT EXISTS system_users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255),
+    email VARCHAR(255),
+    is_admin BOOLEAN DEFAULT FALSE,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP NULL,
+    groups TEXT,
+    shell VARCHAR(255) DEFAULT '/bin/bash'
+);
+
+CREATE TABLE IF NOT EXISTS user_groups (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    group_name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    permissions JSON
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    session_token VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES system_users(id)
+);
+EOF
+
+    # Create NSS MySQL configuration
+    cat > /etc/libnss-mysql.cfg << EOF
+getpwnam    SELECT username,'x',uid,gid,full_name,home,shell \
+            FROM system_users \
+            WHERE username='%1\$s' AND enabled=TRUE
+getpwuid    SELECT username,'x',uid,gid,full_name,home,shell \
+            FROM system_users \
+            WHERE uid='%1\$u' AND enabled=TRUE
+getspnam    SELECT username,password,FLOOR(UNIX_TIMESTAMP()/86400-1),0,99999,7,NULL,NULL,NULL \
+            FROM system_users \
+            WHERE username='%1\$s' AND enabled=TRUE
+getpwent    SELECT username,'x',uid,gid,full_name,home,shell \
+            FROM system_users \
+            WHERE enabled=TRUE
+EOF
+
+    # Configure NSS to use MySQL
+    sed -i '/^passwd:/ s/$/ mysql/' /etc/nsswitch.conf
+    sed -i '/^shadow:/ s/$/ mysql/' /etc/nsswitch.conf
+
+    # Create SSO helper script
+    cat > /usr/local/bin/cpanel-add-system-user << EOF
+#!/bin/bash
+if [ "\$#" -ne 2 ]; then
+    echo "Usage: \$0 username password"
+    exit 1
+fi
+
+USERNAME=\$1
+PASSWORD=\$(openssl passwd -1 \$2)
+
+mysql -u cpanel -p"$DB_USER_PASSWORD" cpanel << EOSQL
+INSERT INTO system_users (username, password, full_name, home, shell) 
+VALUES ('\$USERNAME', '\$PASSWORD', '\$USERNAME', '/home/\$USERNAME', '/bin/bash');
+EOSQL
+
+mkdir -p /home/\$USERNAME
+chown \$USERNAME:\$USERNAME /home/\$USERNAME
+chmod 750 /home/\$USERNAME
+EOF
+
+    chmod +x /usr/local/bin/cpanel-add-system-user
+
+    # Add admin user to system_users
+    ADMIN_SYSTEM_PASS=$(openssl passwd -1 $ADMIN_PASSWORD)
+    mysql -u root -p"$DB_ROOT_PASSWORD" cpanel << EOF
+INSERT INTO system_users (username, password, full_name, email, is_admin, home, shell) 
+VALUES ('admin', '$ADMIN_SYSTEM_PASS', 'Administrator', 'admin@localhost', TRUE, '/home/admin', '/bin/bash');
+EOF
+
+    # Create admin home directory
+    mkdir -p /home/admin
+    chown admin:admin /home/admin
+    chmod 750 /home/admin
+
+    echo -e "${GREEN}✓${NC} SSO configuration completed"
+}
+
+# Add SSO configuration to the main installation process
+configure_system() {
+    # ... existing configuration code ...
+    
+    # Configure SSO
+    configure_sso
+    
+    # ... rest of existing code ...
+} 
