@@ -6,8 +6,14 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Define ports
+FRONTEND_PORT=8888
+BACKEND_PORT=8889
+
 echo -e "${BLUE}Web Hosting Control Panel Installer${NC}"
 echo "=============================="
+echo -e "${BLUE}Frontend will run on port: $FRONTEND_PORT${NC}"
+echo -e "${BLUE}Backend API will run on port: $BACKEND_PORT${NC}"
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then 
@@ -18,6 +24,18 @@ fi
 # Get installation directory
 INSTALL_DIR="/opt/controlpanel"
 echo -e "${BLUE}Installation Directory: $INSTALL_DIR${NC}"
+
+# Check if ports are available
+check_port() {
+    if lsof -Pi :$1 -sTCP:LISTEN -t >/dev/null ; then
+        echo -e "${RED}Port $1 is already in use. Please choose different ports.${NC}"
+        exit 1
+    fi
+}
+
+echo -e "${BLUE}Checking if ports are available...${NC}"
+check_port $FRONTEND_PORT
+check_port $BACKEND_PORT
 
 # Get admin username (system user)
 while true; do
@@ -51,7 +69,7 @@ apt update && apt upgrade -y
 
 # Install dependencies
 echo -e "${BLUE}Installing system dependencies...${NC}"
-apt install -y python3-pip python3-venv nginx postgresql postgresql-contrib git
+apt install -y python3-pip python3-venv nginx postgresql postgresql-contrib git lsof
 
 # Install Node.js
 echo -e "${BLUE}Installing Node.js...${NC}"
@@ -80,11 +98,12 @@ CREATE USER cpanel WITH PASSWORD '$DB_PASSWORD';
 GRANT ALL PRIVILEGES ON DATABASE controlpanel TO cpanel;
 EOF
 
-# Configure database connection
+# Configure database connection and backend port
 cat > backend/config.py << EOF
 SQLALCHEMY_DATABASE_URI = 'postgresql://cpanel:$DB_PASSWORD@localhost/controlpanel'
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 SECRET_KEY = '$(openssl rand -hex 32)'
+PORT = $BACKEND_PORT
 EOF
 
 # Create initial admin user in database
@@ -101,6 +120,12 @@ cd backend
 python manage.py db upgrade
 cd ..
 
+# Configure frontend API endpoint
+echo -e "${BLUE}Configuring frontend API endpoint...${NC}"
+cat > frontend/.env << EOF
+VITE_API_URL=http://localhost:$BACKEND_PORT/api
+EOF
+
 # Build frontend
 echo -e "${BLUE}Building frontend...${NC}"
 cd frontend
@@ -108,14 +133,14 @@ npm install
 npm run build
 cd ..
 
-# Configure Nginx for both localhost and domain access
+# Configure Nginx for custom ports
 echo -e "${BLUE}Configuring Nginx...${NC}"
 cat > /etc/nginx/sites-available/controlpanel << EOF
 # Default server for localhost access
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name localhost 127.0.0.1;
+    listen $FRONTEND_PORT default_server;
+    listen [::]:$FRONTEND_PORT default_server;
+    server_name localhost 127.0.0.1 controlpanel.local;
 
     location / {
         root $INSTALL_DIR/frontend/dist;
@@ -123,7 +148,7 @@ server {
     }
 
     location /api {
-        proxy_pass http://127.0.0.1:5000;
+        proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
@@ -145,6 +170,7 @@ After=network.target
 User=www-data
 WorkingDirectory=$INSTALL_DIR/backend
 Environment="PATH=$INSTALL_DIR/venv/bin"
+Environment="PORT=$BACKEND_PORT"
 ExecStart=$INSTALL_DIR/venv/bin/python app.py
 Restart=always
 
@@ -163,15 +189,16 @@ systemctl start controlpanel
 
 # Configure firewall
 echo -e "${BLUE}Configuring firewall...${NC}"
-ufw allow 80/tcp
+ufw allow $FRONTEND_PORT/tcp
+ufw allow $BACKEND_PORT/tcp
 ufw allow OpenSSH
 
 # Final steps
 echo -e "${GREEN}Installation completed!${NC}"
 echo -e "Your control panel is now available at:"
-echo -e "http://localhost"
-echo -e "or"
-echo -e "http://127.0.0.1"
+echo -e "http://localhost:$FRONTEND_PORT"
+echo -e "http://127.0.0.1:$FRONTEND_PORT"
+echo -e "http://controlpanel.local:$FRONTEND_PORT"
 
 echo -e "\nAdmin access:"
 echo -e "Username: $ADMIN_USER (your system user)"
@@ -196,8 +223,15 @@ case "\$1" in
     logs)
         journalctl -u controlpanel -f
         ;;
+    ports)
+        echo "Frontend Port: $FRONTEND_PORT"
+        echo "Backend Port: $BACKEND_PORT"
+        echo "Current port status:"
+        lsof -i :$FRONTEND_PORT
+        lsof -i :$BACKEND_PORT
+        ;;
     *)
-        echo "Usage: cpanel {start|stop|restart|status|logs}"
+        echo "Usage: cpanel {start|stop|restart|status|logs|ports}"
         exit 1
         ;;
 esac
@@ -211,6 +245,7 @@ echo "cpanel stop    - Stop the control panel"
 echo "cpanel restart - Restart the control panel"
 echo "cpanel status  - Check control panel status"
 echo "cpanel logs    - View control panel logs"
+echo "cpanel ports   - Check port status"
 
 # Add hosts entry
 echo -e "\n${BLUE}Adding localhost entry to hosts file...${NC}"
@@ -218,4 +253,6 @@ if ! grep -q "controlpanel.local" /etc/hosts; then
     echo "127.0.0.1 controlpanel.local" >> /etc/hosts
 fi
 
-echo -e "\n${GREEN}You can also access the control panel at: http://controlpanel.local${NC}" 
+echo -e "\n${GREEN}Port Information:${NC}"
+echo "Frontend Web Interface: $FRONTEND_PORT"
+echo "Backend API: $BACKEND_PORT" 
