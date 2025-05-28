@@ -74,12 +74,23 @@ APP_SECRET=$(openssl rand -base64 32)
 echo -e "${YELLOW}Updating system packages...${NC}"
 apt update && apt upgrade -y
 
+# Add PHP 8.1 repository
+echo -e "${YELLOW}Adding PHP 8.1 repository...${NC}"
+apt install -y software-properties-common
+add-apt-repository -y ppa:ondrej/php
+apt update
+
 # Install LAMP stack and other requirements
 echo -e "${YELLOW}Installing required packages...${NC}"
 apt install -y python3 python3-pip python3-venv nginx mysql-server \
-    php8.1-fpm php8.1-mysql php8.1-curl php8.1-gd php8.1-mbstring php8.1-xml \
-    bind9 vsftpd postfix certbot python3-certbot-nginx nodejs npm \
+    php8.1 php8.1-fpm php8.1-mysql php8.1-curl php8.1-gd php8.1-mbstring php8.1-xml php8.1-cli \
+    bind9 vsftpd postfix certbot python3-certbot-nginx \
     fail2ban ufw
+
+# Install Node.js
+echo -e "${YELLOW}Installing Node.js...${NC}"
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt install -y nodejs
 
 # Configure MySQL
 echo -e "${YELLOW}Configuring MySQL...${NC}"
