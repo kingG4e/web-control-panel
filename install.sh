@@ -331,14 +331,24 @@ EOF
 configure_security() {
     echo -e "\n${BLUE}[5/5] Configuring Security...${NC}"
     
-    # Configure firewall
+    # Reset and configure firewall
     ufw --force reset > /dev/null 2>&1
     ufw default deny incoming > /dev/null 2>&1
     ufw default allow outgoing > /dev/null 2>&1
-    ufw allow ${CPANEL_HTTP_PORT}/tcp > /dev/null 2>&1
-    ufw allow ${CPANEL_HTTPS_PORT}/tcp > /dev/null 2>&1
-    ufw allow ${CPANEL_FTP_PORT}/tcp > /dev/null 2>&1
-    ufw allow ${CPANEL_SSH_PORT}/tcp > /dev/null 2>&1
+    
+    # Remove all existing rules
+    ufw status numbered | grep -o '\[[0-9]*\]' | tr -d '[]' | tac | while read -r num; do
+        echo "y" | ufw delete $num > /dev/null 2>&1
+    done
+    
+    # Allow only necessary ports
+    ufw allow 22/tcp > /dev/null 2>&1    # SSH
+    ufw allow ${CPANEL_HTTP_PORT}/tcp > /dev/null 2>&1  # HTTP
+    ufw allow ${CPANEL_HTTPS_PORT}/tcp > /dev/null 2>&1 # HTTPS
+    ufw allow ${CPANEL_FTP_PORT}/tcp > /dev/null 2>&1   # FTP
+    ufw allow ${CPANEL_SSH_PORT}/tcp > /dev/null 2>&1   # SSH (if needed)
+    
+    # Enable firewall
     ufw --force enable > /dev/null 2>&1
     
     # Configure fail2ban
@@ -357,7 +367,31 @@ EOF
     
     systemctl restart fail2ban
     
-    echo -e "${GREEN}✓ Security configuration completed${NC}"
+    # Stop unnecessary services
+    systemctl stop bind9 2>/dev/null || true
+    systemctl disable bind9 2>/dev/null || true
+    systemctl stop postfix 2>/dev/null || true
+    systemctl disable postfix 2>/dev/null || true
+    
+    # Start required services
+    systemctl start nginx
+    systemctl start php8.1-fpm
+    systemctl start mariadb
+    systemctl start vsftpd
+    systemctl start fail2ban
+    
+    # Enable services to start on boot
+    systemctl enable nginx
+    systemctl enable php8.1-fpm
+    systemctl enable mariadb
+    systemctl enable vsftpd
+    systemctl enable fail2ban
+    
+    # Verify firewall rules
+    echo -e "\n${BLUE}Firewall Rules:${NC}"
+    ufw status verbose | grep -A 20 "Status: active"
+    
+    echo -e "${GREEN}✓${NC} Security configuration completed"
 }
 
 # Main installation
@@ -388,10 +422,19 @@ main() {
     echo -e "\nControl Panel URL: http://localhost:${CPANEL_HTTP_PORT}"
     echo -e "Credentials saved to: /root/cpanel-credentials.txt"
     echo -e "\nPorts in use:"
+    echo -e "SSH: 22"
     echo -e "HTTP: ${CPANEL_HTTP_PORT}"
     echo -e "HTTPS: ${CPANEL_HTTPS_PORT}"
     echo -e "FTP: ${CPANEL_FTP_PORT}"
-    echo -e "SSH: ${CPANEL_SSH_PORT}"
+    echo -e "SSH (Alt): ${CPANEL_SSH_PORT}"
+    
+    # Show running services
+    echo -e "\nRunning services:"
+    systemctl status nginx | grep "Active:" | sed 's/^[ \t]*//'
+    systemctl status php8.1-fpm | grep "Active:" | sed 's/^[ \t]*//'
+    systemctl status mariadb | grep "Active:" | sed 's/^[ \t]*//'
+    systemctl status vsftpd | grep "Active:" | sed 's/^[ \t]*//'
+    systemctl status fail2ban | grep "Active:" | sed 's/^[ \t]*//'
 }
 
 # Start installation
