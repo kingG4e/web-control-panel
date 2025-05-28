@@ -64,7 +64,7 @@ cd $INSTALL_DIR
 
 # Clone repository
 echo -e "${BLUE}Cloning repository...${NC}"
-git clone https://github.com/yourusername/controlpanel.git .
+git clone https://github.com/kingG4e/web-control-panel.git .
 
 # Setup Python virtual environment
 echo -e "${BLUE}Setting up Python environment...${NC}"
