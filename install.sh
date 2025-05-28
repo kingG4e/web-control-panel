@@ -16,34 +16,34 @@ CPANEL_SSH_PORT=9022
 
 # System check function
 check_system() {
-    echo -e "\n${BLUE}[1/5] ตรวจสอบระบบ...${NC}"
+    echo -e "\n${BLUE}[1/5] System Check...${NC}"
     
     # Check OS
     if ! grep -q "Ubuntu" /etc/os-release; then
-        echo -e "${RED}สคริปต์นี้รองรับเฉพาะ Ubuntu Server เท่านั้น${NC}"
+        echo -e "${RED}This script only supports Ubuntu Server${NC}"
         exit 1
     fi
     
     # Check memory
     total_mem=$(free -m | awk '/^Mem:/{print $2}')
     if [ $total_mem -lt 1024 ]; then
-        echo -e "${RED}ต้องการ RAM อย่างน้อย 1GB (มี ${total_mem}MB)${NC}"
+        echo -e "${RED}Requires at least 1GB RAM (Current: ${total_mem}MB)${NC}"
         exit 1
     fi
     
     # Check disk space
     free_space=$(df -m / | awk 'NR==2 {print $4}')
     if [ $free_space -lt 5120 ]; then
-        echo -e "${RED}ต้องการพื้นที่ว่างอย่างน้อย 5GB (มี ${free_space}MB)${NC}"
+        echo -e "${RED}Requires at least 5GB free space (Current: ${free_space}MB)${NC}"
         exit 1
     fi
     
-    echo -e "${GREEN}✓${NC} ระบบผ่านการตรวจสอบ"
+    echo -e "${GREEN}✓${NC} System check passed"
 }
 
 # Prepare system
 prepare_system() {
-    echo -e "\n${BLUE}[2/5] เตรียมระบบ...${NC}"
+    echo -e "\n${BLUE}[2/5] Preparing System...${NC}"
     
     # Backup important files
     mkdir -p /root/cpanel-backup
@@ -64,12 +64,12 @@ prepare_system() {
     rm -rf /etc/nginx/sites-enabled/*
     rm -rf /var/www/html/*
     
-    echo -e "${GREEN}✓${NC} ระบบพร้อมสำหรับการติดตั้ง"
+    echo -e "${GREEN}✓${NC} System preparation complete"
 }
 
 # Install packages
 install_packages() {
-    echo -e "\n${BLUE}[3/5] ติดตั้งแพ็คเกจ...${NC}"
+    echo -e "\n${BLUE}[3/5] Installing Packages...${NC}"
     
     # Update package list
     apt update -qq
@@ -111,24 +111,36 @@ install_packages() {
         ufw \
         > /dev/null 2>&1
         
-    echo -e "${GREEN}✓${NC} ติดตั้งแพ็คเกจเสร็จสมบูรณ์"
+    echo -e "${GREEN}✓${NC} Packages installation completed successfully"
 }
 
 # Configure services
 configure_services() {
-    echo -e "\n${BLUE}[4/5] ตั้งค่าบริการ...${NC}"
+    echo -e "\n${BLUE}[4/5] Configuring Services...${NC}"
+    local error_count=0
     
     # Generate passwords
     DB_ROOT_PASSWORD=$(openssl rand -base64 12)
     DB_USER_PASSWORD=$(openssl rand -base64 12)
     
     # Configure MariaDB
-    mkdir -p /var/run/mysqld
-    chown mysql:mysql /var/run/mysqld
-    chmod 777 /var/run/mysqld
+    echo -e "${BLUE}➤ Configuring MariaDB...${NC}"
+    if ! mkdir -p /var/run/mysqld; then
+        echo -e "${RED}✗ Failed to create directory /var/run/mysqld${NC}"
+        error_count=$((error_count + 1))
+    else
+        chown mysql:mysql /var/run/mysqld
+        chmod 777 /var/run/mysqld
+    fi
+    
+    # Create MariaDB configuration directory if not exists
+    if ! mkdir -p /etc/mysql/mariadb.conf.d/; then
+        echo -e "${RED}✗ Failed to create MariaDB config directory${NC}"
+        error_count=$((error_count + 1))
+    fi
     
     # Create MariaDB configuration
-    cat > /etc/mysql/mariadb.conf.d/50-server.cnf << EOF
+    if ! cat > /etc/mysql/mariadb.conf.d/50-server.cnf << EOF
 [mysqld]
 bind-address = 127.0.0.1
 port = 3306
@@ -152,12 +164,21 @@ max_heap_table_size = 32M
 character-set-server = utf8mb4
 collation-server = utf8mb4_general_ci
 EOF
+    then
+        echo -e "${RED}✗ Failed to create MariaDB config file${NC}"
+        error_count=$((error_count + 1))
+    fi
     
     # Start MariaDB
-    systemctl start mariadb
+    echo -e "${BLUE}➤ Starting MariaDB...${NC}"
+    if ! systemctl start mariadb; then
+        echo -e "${RED}✗ Failed to start MariaDB${NC}"
+        error_count=$((error_count + 1))
+    fi
     
     # Secure MariaDB installation
-    mysql -u root << EOF
+    echo -e "${BLUE}➤ Securing MariaDB...${NC}"
+    if ! mysql -u root << EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_ROOT_PASSWORD}';
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
@@ -168,14 +189,31 @@ CREATE USER IF NOT EXISTS 'cpanel'@'localhost' IDENTIFIED BY '${DB_USER_PASSWORD
 GRANT ALL PRIVILEGES ON cpanel.* TO 'cpanel'@'localhost';
 FLUSH PRIVILEGES;
 EOF
+    then
+        echo -e "${RED}✗ Failed to secure MariaDB${NC}"
+        error_count=$((error_count + 1))
+    fi
     
     # Configure PHP
-    sed -i 's/upload_max_filesize = .*/upload_max_filesize = 64M/' /etc/php/8.1/fpm/php.ini
-    sed -i 's/post_max_size = .*/post_max_size = 64M/' /etc/php/8.1/fpm/php.ini
-    sed -i 's/memory_limit = .*/memory_limit = 256M/' /etc/php/8.1/fpm/php.ini
+    echo -e "${BLUE}➤ Configuring PHP...${NC}"
+    if [ ! -f /etc/php/8.1/fpm/php.ini ]; then
+        echo -e "${RED}✗ php.ini file not found${NC}"
+        error_count=$((error_count + 1))
+    else
+        sed -i 's/upload_max_filesize = .*/upload_max_filesize = 64M/' /etc/php/8.1/fpm/php.ini
+        sed -i 's/post_max_size = .*/post_max_size = 64M/' /etc/php/8.1/fpm/php.ini
+        sed -i 's/memory_limit = .*/memory_limit = 256M/' /etc/php/8.1/fpm/php.ini
+    fi
+    
+    # Create Nginx directories if they don't exist
+    echo -e "${BLUE}➤ Configuring Nginx...${NC}"
+    if ! mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled; then
+        echo -e "${RED}✗ Failed to create Nginx config directories${NC}"
+        error_count=$((error_count + 1))
+    fi
     
     # Configure Nginx
-    cat > /etc/nginx/sites-available/cpanel.conf << EOF
+    if ! cat > /etc/nginx/sites-available/cpanel.conf << EOF
 server {
     listen ${CPANEL_HTTP_PORT} default_server;
     listen ${CPANEL_HTTPS_PORT} ssl default_server;
@@ -212,18 +250,41 @@ server {
     }
 }
 EOF
+    then
+        echo -e "${RED}✗ Failed to create Nginx config file${NC}"
+        error_count=$((error_count + 1))
+    fi
     
-    ln -sf /etc/nginx/sites-available/cpanel.conf /etc/nginx/sites-enabled/
+    # Create symbolic link for Nginx config
+    if ! ln -sf /etc/nginx/sites-available/cpanel.conf /etc/nginx/sites-enabled/cpanel.conf; then
+        echo -e "${RED}✗ Failed to create symbolic link for Nginx config${NC}"
+        error_count=$((error_count + 1))
+    fi
+    
+    # Remove default Nginx config if exists
     rm -f /etc/nginx/sites-enabled/default
     
     # Configure FTP
-    sed -i 's/anonymous_enable=.*/anonymous_enable=NO/' /etc/vsftpd.conf
-    sed -i 's/#local_enable=.*/local_enable=YES/' /etc/vsftpd.conf
-    sed -i 's/#write_enable=.*/write_enable=YES/' /etc/vsftpd.conf
-    sed -i "s/^listen_port=.*/listen_port=${CPANEL_FTP_PORT}/" /etc/vsftpd.conf
+    echo -e "${BLUE}➤ Configuring FTP...${NC}"
+    if [ ! -f /etc/vsftpd.conf ]; then
+        echo -e "${RED}✗ vsftpd.conf file not found${NC}"
+        error_count=$((error_count + 1))
+    else
+        sed -i 's/anonymous_enable=.*/anonymous_enable=NO/' /etc/vsftpd.conf
+        sed -i 's/#local_enable=.*/local_enable=YES/' /etc/vsftpd.conf
+        sed -i 's/#write_enable=.*/write_enable=YES/' /etc/vsftpd.conf
+        sed -i "s/^listen_port=.*/listen_port=${CPANEL_FTP_PORT}/" /etc/vsftpd.conf
+    fi
+    
+    # Create www directory if it doesn't exist
+    if ! mkdir -p /var/www/html; then
+        echo -e "${RED}✗ Failed to create directory /var/www/html${NC}"
+        error_count=$((error_count + 1))
+    fi
     
     # Save credentials
-    cat > /root/cpanel-credentials.txt << EOF
+    echo -e "${BLUE}➤ Saving access credentials...${NC}"
+    if ! cat > /root/cpanel-credentials.txt << EOF
 Control Panel Credentials
 =======================
 MariaDB Root Password: ${DB_ROOT_PASSWORD}
@@ -243,18 +304,32 @@ Port: 3306
 Default Character Set: utf8mb4
 Default Collation: utf8mb4_general_ci
 EOF
-    
-    chmod 600 /root/cpanel-credentials.txt
+    then
+        echo -e "${RED}✗ Failed to save credentials file${NC}"
+        error_count=$((error_count + 1))
+    else
+        chmod 600 /root/cpanel-credentials.txt
+    fi
     
     # Restart services
-    systemctl restart mariadb php8.1-fpm nginx vsftpd
+    echo -e "${BLUE}➤ Restarting services...${NC}"
+    if ! systemctl restart mariadb php8.1-fpm nginx vsftpd; then
+        echo -e "${RED}✗ Failed to restart services${NC}"
+        error_count=$((error_count + 1))
+    fi
     
-    echo -e "${GREEN}✓${NC} ตั้งค่าบริการเสร็จสมบูรณ์"
+    if [ $error_count -eq 0 ]; then
+        echo -e "${GREEN}✓ Service configuration completed successfully${NC}"
+        return 0
+    else
+        echo -e "${RED}✗ Service configuration failed with ${error_count} error(s)${NC}"
+        return 1
+    fi
 }
 
 # Configure security
 configure_security() {
-    echo -e "\n${BLUE}[5/5] ตั้งค่าความปลอดภัย...${NC}"
+    echo -e "\n${BLUE}[5/5] Configuring Security...${NC}"
     
     # Configure firewall
     ufw --force reset > /dev/null 2>&1
@@ -282,7 +357,7 @@ EOF
     
     systemctl restart fail2ban
     
-    echo -e "${GREEN}✓${NC} ตั้งค่าความปลอดภัยเสร็จสมบูรณ์"
+    echo -e "${GREEN}✓ Security configuration completed${NC}"
 }
 
 # Main installation
@@ -295,7 +370,7 @@ main() {
     
     # Check if running as root
     if [ "$EUID" -ne 0 ]; then 
-        echo -e "${RED}กรุณารันสคริปต์ด้วยสิทธิ์ root (sudo)${NC}"
+        echo -e "${RED}Please run this script as root (use sudo)${NC}"
         exit 1
     fi
     
@@ -308,11 +383,11 @@ main() {
     
     # Show completion message
     echo -e "\n${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║         ติดตั้งเสร็จสมบูรณ์! 🎉        ║${NC}"
+    echo -e "${GREEN}║       Installation Complete! 🎉        ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
     echo -e "\nControl Panel URL: http://localhost:${CPANEL_HTTP_PORT}"
-    echo -e "รหัสผ่านถูกบันทึกไว้ที่: /root/cpanel-credentials.txt"
-    echo -e "\nพอร์ตที่ใช้งาน:"
+    echo -e "Credentials saved to: /root/cpanel-credentials.txt"
+    echo -e "\nPorts in use:"
     echo -e "HTTP: ${CPANEL_HTTP_PORT}"
     echo -e "HTTPS: ${CPANEL_HTTPS_PORT}"
     echo -e "FTP: ${CPANEL_FTP_PORT}"
