@@ -10,7 +10,7 @@ class MySQLService:
         self.config = {
             'host': 'localhost',
             'user': 'root',
-            'password': os.getenv('MYSQL_ROOT_PASSWORD')
+            'password': os.getenv('MYSQL_ROOT_PASSWORD', 'Kg@73260')
         }
 
     def create_database(self, name, charset='utf8mb4', collation='utf8mb4_unicode_ci'):

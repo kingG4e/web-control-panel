@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { PlusIcon, TrashIcon, BackupIcon, RestoreIcon } from '@heroicons/react/outline';
+import { PlusIcon, TrashIcon, ArrowDownTrayIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline';
 
 interface Database {
   id: number;
@@ -164,7 +164,7 @@ const DatabaseManager: React.FC = () => {
                   onClick={() => createBackup(database.id)}
                   className="bg-green-500 text-white px-3 py-2 rounded-md flex items-center"
                 >
-                  <BackupIcon className="w-5 h-5 mr-2" />
+                  <ArrowDownTrayIcon className="w-5 h-5 mr-2" />
                   Backup
                 </button>
                 <button
@@ -225,7 +225,7 @@ const DatabaseManager: React.FC = () => {
                       onClick={() => restoreBackup(database.id, backup.id)}
                       className="bg-yellow-500 text-white px-3 py-1 rounded-md text-sm flex items-center"
                     >
-                      <RestoreIcon className="w-4 h-4 mr-1" />
+                      <ArrowUpTrayIcon className="w-4 h-4 mr-1" />
                       Restore
                     </button>
                   </div>

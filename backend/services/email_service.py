@@ -1,13 +1,13 @@
 import os
 import subprocess
-import crypt
+import hashlib
 from datetime import datetime
 
 class EmailService:
     def __init__(self):
-        self.virtual_mailbox_base = '/var/mail/vhosts'
-        self.postfix_config_dir = '/etc/postfix'
-        self.dovecot_config_dir = '/etc/dovecot'
+        self.virtual_mailbox_base = '/var/mail/vhosts'  # Changed to Linux path
+        self.postfix_config_dir = '/etc/postfix'  # Changed to Linux path
+        self.dovecot_config_dir = '/etc/dovecot'  # Changed to Linux path
 
     def create_domain(self, domain):
         """Create a new email domain"""
@@ -22,10 +22,8 @@ class EmailService:
                 f.write(f"{domain}\n")
 
             # Reload Postfix
-            subprocess.run(['postfix', 'reload'], check=True)
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to create email domain: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to create email domain: {str(e)}')
 
@@ -46,10 +44,8 @@ class EmailService:
                         f.write(d)
 
             # Reload Postfix
-            subprocess.run(['postfix', 'reload'], check=True)
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to delete email domain: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to delete email domain: {str(e)}')
 
@@ -61,23 +57,23 @@ class EmailService:
             os.makedirs(user_dir, exist_ok=True)
             os.chmod(user_dir, 0o700)
 
-            # Hash password for Dovecot
-            hashed_password = crypt.crypt(password)
+            # Hash password using SHA-256
+            salt = os.urandom(32).hex()
+            hashed_password = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+            password_entry = f"{salt}${hashed_password}"
 
             # Update Dovecot users
             with open(f"{self.dovecot_config_dir}/users", "a") as f:
-                f.write(f"{username}@{domain}:{hashed_password}:{os.getuid()}:{os.getgid()}::{user_dir}::{quota}M\n")
+                f.write(f"{username}@{domain}:{password_entry}:{os.getuid()}:{os.getgid()}::{user_dir}::{quota}M\n")
 
             # Update Postfix virtual mailboxes
             with open(f"{self.postfix_config_dir}/virtual_mailboxes", "a") as f:
                 f.write(f"{username}@{domain} {domain}/{username}/\n")
 
             # Reload services
-            subprocess.run(['postfix', 'reload'], check=True)
-            subprocess.run(['dovecot', 'reload'], check=True)
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
+            subprocess.run(['systemctl', 'reload', 'dovecot'], check=True)
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to create email account: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to create email account: {str(e)}')
 
@@ -106,11 +102,9 @@ class EmailService:
                         f.write(mailbox)
 
             # Reload services
-            subprocess.run(['postfix', 'reload'], check=True)
-            subprocess.run(['dovecot', 'reload'], check=True)
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
+            subprocess.run(['systemctl', 'reload', 'dovecot'], check=True)
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to delete email account: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to delete email account: {str(e)}')
 
@@ -122,10 +116,8 @@ class EmailService:
                 f.write(f"{source}@{domain} {destination}\n")
 
             # Reload Postfix
-            subprocess.run(['postfix', 'reload'], check=True)
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to create email forwarder: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to create email forwarder: {str(e)}')
 
@@ -141,10 +133,8 @@ class EmailService:
                         f.write(alias)
 
             # Reload Postfix
-            subprocess.run(['postfix', 'reload'], check=True)
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to delete email forwarder: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to delete email forwarder: {str(e)}')
 
@@ -156,10 +146,8 @@ class EmailService:
                 f.write(f"{alias} {account_email}\n")
 
             # Reload Postfix
-            subprocess.run(['postfix', 'reload'], check=True)
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to create email alias: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to create email alias: {str(e)}')
 
@@ -175,10 +163,8 @@ class EmailService:
                         f.write(a)
 
             # Reload Postfix
-            subprocess.run(['postfix', 'reload'], check=True)
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to delete email alias: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to delete email alias: {str(e)}')
 
@@ -189,13 +175,11 @@ class EmailService:
             if not os.path.exists(user_dir):
                 return 0
 
-            # Get directory size
+            # Get directory size using du command
             result = subprocess.run(['du', '-sm', user_dir], capture_output=True, text=True, check=True)
             size = float(result.stdout.split()[0])
             
             return size
 
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to get quota usage: {str(e)}')
         except Exception as e:
             raise Exception(f'Failed to get quota usage: {str(e)}') 

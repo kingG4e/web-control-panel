@@ -1,22 +1,23 @@
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
-from models.virtual_host import db
+from .base import db
 
 class User(db.Model):
+    __tablename__ = 'users'
+    
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255))
-    first_name = db.Column(db.String(80))
-    last_name = db.Column(db.String(80))
-    is_active = db.Column(db.Boolean, default=True)
+    password_hash = db.Column(db.String(256), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login = db.Column(db.DateTime)
 
     # Relationships
-    roles = db.relationship('Role', secondary='user_roles', backref='users')
-    domain_permissions = db.relationship('DomainPermission', backref='user', cascade='all, delete-orphan')
+    virtual_hosts = db.relationship('VirtualHost', backref='owner', lazy=True)
+    databases = db.relationship('Database', backref='owner', lazy=True)
+    email_accounts = db.relationship('EmailAccount', backref='owner', lazy=True)
+    ftp_accounts = db.relationship('FTPAccount', backref='owner', lazy=True)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -29,14 +30,9 @@ class User(db.Model):
             'id': self.id,
             'username': self.username,
             'email': self.email,
-            'first_name': self.first_name,
-            'last_name': self.last_name,
-            'is_active': self.is_active,
             'is_admin': self.is_admin,
-            'roles': [role.to_dict() for role in self.roles],
-            'domain_permissions': [perm.to_dict() for perm in self.domain_permissions],
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'last_login': self.last_login.isoformat() if self.last_login else None
         }
 
 class Role(db.Model):

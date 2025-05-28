@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import {
+  PlusIcon,
+  PencilIcon,
+  TrashIcon,
+  ArrowPathIcon,
+} from '@heroicons/react/24/outline';
 
 function VirtualHosts() {
   const [virtualHosts, setVirtualHosts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showForm, setShowForm] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [selectedHost, setSelectedHost] = useState(null);
   const [formData, setFormData] = useState({
     domain_name: '',
     document_root: '',
@@ -31,7 +38,7 @@ function VirtualHosts() {
     e.preventDefault();
     try {
       await axios.post('http://localhost:5000/api/virtual-hosts', formData);
-      setShowForm(false);
+      setShowAddModal(false);
       setFormData({ domain_name: '', document_root: '', server_admin: '' });
       fetchVirtualHosts();
     } catch (err) {
@@ -55,20 +62,109 @@ function VirtualHosts() {
 
   return (
     <div className="container mx-auto px-4">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Virtual Hosts</h1>
+      <div className="sm:flex sm:items-center sm:justify-between mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">Virtual Hosts</h2>
         <button
-          onClick={() => setShowForm(true)}
-          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          className="btn btn-primary flex items-center"
         >
-          Add New Virtual Host
+          <PlusIcon className="h-5 w-5 mr-2" />
+          Add Virtual Host
         </button>
       </div>
 
-      {showForm && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">Add New Virtual Host</h2>
+      <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Domain
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Root Directory
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                PHP Version
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                SSL
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Status
+              </th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {virtualHosts.map((host) => (
+              <tr key={host.id}>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="text-sm font-medium text-gray-900">
+                    {host.domain_name}
+                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="text-sm text-gray-500">{host.document_root}</div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="text-sm text-gray-500">PHP {host.php_version}</div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span
+                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                      host.ssl_enabled
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-gray-100 text-gray-800'
+                    }`}
+                  >
+                    {host.ssl_enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span
+                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                      host.status === 'active'
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-red-100 text-red-800'
+                    }`}
+                  >
+                    {host.status}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <div className="flex justify-end space-x-2">
+                    <button
+                      onClick={() => setSelectedHost(host)}
+                      className="text-primary-600 hover:text-primary-900"
+                    >
+                      <PencilIcon className="h-5 w-5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(host.id)}
+                      className="text-red-600 hover:text-red-900"
+                    >
+                      <TrashIcon className="h-5 w-5" />
+                    </button>
+                    <button className="text-gray-600 hover:text-gray-900">
+                      <ArrowPathIcon className="h-5 w-5" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {showAddModal && (
+        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">
+              Add Virtual Host
+            </h3>
             <form onSubmit={handleSubmit}>
               <div className="mb-4">
                 <label className="block text-gray-700 text-sm font-bold mb-2">
@@ -105,63 +201,19 @@ function VirtualHosts() {
                   className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
                 />
               </div>
-              <div className="flex justify-end space-x-4">
+              <div className="mt-4 flex justify-end space-x-2">
                 <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600"
+                  onClick={() => setShowAddModal(false)}
+                  className="btn btn-secondary"
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-                >
-                  Create
-                </button>
+                <button className="btn btn-primary">Save</button>
               </div>
             </form>
           </div>
         </div>
       )}
-
-      <div className="bg-white shadow-md rounded my-6">
-        <table className="min-w-full table-auto">
-          <thead>
-            <tr className="bg-gray-200 text-gray-600 uppercase text-sm leading-normal">
-              <th className="py-3 px-6 text-left">Domain Name</th>
-              <th className="py-3 px-6 text-left">Document Root</th>
-              <th className="py-3 px-6 text-left">Server Admin</th>
-              <th className="py-3 px-6 text-left">Status</th>
-              <th className="py-3 px-6 text-center">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="text-gray-600 text-sm font-light">
-            {virtualHosts.map((host) => (
-              <tr key={host.id} className="border-b border-gray-200 hover:bg-gray-100">
-                <td className="py-3 px-6 text-left">{host.domain_name}</td>
-                <td className="py-3 px-6 text-left">{host.document_root}</td>
-                <td className="py-3 px-6 text-left">{host.server_admin}</td>
-                <td className="py-3 px-6 text-left">
-                  <span className={`py-1 px-3 rounded-full text-xs ${
-                    host.status === 'active' ? 'bg-green-200 text-green-600' : 'bg-red-200 text-red-600'
-                  }`}>
-                    {host.status}
-                  </span>
-                </td>
-                <td className="py-3 px-6 text-center">
-                  <button
-                    onClick={() => handleDelete(host.id)}
-                    className="text-red-500 hover:text-red-700"
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

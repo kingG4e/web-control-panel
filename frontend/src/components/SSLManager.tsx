@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { PlusIcon, TrashIcon, RefreshIcon, ClockIcon } from '@heroicons/react/outline';
+import { PlusIcon, TrashIcon, ArrowPathIcon, ClockIcon } from '@heroicons/react/24/outline';
 
 interface SSLCertificate {
   id: number;
@@ -146,7 +146,7 @@ const SSLManager: React.FC = () => {
                   onClick={() => renewCertificate(cert.id)}
                   className="bg-green-500 text-white px-3 py-2 rounded-md flex items-center"
                 >
-                  <RefreshIcon className="w-5 h-5 mr-2" />
+                  <ArrowPathIcon className="w-5 h-5 mr-2" />
                   Renew
                 </button>
                 <button

@@ -1,5 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import {
+  PlusIcon,
+  PencilIcon,
+  TrashIcon,
+  GlobeAltIcon,
+} from '@heroicons/react/24/outline';
 
 function DNSManagement() {
   const [zones, setZones] = useState([]);
@@ -19,6 +25,8 @@ function DNSManagement() {
     ttl: 3600,
     priority: null
   });
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);
 
   useEffect(() => {
     fetchZones();
@@ -94,13 +102,20 @@ function DNSManagement() {
 
   return (
     <div className="container mx-auto px-4">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">DNS Management</h1>
+      <div className="sm:flex sm:items-center sm:justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">DNS Management</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Manage DNS records for your domains
+          </p>
+        </div>
         <button
-          onClick={() => setShowZoneForm(true)}
-          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          className="btn btn-primary flex items-center"
         >
-          Add New Zone
+          <PlusIcon className="h-5 w-5 mr-2" />
+          Add Record
         </button>
       </div>
 
@@ -298,6 +313,73 @@ function DNSManagement() {
           </div>
         ))}
       </div>
+
+      {/* Add/Edit Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">
+              Add DNS Record
+            </h3>
+            <form className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  className="input mt-1 block w-full"
+                  placeholder="e.g., example.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Type
+                </label>
+                <select className="input mt-1 block w-full">
+                  {['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'PTR', 'SRV'].map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Value
+                </label>
+                <input
+                  type="text"
+                  className="input mt-1 block w-full"
+                  placeholder="e.g., 192.168.1.100"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  TTL (seconds)
+                </label>
+                <input
+                  type="number"
+                  className="input mt-1 block w-full"
+                  placeholder="3600"
+                />
+              </div>
+              <div className="mt-4 flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

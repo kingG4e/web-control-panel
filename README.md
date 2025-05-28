@@ -1,119 +1,124 @@
-# Web Hosting Control Panel Installation Guide
+# Web Hosting Control Panel
+
+A comprehensive web hosting control panel for managing websites, databases, DNS, FTP, and email services.
+
+## Features
+
+- Virtual Host Management
+- Database Management (MySQL/PostgreSQL)
+- DNS Management
+- FTP Account Management
+- SSL Certificate Management
+- Email Account Management
+- User Management with Role-based Access Control
+- Real-time System Monitoring
+- Backup Management
+- Security Features
 
 ## System Requirements
+
 - Ubuntu Server 20.04 LTS or newer
-- Python 3.8+
-- Node.js 16+
-- PostgreSQL 12+
-- Nginx
+- Minimum 2GB RAM
+- 20GB free disk space
+- Public IP address (for production use)
+- Domain name (for production use)
 
-## Installation Steps
+## Quick Installation
 
-### 1. System Dependencies
-```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install system dependencies
-sudo apt install -y python3-pip python3-venv nginx postgresql postgresql-contrib
-
-# Install Node.js
-curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-sudo apt install -y nodejs
-```
-
-### 2. Clone Repository
+1. Download the latest release:
 ```bash
 git clone https://github.com/yourusername/controlpanel.git
 cd controlpanel
 ```
 
-### 3. Backend Setup
+2. Run the installation script:
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Setup database
-sudo -u postgres psql
-CREATE DATABASE controlpanel;
-CREATE USER cpanel WITH PASSWORD 'your_password';
-GRANT ALL PRIVILEGES ON DATABASE controlpanel TO cpanel;
-\q
-
-# Run migrations
-python manage.py db upgrade
+sudo chmod +x install.sh
+sudo ./install.sh
 ```
 
-### 4. Frontend Setup
-```bash
-cd frontend
-npm install
-npm run build
-```
+3. Follow the installation prompts:
+   - Enter your domain name (or use default 'localhost')
+   - Enter admin email
+   - Choose installation directory
 
-### 5. Configure Nginx
-```bash
-sudo nano /etc/nginx/sites-available/controlpanel
+4. Save the credentials from the generated admin_credentials.txt file
 
-# Add this configuration:
-server {
-    listen 80;
-    server_name your_domain.com;
+## Manual Installation
 
-    location / {
-        root /path/to/controlpanel/frontend/dist;
-        try_files $uri $uri/ /index.html;
-    }
+See [INSTALL.md](INSTALL.md) for detailed installation instructions.
 
-    location /api {
-        proxy_pass http://127.0.0.1:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
+## Configuration
 
-# Enable the site
-sudo ln -s /etc/nginx/sites-available/controlpanel /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-```
+The control panel can be configured through the .env file in the installation directory. Common configuration options:
 
-### 6. Setup Systemd Service
-```bash
-sudo nano /etc/systemd/system/controlpanel.service
-
-# Add this configuration:
-[Unit]
-Description=Control Panel Backend
-After=network.target
-
-[Service]
-User=www-data
-WorkingDirectory=/path/to/controlpanel/backend
-Environment="PATH=/path/to/controlpanel/backend/venv/bin"
-ExecStart=/path/to/controlpanel/backend/venv/bin/python app.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-
-# Start the service
-sudo systemctl enable controlpanel
-sudo systemctl start controlpanel
-```
+- `DB_HOST`: Database host
+- `DB_USER`: Database user
+- `DB_PASSWORD`: Database password
+- `DB_NAME`: Database name
+- `SECRET_KEY`: Application secret key
+- `JWT_SECRET_KEY`: JWT token secret key
+- `DEBUG`: Debug mode (True/False)
+- `PORT`: Backend port
+- `DOMAIN_NAME`: Your domain name
+- `NGINX_PORT`: Nginx listening port
+- `SSL_ENABLED`: SSL status
 
 ## Security Recommendations
-1. Enable SSL/TLS using Let's Encrypt
-2. Configure UFW firewall
-3. Set up fail2ban
-4. Regular system updates
-5. Database backups
+
+1. Change default database password
+2. Enable SSL/TLS using Let's Encrypt
+3. Configure UFW firewall
+4. Set up fail2ban
+5. Regular system updates
+6. Regular database backups
 
 ## Monitoring
-1. Set up system monitoring using Prometheus/Grafana
-2. Configure log rotation
-3. Set up email alerts for critical events 
+
+The control panel includes built-in monitoring for:
+- System resources (CPU, Memory, Disk)
+- Service status
+- Security events
+- Access logs
+
+## Backup and Restore
+
+Backup scripts are included for:
+- Database backup
+- Configuration backup
+- Website content backup
+
+See [BACKUP.md](BACKUP.md) for detailed instructions.
+
+## Uninstallation
+
+To remove the control panel:
+
+```bash
+sudo chmod +x uninstall.sh
+sudo ./uninstall.sh
+```
+
+## Troubleshooting
+
+Common issues and solutions can be found in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Support
+
+- Documentation: [docs/](docs/)
+- Issue Tracker: [GitHub Issues](https://github.com/yourusername/controlpanel/issues)
+- Wiki: [GitHub Wiki](https://github.com/yourusername/controlpanel/wiki)
+
+## Acknowledgments
+
+- Flask team
+- React team
+- All contributors 

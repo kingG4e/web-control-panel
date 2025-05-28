@@ -1,258 +1,293 @@
 #!/bin/bash
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
+# Exit on error
+set -e
+
+# Colors
 RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Define ports
-FRONTEND_PORT=8888
-BACKEND_PORT=8889
+# Default values
+AUTO_MODE=false
+CONFIG_FILE=""
 
-echo -e "${BLUE}Web Hosting Control Panel Installer${NC}"
-echo "=============================="
-echo -e "${BLUE}Frontend will run on port: $FRONTEND_PORT${NC}"
-echo -e "${BLUE}Backend API will run on port: $BACKEND_PORT${NC}"
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --auto-mode)
+            AUTO_MODE=true
+            shift
+            ;;
+        --config)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+# Load configuration if in auto mode
+if [ "$AUTO_MODE" = true ] && [ -f "$CONFIG_FILE" ]; then
+    echo -e "${YELLOW}Loading configuration from: $CONFIG_FILE${NC}"
+    source <(grep = "$CONFIG_FILE" | sed 's/ *= */=/g')
+else
+    # Interactive mode - ask for configuration
+    read -p "Enter domain name (default: localhost): " DOMAIN
+    DOMAIN=${DOMAIN:-localhost}
+    read -p "Enter admin email (default: admin@localhost): " ADMIN_EMAIL
+    ADMIN_EMAIL=${ADMIN_EMAIL:-admin@localhost}
+fi
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then 
-    echo -e "${RED}Please run as root (use sudo)${NC}"
+    echo -e "${RED}Please run as root${NC}"
     exit 1
 fi
 
-# Get installation directory
-INSTALL_DIR="/opt/controlpanel"
-echo -e "${BLUE}Installation Directory: $INSTALL_DIR${NC}"
-
-# Check if ports are available
-check_port() {
-    if lsof -Pi :$1 -sTCP:LISTEN -t >/dev/null ; then
-        echo -e "${RED}Port $1 is already in use. Please choose different ports.${NC}"
-        exit 1
-    fi
-}
-
-echo -e "${BLUE}Checking if ports are available...${NC}"
-check_port $FRONTEND_PORT
-check_port $BACKEND_PORT
-
-# Get admin username (system user)
-while true; do
-    read -p "Enter system username for admin access: " ADMIN_USER
-    if [ -z "$ADMIN_USER" ]; then
-        echo -e "${RED}Username is required${NC}"
-        continue
-    fi
-    
-    # Check if user exists
-    if id "$ADMIN_USER" >/dev/null 2>&1; then
-        break
-    else
-        echo -e "${RED}User $ADMIN_USER does not exist in the system${NC}"
-    fi
-done
-
-# Get database password
-read -s -p "Enter database password for control panel: " DB_PASSWORD
-echo
-if [ -z "$DB_PASSWORD" ]; then
-    echo -e "${RED}Database password is required${NC}"
+# Check OS
+if ! grep -q "Ubuntu" /etc/os-release; then
+    echo -e "${RED}This script only supports Ubuntu Server${NC}"
     exit 1
 fi
 
-echo -e "\n${GREEN}Starting installation...${NC}"
+# Welcome message
+echo -e "${GREEN}Welcome to Control Panel Installation${NC}"
+echo -e "${YELLOW}This script will automatically install and configure the Control Panel.${NC}"
+
+# Get server IP
+SERVER_IP=$(hostname -I | cut -d' ' -f1)
+echo -e "${YELLOW}Detected Server IP: ${SERVER_IP}${NC}"
+
+# Generate secure passwords
+DB_ROOT_PASSWORD=$(openssl rand -base64 12)
+DB_USER_PASSWORD=$(openssl rand -base64 12)
+ADMIN_PASSWORD=$(openssl rand -base64 12)
+JWT_SECRET=$(openssl rand -base64 32)
+APP_SECRET=$(openssl rand -base64 32)
 
 # Update system
-echo -e "${BLUE}Updating system packages...${NC}"
+echo -e "${YELLOW}Updating system packages...${NC}"
 apt update && apt upgrade -y
 
-# Install dependencies
-echo -e "${BLUE}Installing system dependencies...${NC}"
-apt install -y python3-pip python3-venv nginx postgresql postgresql-contrib git lsof
+# Install LAMP stack and other requirements
+echo -e "${YELLOW}Installing required packages...${NC}"
+apt install -y python3 python3-pip python3-venv nginx mysql-server \
+    php8.1-fpm php8.1-mysql php8.1-curl php8.1-gd php8.1-mbstring php8.1-xml \
+    bind9 vsftpd postfix certbot python3-certbot-nginx nodejs npm \
+    fail2ban ufw
 
-# Install Node.js
-echo -e "${BLUE}Installing Node.js...${NC}"
-curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
-apt install -y nodejs
+# Configure MySQL
+echo -e "${YELLOW}Configuring MySQL...${NC}"
+mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_ROOT_PASSWORD';"
+mysql -e "CREATE DATABASE cpanel;"
+mysql -e "CREATE USER 'cpanel'@'localhost' IDENTIFIED BY '$DB_USER_PASSWORD';"
+mysql -e "GRANT ALL PRIVILEGES ON cpanel.* TO 'cpanel'@'localhost';"
+mysql -e "FLUSH PRIVILEGES;"
 
-# Create installation directory
-mkdir -p $INSTALL_DIR
-cd $INSTALL_DIR
+# Configure PHP
+echo -e "${YELLOW}Configuring PHP...${NC}"
+sed -i 's/upload_max_filesize = .*/upload_max_filesize = 64M/' /etc/php/8.1/fpm/php.ini
+sed -i 's/post_max_size = .*/post_max_size = 64M/' /etc/php/8.1/fpm/php.ini
+sed -i 's/memory_limit = .*/memory_limit = 256M/' /etc/php/8.1/fpm/php.ini
+systemctl restart php8.1-fpm
 
-# Clone repository
-echo -e "${BLUE}Cloning repository...${NC}"
-git clone https://github.com/kingG4e/web-control-panel.git .
+# Setup application
+INSTALL_DIR=${INSTALL_DIR:-"/opt/cpanel"}
+echo -e "${YELLOW}Setting up application in ${INSTALL_DIR}...${NC}"
 
-# Setup Python virtual environment
-echo -e "${BLUE}Setting up Python environment...${NC}"
+# Create virtual environment and install dependencies
+echo -e "${YELLOW}Setting up Python environment...${NC}"
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Setup database
-echo -e "${BLUE}Setting up database...${NC}"
-sudo -u postgres psql << EOF
-CREATE DATABASE controlpanel;
-CREATE USER cpanel WITH PASSWORD '$DB_PASSWORD';
-GRANT ALL PRIVILEGES ON DATABASE controlpanel TO cpanel;
+# Configure application
+echo -e "${YELLOW}Configuring application...${NC}"
+cat > .env << EOF
+DB_HOST=localhost
+DB_USER=cpanel
+DB_PASSWORD=$DB_USER_PASSWORD
+DB_NAME=cpanel
+SECRET_KEY=$APP_SECRET
+JWT_SECRET_KEY=$JWT_SECRET
+DEBUG=False
+PORT=8889
+DOMAIN_NAME=${DOMAIN:-$SERVER_IP}
+ADMIN_EMAIL=${ADMIN_EMAIL:-admin@localhost}
+NGINX_PORT=80
+SSL_ENABLED=False
 EOF
 
-# Configure database connection and backend port
-cat > backend/config.py << EOF
-SQLALCHEMY_DATABASE_URI = 'postgresql://cpanel:$DB_PASSWORD@localhost/controlpanel'
-SQLALCHEMY_TRACK_MODIFICATIONS = False
-SECRET_KEY = '$(openssl rand -hex 32)'
-PORT = $BACKEND_PORT
-EOF
-
-# Create initial admin user in database
-echo -e "${BLUE}Creating admin user...${NC}"
-ADMIN_UID=$(id -u $ADMIN_USER)
-sudo -u postgres psql controlpanel << EOF
-INSERT INTO users (username, email, is_active, is_system_user, system_uid, role) 
-VALUES ('$ADMIN_USER', '$ADMIN_USER@localhost', true, true, $ADMIN_UID, 'admin');
-EOF
-
-# Run database migrations
-echo -e "${BLUE}Running database migrations...${NC}"
-cd backend
-python manage.py db upgrade
-cd ..
-
-# Configure frontend API endpoint
-echo -e "${BLUE}Configuring frontend API endpoint...${NC}"
-cat > frontend/.env << EOF
-VITE_API_URL=http://localhost:$BACKEND_PORT/api
-EOF
-
-# Build frontend
-echo -e "${BLUE}Building frontend...${NC}"
+# Setup Frontend
+echo -e "${YELLOW}Setting up frontend...${NC}"
 cd frontend
 npm install
 npm run build
 cd ..
 
-# Configure Nginx for custom ports
-echo -e "${BLUE}Configuring Nginx...${NC}"
-cat > /etc/nginx/sites-available/controlpanel << EOF
-# Default server for localhost access
+# Configure Nginx with optimizations
+echo -e "${YELLOW}Configuring Nginx...${NC}"
+cat > /etc/nginx/sites-available/cpanel.conf << EOF
 server {
-    listen $FRONTEND_PORT default_server;
-    listen [::]:$FRONTEND_PORT default_server;
-    server_name localhost 127.0.0.1 controlpanel.local;
-
+    listen 80;
+    server_name ${DOMAIN:-$SERVER_IP};
+    client_max_body_size 64M;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff";
+    
+    # Gzip compression
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+    
     location / {
-        root $INSTALL_DIR/frontend/dist;
+        root $INSTALL_DIR/frontend/build;
         try_files \$uri \$uri/ /index.html;
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
     }
 
     location /api {
-        proxy_pass http://127.0.0.1:$BACKEND_PORT;
+        proxy_pass http://localhost:8889;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/controlpanel /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default  # Remove default nginx site
-nginx -t && systemctl restart nginx
+ln -sf /etc/nginx/sites-available/cpanel.conf /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
 
-# Configure systemd service
-echo -e "${BLUE}Configuring system service...${NC}"
-cat > /etc/systemd/system/controlpanel.service << EOF
+# Configure system services
+echo -e "${YELLOW}Configuring system services...${NC}"
+
+# Configure BIND
+sed -i 's/OPTIONS=.*/OPTIONS="-u bind -4"/' /etc/default/bind9
+systemctl restart bind9
+
+# Configure vsftpd
+sed -i 's/anonymous_enable=.*/anonymous_enable=NO/' /etc/vsftpd.conf
+sed -i 's/#local_enable=.*/local_enable=YES/' /etc/vsftpd.conf
+sed -i 's/#write_enable=.*/write_enable=YES/' /etc/vsftpd.conf
+sed -i 's/#chroot_local_user=.*/chroot_local_user=YES/' /etc/vsftpd.conf
+systemctl restart vsftpd
+
+# Setup directories and permissions
+echo -e "${YELLOW}Setting up directories and permissions...${NC}"
+mkdir -p /var/www/websites
+mkdir -p /var/log/cpanel
+chown -R www-data:www-data $INSTALL_DIR /var/www/websites
+chmod -R 755 $INSTALL_DIR /var/www/websites
+
+# Configure fail2ban
+echo -e "${YELLOW}Configuring fail2ban...${NC}"
+cat > /etc/fail2ban/jail.local << EOF
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+
+[sshd]
+enabled = true
+
+[nginx-http-auth]
+enabled = true
+EOF
+
+systemctl restart fail2ban
+
+# Create systemd service
+echo -e "${YELLOW}Creating systemd service...${NC}"
+cat > /etc/systemd/system/cpanel.service << EOF
 [Unit]
-Description=Control Panel Backend
-After=network.target
+Description=Control Panel Service
+After=network.target mysql.service
 
 [Service]
 User=www-data
-WorkingDirectory=$INSTALL_DIR/backend
+WorkingDirectory=$INSTALL_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
-Environment="PORT=$BACKEND_PORT"
-ExecStart=$INSTALL_DIR/backend/venv/bin/python app.py
+ExecStart=$INSTALL_DIR/venv/bin/python backend/app.py
 Restart=always
+StandardOutput=append:/var/log/cpanel/backend.log
+StandardError=append:/var/log/cpanel/backend-error.log
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Set permissions
-chown -R www-data:www-data $INSTALL_DIR
-chmod -R 755 $INSTALL_DIR
-
-# Start and enable service
-systemctl daemon-reload
-systemctl enable controlpanel
-systemctl start controlpanel
-
-# Configure firewall
-echo -e "${BLUE}Configuring firewall...${NC}"
-ufw allow $FRONTEND_PORT/tcp
-ufw allow $BACKEND_PORT/tcp
-ufw allow OpenSSH
-
-# Final steps
-echo -e "${GREEN}Installation completed!${NC}"
-echo -e "Your control panel is now available at:"
-echo -e "http://localhost:$FRONTEND_PORT"
-echo -e "http://127.0.0.1:$FRONTEND_PORT"
-echo -e "http://controlpanel.local:$FRONTEND_PORT"
-
-echo -e "\nAdmin access:"
-echo -e "Username: $ADMIN_USER (your system user)"
-echo -e "Password: Your system user password"
-
-# Create quick management script
-cat > /usr/local/bin/cpanel << EOF
-#!/bin/bash
-case "\$1" in
-    start)
-        systemctl start controlpanel
-        ;;
-    stop)
-        systemctl stop controlpanel
-        ;;
-    restart)
-        systemctl restart controlpanel
-        ;;
-    status)
-        systemctl status controlpanel
-        ;;
-    logs)
-        journalctl -u controlpanel -f
-        ;;
-    ports)
-        echo "Frontend Port: $FRONTEND_PORT"
-        echo "Backend Port: $BACKEND_PORT"
-        echo "Current port status:"
-        lsof -i :$FRONTEND_PORT
-        lsof -i :$BACKEND_PORT
-        ;;
-    *)
-        echo "Usage: cpanel {start|stop|restart|status|logs|ports}"
-        exit 1
-        ;;
-esac
+# Configure logrotate
+cat > /etc/logrotate.d/cpanel << EOF
+/var/log/cpanel/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 www-data adm
+}
 EOF
 
-chmod +x /usr/local/bin/cpanel
+# Start services
+echo -e "${YELLOW}Starting services...${NC}"
+systemctl daemon-reload
+systemctl enable cpanel fail2ban
+systemctl start cpanel
 
-echo -e "\n${BLUE}Quick management commands:${NC}"
-echo "cpanel start   - Start the control panel"
-echo "cpanel stop    - Stop the control panel"
-echo "cpanel restart - Restart the control panel"
-echo "cpanel status  - Check control panel status"
-echo "cpanel logs    - View control panel logs"
-echo "cpanel ports   - Check port status"
-
-# Add hosts entry
-echo -e "\n${BLUE}Adding localhost entry to hosts file...${NC}"
-if ! grep -q "controlpanel.local" /etc/hosts; then
-    echo "127.0.0.1 controlpanel.local" >> /etc/hosts
+# Setup SSL if domain is provided
+if [ "$DOMAIN" != "localhost" ] && [ "$DOMAIN" != "$SERVER_IP" ]; then
+    echo -e "${YELLOW}Setting up SSL certificate...${NC}"
+    certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m ${ADMIN_EMAIL:-admin@localhost}
 fi
 
-echo -e "\n${GREEN}Port Information:${NC}"
-echo "Frontend Web Interface: $FRONTEND_PORT"
-echo "Backend API: $BACKEND_PORT" 
+# Save credentials
+echo -e "${YELLOW}Saving credentials...${NC}"
+cat > $INSTALL_DIR/credentials.txt << EOF
+Control Panel Credentials
+=======================
+URL: http://${DOMAIN:-$SERVER_IP}
+Admin Username: admin
+Admin Password: $ADMIN_PASSWORD
+MySQL Root Password: $DB_ROOT_PASSWORD
+MySQL User: cpanel
+MySQL Password: $DB_USER_PASSWORD
+Installation Directory: $INSTALL_DIR
+
+Please save these credentials and delete this file!
+EOF
+
+chmod 600 $INSTALL_DIR/credentials.txt
+
+# Final message
+echo -e "${GREEN}Installation completed successfully!${NC}"
+echo -e "Control Panel URL: http://${DOMAIN:-$SERVER_IP}"
+echo -e "Admin Username: admin"
+echo -e "Admin Password: $ADMIN_PASSWORD"
+echo -e "\n${YELLOW}All credentials have been saved to: $INSTALL_DIR/credentials.txt${NC}"
+echo -e "${YELLOW}IMPORTANT: Save these credentials and delete the credentials.txt file!${NC}"
+
+# Setup basic firewall
+echo -e "${YELLOW}Setting up basic firewall...${NC}"
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow 22/tcp
+ufw allow 53/tcp
+ufw allow 53/udp
+ufw allow 21/tcp
+ufw allow 'Nginx Full'
+
+echo -e "${GREEN}Setup complete! You can now access your control panel at: http://${DOMAIN:-$SERVER_IP}${NC}" 

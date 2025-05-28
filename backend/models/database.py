@@ -8,6 +8,7 @@ class Database(db.Model):
     collation = db.Column(db.String(32), default='utf8mb4_unicode_ci')
     size = db.Column(db.Float)  # Size in MB
     status = db.Column(db.String(50), default='active')
+    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
