@@ -565,4 +565,139 @@ configure_system() {
     configure_ports
     
     # ... rest of existing code ...
-} 
+}
+
+# Configure MySQL
+configure_mysql() {
+    echo -e "${BLUE}Configuring MySQL...${NC}"
+    
+    # Stop MySQL
+    systemctl stop mysql
+
+    # Initialize MySQL with safe settings
+    rm -rf /var/lib/mysql/*
+    mysqld --initialize-insecure > /dev/null 2>&1
+    
+    # Start MySQL
+    systemctl start mysql
+    
+    # Disable password validation plugin and set simple password policy
+    mysql --user=root << EOF
+SET GLOBAL validate_password.policy=LOW;
+SET GLOBAL validate_password.length=6;
+SET GLOBAL validate_password.mixed_case_count=0;
+SET GLOBAL validate_password.number_count=0;
+SET GLOBAL validate_password.special_char_count=0;
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_ROOT_PASSWORD';
+FLUSH PRIVILEGES;
+
+CREATE DATABASE IF NOT EXISTS cpanel;
+CREATE USER IF NOT EXISTS 'cpanel'@'localhost' IDENTIFIED BY '$DB_USER_PASSWORD';
+GRANT ALL PRIVILEGES ON cpanel.* TO 'cpanel'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+    # Create MySQL configuration
+    cat > /etc/mysql/mysql.conf.d/mysqld.cnf << EOF
+[mysqld]
+pid-file        = /var/run/mysqld/mysqld.pid
+socket          = /var/run/mysqld/mysqld.sock
+datadir         = /var/lib/mysql
+log-error       = /var/log/mysql/error.log
+bind-address    = 127.0.0.1
+symbolic-links  = 0
+default_authentication_plugin = mysql_native_password
+validate_password.policy = LOW
+validate_password.length = 6
+validate_password.mixed_case_count = 0
+validate_password.number_count = 0
+validate_password.special_char_count = 0
+EOF
+
+    # Restart MySQL to apply changes
+    systemctl restart mysql
+
+    echo -e "${GREEN}✓${NC} MySQL configured successfully"
+}
+
+# Update package installation
+install_packages() {
+    echo -e "${BLUE}Installing required packages...${NC}"
+    
+    # Update package list silently
+    apt update -qq > /dev/null 2>&1
+    
+    # Remove any existing installations
+    apt purge -y apache2* mysql* mariadb* php* vsftpd bind9 > /dev/null 2>&1
+    apt autoremove -y > /dev/null 2>&1
+    
+    # Add required repositories silently
+    apt install -y software-properties-common > /dev/null 2>&1
+    add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - > /dev/null 2>&1
+    apt update -qq > /dev/null 2>&1
+    
+    # Install packages with noninteractive mode
+    export DEBIAN_FRONTEND=noninteractive
+    apt install -y nginx mysql-server php8.1-fpm php8.1-mysql php8.1-curl \
+        php8.1-gd php8.1-mbstring php8.1-xml php8.1-cli nodejs bind9 vsftpd \
+        postfix certbot python3-certbot-nginx fail2ban ufw > /dev/null 2>&1
+        
+    echo -e "${GREEN}✓${NC} Packages installed successfully"
+}
+
+# Main installation process
+main() {
+    clear
+    echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║      Control Panel Installation        ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
+    echo
+    
+    # Generate secure passwords
+    DB_ROOT_PASSWORD=$(openssl rand -base64 12)
+    DB_USER_PASSWORD=$(openssl rand -base64 12)
+    ADMIN_PASSWORD=$(openssl rand -base64 12)
+    
+    # Installation steps
+    TOTAL_STEPS=5
+    CURRENT_STEP=0
+    
+    # Step 1: Install packages
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_progress $CURRENT_STEP $TOTAL_STEPS "Installing packages"
+    install_packages
+    
+    # Step 2: Configure MySQL
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_progress $CURRENT_STEP $TOTAL_STEPS "Configuring MySQL"
+    configure_mysql
+    
+    # Step 3: Configure PHP and Nginx
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_progress $CURRENT_STEP $TOTAL_STEPS "Configuring web services"
+    configure_web_services
+    
+    # Step 4: Configure SSO
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_progress $CURRENT_STEP $TOTAL_STEPS "Configuring SSO"
+    configure_sso
+    
+    # Step 5: Configure ports
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_progress $CURRENT_STEP $TOTAL_STEPS "Configuring ports"
+    configure_ports
+    
+    # Show completion message
+    echo -e "\n${GREEN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║      Installation Complete! 🎉          ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+    echo -e "\nControl Panel is ready to use!"
+    echo -e "URL: http://${DOMAIN:-$SERVER_IP}:${CPANEL_HTTP_PORT}"
+    echo -e "Admin Username: admin"
+    echo -e "Admin Password: $ADMIN_PASSWORD"
+    echo -e "\nCredentials have been saved to: /root/cpanel-credentials.txt"
+}
+
+# Start installation
+main 
