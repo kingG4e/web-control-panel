@@ -7,4 +7,10 @@ mariadb==1.1.7
 python-dotenv==1.0.0
 SQLAlchemy==2.0.23
 alembic==1.12.1
-gunicorn==21.2.0 
+gunicorn==21.2.0
+psutil==5.9.5
+python-crontab==3.0.0
+paramiko==3.3.1
+pyOpenSSL==23.2.0
+dnspython==2.4.2
+requests==2.31.0 
