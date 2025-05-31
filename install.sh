@@ -398,10 +398,10 @@ EOF
 main() {
     clear
     echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║       Easy Control Panel Setup         ║${NC}"
+    echo -e "${BLUE}║      Web Control Panel Installer       ║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
     echo
-    
+
     # Check if running as root
     if [ "$EUID" -ne 0 ]; then 
         echo -e "${RED}Please run this script as root (use sudo)${NC}"
@@ -417,7 +417,7 @@ main() {
     
     # Show completion message
     echo -e "\n${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║       Installation Complete! 🎉        ║${NC}"
+    echo -e "${GREEN}║         ติดตั้งเสร็จเรียบร้อย          ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
     echo -e "\nControl Panel URL: http://localhost:${CPANEL_HTTP_PORT}"
     echo -e "Credentials saved to: /root/cpanel-credentials.txt"
