@@ -20,21 +20,30 @@ CONTROL_PANEL_PORT=2087  # Standard secure port like cPanel
 # Auto detect server IP
 echo "Detecting server IP..."
 if command -v curl &> /dev/null; then
-    SERVER_IP=$(curl -s ifconfig.me)
+    # Try to get public IPv4
+    SERVER_IP=$(curl -4 -s ifconfig.me || curl -4 -s icanhazip.com)
+    if [ -z "$SERVER_IP" ]; then
+        # Fallback to local IPv4
+        SERVER_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | head -n 1)
+    fi
 elif command -v wget &> /dev/null; then
-    SERVER_IP=$(wget -qO- ifconfig.me)
+    SERVER_IP=$(wget -4 -qO- ifconfig.me || wget -4 -qO- icanhazip.com)
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | head -n 1)
+    fi
 else
-    SERVER_IP=$(hostname -I | awk '{print $1}')
+    # Get local IPv4 only
+    SERVER_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | head -n 1)
 fi
 
 if [ -z "$SERVER_IP" ]; then
-    echo "Could not detect server IP automatically."
-    read -p "Please enter server IP address manually: " SERVER_IP
+    echo "Could not detect IPv4 address automatically."
+    read -p "Please enter server IPv4 address manually: " SERVER_IP
 else
-    echo "Detected server IP: $SERVER_IP"
+    echo "Detected server IPv4: $SERVER_IP"
     read -p "Is this IP correct? (y/n): " CONFIRM_IP
     if [ "$CONFIRM_IP" != "y" ]; then
-        read -p "Please enter correct server IP: " SERVER_IP
+        read -p "Please enter correct IPv4 address: " SERVER_IP
     fi
 fi
 
