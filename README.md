@@ -1,61 +1,73 @@
 # Control Panel
 
-A comprehensive server management control panel with features for managing Virtual Hosts, DNS, Email, Database, SSL Certificates, and FTP.
+ระบบจัดการเซิร์ฟเวอร์แบบครบวงจร สำหรับจัดการ Virtual Hosts, DNS, ฐานข้อมูล, และการตั้งค่าระบบต่างๆ
 
-## Features
+## คุณสมบัติ
 
-- Virtual Hosts Management
-- DNS Zone and Records Management
-- Email Domain and Account Management
-- Database Management
-- SSL Certificate Management
-- FTP User Management
-- User Authentication and Authorization
-- Rate Limiting
-- Audit Logging
-- Security Headers
+- ระบบจัดการ Virtual Hosts
+- ระบบจัดการ DNS Zone และ Records
+- ระบบจัดการฐานข้อมูล
+- ระบบรักษาความปลอดภัย
+- ระบบล็อกและติดตามการใช้งาน
+- หน้าจอควบคุมที่ใช้งานง่าย
 
-## Requirements
+## ความต้องการของระบบ
 
-- Python 3.8+
-- Node.js 16+
-- Redis Server
-- Linux Operating System
+- Linux (Ubuntu, Debian, CentOS, RHEL, Fedora, หรือ Arch Linux)
+- RAM อย่างน้อย 1GB
+- พื้นที่ว่างอย่างน้อย 5GB
+- Python 3.8 หรือสูงกว่า
+- Node.js 16 หรือสูงกว่า
 
-## Quick Installation
+## การติดตั้ง
 
-1. Clone the repository:
+### วิธีที่ 1: ติดตั้งอัตโนมัติ (แนะนำ)
+
+1. ดาวน์โหลดและเข้าไปยังโฟลเดอร์:
 ```bash
 git clone https://github.com/yourusername/controlpanel.git
 cd controlpanel
 ```
 
-2. Run the setup script:
+2. รันสคริปต์ติดตั้ง:
 ```bash
-chmod +x setup.sh
-./setup.sh
+chmod +x install.sh
+sudo ./install.sh
 ```
 
-The setup script will:
-- Install required dependencies
-- Set up Python virtual environment
-- Install Python packages
-- Install and build frontend
-- Configure environment variables
-- Create and start systemd service
+สคริปต์จะดำเนินการ:
+- ตรวจสอบระบบและความต้องการเบื้องต้น
+- ติดตั้งแพ็คเกจที่จำเป็น (Nginx, MariaDB, Redis)
+- ตั้งค่าสภาพแวดล้อม Python
+- ติดตั้งและ Build หน้าเว็บ
+- ตั้งค่าฐานข้อมูลและรหัสผ่าน
+- สร้างและเริ่มบริการระบบ
 
-## Manual Installation
+### วิธีที่ 2: ติดตั้งด้วยตนเอง
 
-If you prefer to install manually:
+สำหรับผู้ที่ต้องการควบคุมการติดตั้งเอง:
 
-1. Set up Python environment:
+1. ติดตั้งแพ็คเกจที่จำเป็น:
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+# Ubuntu/Debian
+sudo apt update
+sudo apt install python3-pip python3-venv nodejs npm nginx mariadb-server redis-server
+
+# CentOS/RHEL/Fedora
+sudo dnf install python3-pip python3-devel nodejs nginx mariadb-server redis
+
+# Arch Linux
+sudo pacman -Sy python python-pip nodejs npm nginx mariadb redis
+```
+
+2. ตั้งค่าสภาพแวดล้อม Python:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Set up frontend:
+3. ตั้งค่าและ Build หน้าเว็บ:
 ```bash
 cd frontend
 npm install
@@ -63,83 +75,110 @@ npm run build
 cd ..
 ```
 
-3. Create environment file:
+4. ตั้งค่าฐานข้อมูล:
 ```bash
-cat > .env << EOL
-FLASK_APP=backend/app.py
-FLASK_ENV=production
-SECRET_KEY=your_secret_key
-JWT_SECRET_KEY=your_jwt_secret
-DATABASE_URL=sqlite:///instance/controlpanel.db
-REDIS_URL=redis://localhost:6379/0
+sudo systemctl start mariadb
+sudo mysql -e "CREATE DATABASE controlpanel;"
+sudo mysql -e "CREATE USER 'controlpanel'@'localhost' IDENTIFIED BY 'your_password';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON controlpanel.* TO 'controlpanel'@'localhost';"
+```
+
+5. สร้างไฟล์ .env:
+```bash
+cat > backend/.env << EOL
+DB_HOST=localhost
+DB_USER=controlpanel
+DB_PASSWORD=your_password
+DB_NAME=controlpanel
+REDIS_HOST=localhost
+REDIS_PORT=6379
+JWT_SECRET_KEY=$(openssl rand -hex 32)
 EOL
 ```
 
-4. Start the application:
-```bash
-python backend/app.py
-```
+## การใช้งาน
 
-## Usage
+หลังจากติดตั้งเสร็จ:
 
-After installation:
+1. เข้าใช้งานที่:
+   - HTTP: `http://your-server:2080`
+   - HTTPS: `https://your-server:2083`
 
-1. Access the control panel at `http://localhost:5000`
-2. Log in with default credentials:
+2. ล็อกอินด้วยบัญชีเริ่มต้น:
    - Username: admin
    - Password: admin123
-3. Change the default password immediately after first login
 
-## API Documentation
+3. **สำคัญ**: ควรเปลี่ยนรหัสผ่านทันทีหลังจากล็อกอินครั้งแรก
 
-The API endpoints are organized by feature:
+## พอร์ตที่ใช้งาน
 
-- Authentication: `/api/auth/*`
-- Virtual Hosts: `/api/virtual-hosts/*`
-- DNS: `/api/dns/*`
-- Email: `/api/email/*`
-- Database: `/api/databases/*`
-- SSL: `/api/ssl/*`
-- FTP: `/api/ftp/*`
+- HTTP: 2080
+- HTTPS: 2083
+- MariaDB: 3306
+- Redis: 6379
+- Backend API: 5000
 
-For detailed API documentation, see [API.md](API.md)
+## การถอนการติดตั้ง
 
-## Security
-
-- All passwords are hashed using bcrypt
-- JWT authentication for API access
-- Rate limiting on sensitive endpoints
-- Security headers enabled
-- Input validation and sanitization
-- Audit logging for all important actions
-
-## Development
-
-To run in development mode:
-
-1. Start backend:
+1. ใช้สคริปต์ถอนการติดตั้งอัตโนมัติ:
 ```bash
-source venv/bin/activate
-export FLASK_ENV=development
-python backend/app.py
+sudo ./uninstall.sh
 ```
 
-2. Start frontend development server:
+2. หรือใช้สคริปต์ลบด้วยตนเอง:
+```bash
+sudo ./remove_controlpanel.sh
+```
+
+## ความปลอดภัย
+
+- รหัสผ่านทั้งหมดถูกเข้ารหัสด้วย bcrypt
+- ใช้ JWT สำหรับการยืนยันตัวตน API
+- มีระบบจำกัดการเรียกใช้งาน (Rate Limiting)
+- มีการบันทึกการใช้งานระบบ (Audit Logging)
+- มีการตรวจสอบและป้องกันการป้อนข้อมูลที่ไม่ปลอดภัย
+
+## การแก้ไขปัญหา
+
+1. ตรวจสอบสถานะบริการ:
+```bash
+sudo systemctl status controlpanel
+sudo systemctl status nginx
+sudo systemctl status mariadb
+sudo systemctl status redis
+```
+
+2. ดูล็อกการทำงาน:
+```bash
+sudo journalctl -u controlpanel
+sudo tail -f /var/log/nginx/error.log
+```
+
+3. ตรวจสอบการเชื่อมต่อ:
+```bash
+curl http://localhost:2080
+curl http://localhost:5000/api/health
+```
+
+## การพัฒนา
+
+สำหรับนักพัฒนา:
+
+1. เริ่ม Backend ในโหมดพัฒนา:
+```bash
+source .venv/bin/activate
+cd backend
+FLASK_ENV=development python app.py
+```
+
+2. เริ่ม Frontend ในโหมดพัฒนา:
 ```bash
 cd frontend
 npm start
 ```
 
-The frontend will be available at `http://localhost:3000`
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+Frontend จะทำงานที่ `http://localhost:3000`
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details 
+โครงการนี้อยู่ภายใต้ MIT License - ดูรายละเอียดได้ที่ไฟล์ [LICENSE](LICENSE) 
