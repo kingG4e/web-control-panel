@@ -25,8 +25,8 @@
 
 1. ดาวน์โหลดและเข้าไปยังโฟลเดอร์:
 ```bash
-git clone https://github.com/yourusername/controlpanel.git
-cd controlpanel
+git clone https://github.com/kingG4e/web-control-panel.git
+cd web-control-panel
 ```
 
 2. รันสคริปต์ติดตั้ง:
@@ -178,6 +178,19 @@ npm start
 ```
 
 Frontend จะทำงานที่ `http://localhost:3000`
+
+## การมีส่วนร่วมในการพัฒนา
+
+1. Fork repository นี้
+2. สร้าง branch ใหม่สำหรับฟีเจอร์ที่ต้องการพัฒนา
+3. Commit การเปลี่ยนแปลง
+4. Push ไปยัง branch ของคุณ
+5. สร้าง Pull Request
+
+## รายงานปัญหา
+
+หากพบปัญหาหรือต้องการแนะนำฟีเจอร์ใหม่ สามารถแจ้งได้ที่:
+https://github.com/kingG4e/web-control-panel/issues
 
 ## License
 
