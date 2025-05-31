@@ -1,153 +1,171 @@
-from flask import Flask, jsonify, send_from_directory, request
+from flask import Flask, jsonify, send_from_directory, request, current_app
 from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-from werkzeug.security import generate_password_hash, check_password_hash
-from dotenv import load_dotenv
 import os
 import secrets
-import mariadb
-import psutil
-import platform
-import subprocess
-import json
-
-# Load routes
-from routes.virtual_host import virtual_host_bp
-from routes.dns import dns_bp
-from routes.auth import auth_bp
-from routes.ftp import ftp_bp
-from routes.database import database_bp
-from routes.email import email_bp
-from routes.ssl import ssl_bp
-
-# Load models
-from models.virtual_host import db
-from models.user import User
-
-# Load environment variables if exists
-load_dotenv()
+import bcrypt
+from datetime import timedelta, datetime
+from models.database import db, init_db
+from utils.error_handlers import register_error_handlers, ValidationError, AuthenticationError
+from utils.security import setup_security_headers, RateLimiter, validate_password, authenticate_user
+from utils.logger import setup_logger, log_request, log_response, audit_log
 
 app = Flask(__name__, static_folder='../frontend/build', static_url_path='/')
 CORS(app)
 
-# Generate secure random keys if not provided
-def generate_secure_key():
-    return secrets.token_hex(32)
-
-# Database configuration with default values
-DB_USER = os.getenv('DB_USER', 'root')
-DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-DB_HOST = os.getenv('DB_HOST', 'localhost')
-DB_PORT = int(os.getenv('DB_PORT', '3306'))
-DB_NAME = os.getenv('DB_NAME', 'cpanel')
-
-# Try MariaDB connection
-try:
-    conn = mariadb.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    
-    cursor = conn.cursor()
-    cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    app.config['SQLALCHEMY_DATABASE_URI'] = f'mariadb+mariadbconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    print(f"Successfully connected to MariaDB on {DB_HOST}:{DB_PORT}")
-
-except mariadb.Error as e:
-    print(f"MariaDB connection failed: {e}")
-    print("Falling back to SQLite database...")
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///controlpanel.db'
-
-# Security configuration
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', generate_secure_key())
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', generate_secure_key())
+# Configure application
+app.config['SECRET_KEY'] = secrets.token_hex(32)
+app.config['JWT_SECRET_KEY'] = secrets.token_hex(32)
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///controlpanel.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
-db.init_app(app)
+init_db(app)
 jwt = JWTManager(app)
+rate_limiter = RateLimiter(app)
+
+# Setup error handlers and logging
+register_error_handlers(app)
+setup_logger(app)
+
+# Request logging
+@app.before_request
+def before_request():
+    log_request()
+
+# Response logging and security headers
+@app.after_request
+def after_request(response):
+    log_response(response)
+    return setup_security_headers(response)
+
+# User Model
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password = db.Column(db.String(120), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default='user')
+    last_login = db.Column(db.DateTime)
+    failed_login_attempts = db.Column(db.Integer, default=0)
+    is_system_user = db.Column(db.Boolean, default=False)
+    
+    # Relationships
+    virtual_hosts = db.relationship('VirtualHost', backref='user', lazy=True)
+
+# Import models and routes
+from models.virtual_host import VirtualHost
+from models.dns import DNSZone, DNSRecord
+from routes.dns import dns_bp
 
 # Register blueprints
-app.register_blueprint(virtual_host_bp, url_prefix='/api/virtual-hosts')
-app.register_blueprint(dns_bp, url_prefix='/api/dns')
-app.register_blueprint(auth_bp, url_prefix='/api/auth')
-app.register_blueprint(ftp_bp, url_prefix='/api/ftp')
-app.register_blueprint(database_bp, url_prefix='/api/database')
-app.register_blueprint(email_bp, url_prefix='/api/email')
-app.register_blueprint(ssl_bp, url_prefix='/api/ssl')
+app.register_blueprint(dns_bp)
 
-# System monitoring endpoints
-@app.route('/api/system/stats')
-@jwt_required()
-def system_stats():
-    cpu_percent = psutil.cpu_percent(interval=1)
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
-    
-    return jsonify({
-        'cpu': {
-            'percent': cpu_percent,
-            'cores': psutil.cpu_count()
-        },
-        'memory': {
-            'total': memory.total,
-            'used': memory.used,
-            'percent': memory.percent
-        },
-        'disk': {
-            'total': disk.total,
-            'used': disk.used,
-            'percent': disk.percent
-        },
-        'system': {
-            'platform': platform.system(),
-            'release': platform.release(),
-            'uptime': int(psutil.boot_time())
-        }
-    })
-
-# Service management endpoints
-@app.route('/api/services/status')
-@jwt_required()
-def service_status():
-    services = ['apache2', 'mariadb', 'vsftpd', 'bind9', 'postfix']
-    status = {}
-    
-    for service in services:
-        try:
-            result = subprocess.run(['systemctl', 'is-active', service], 
-                                 capture_output=True, text=True)
-            status[service] = result.stdout.strip()
-        except Exception as e:
-            status[service] = 'unknown'
-    
-    return jsonify(status)
-
-@app.route('/api/services/control', methods=['POST'])
-@jwt_required()
-def service_control():
-    data = request.get_json()
-    service = data.get('service')
-    action = data.get('action')
-    
-    if not service or not action:
-        return jsonify({'error': 'Missing service or action'}), 400
-        
-    if action not in ['start', 'stop', 'restart']:
-        return jsonify({'error': 'Invalid action'}), 400
-        
+# Create database tables
+with app.app_context():
     try:
-        subprocess.run(['systemctl', action, service], check=True)
-        return jsonify({'message': f'Service {service} {action}ed successfully'})
-    except subprocess.CalledProcessError as e:
-        return jsonify({'error': f'Failed to {action} {service}'}), 500
+        db.create_all()
+        app.logger.info("Database tables created successfully")
+    except Exception as e:
+        app.logger.error(f"Error creating database tables: {e}")
+
+# Authentication routes
+@app.route('/api/auth/login', methods=['POST'])
+@rate_limiter.limit('login', limit=5, period=300)  # 5 attempts per 5 minutes
+def login():
+    data = request.get_json()
+    
+    if not data or not data.get('username') or not data.get('password'):
+        raise ValidationError("Username and password are required")
+    
+    try:
+        user = authenticate_user(data.get('username'), data.get('password'))
+        
+        # Update login info
+        user.failed_login_attempts = 0
+        user.last_login = datetime.utcnow()
+        db.session.commit()
+        
+        # Create access token
+        access_token = create_access_token(identity=user.username)
+        audit_log(user, 'login', {
+            'method': 'system_user' if user.is_system_user else 'local_user'
+        })
+        
+        return jsonify({
+            'token': access_token,
+            'user': {
+                'username': user.username,
+                'role': user.role,
+                'is_system_user': user.is_system_user
+            }
+        }), 200
+        
+    except AuthenticationError as e:
+        audit_log(None, 'login_failed', {
+            'username': data.get('username'),
+            'reason': str(e)
+        })
+        raise ValidationError(str(e))
+    except Exception as e:
+        current_app.logger.error(f"Login error: {str(e)}")
+        raise ValidationError("An error occurred during login")
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    
+    if not data or not data.get('username') or not data.get('password'):
+        raise ValidationError("Username and password are required")
+    
+    # Validate password strength
+    is_valid, message = validate_password(data.get('password'))
+    if not is_valid:
+        raise ValidationError(message)
+    
+    if User.query.filter_by(username=data.get('username')).first():
+        raise ValidationError("Username already exists")
+    
+    hashed = bcrypt.hashpw(data.get('password').encode('utf-8'), bcrypt.gensalt())
+    new_user = User(
+        username=data.get('username'),
+        password=hashed.decode('utf-8'),
+        role='admin' if User.query.count() == 0 else 'user'
+    )
+    
+    db.session.add(new_user)
+    db.session.commit()
+    
+    audit_log(new_user, 'user_created')
+    return jsonify({'message': 'User created successfully'}), 201
+
+@app.route('/api/users/me', methods=['GET'])
+@jwt_required()
+def get_current_user():
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(username=current_user).first()
+    return jsonify({
+        'username': user.username,
+        'role': user.role,
+        'last_login': user.last_login.isoformat() if user.last_login else None
+    }), 200
+
+# Create initial admin user
+def create_admin_user():
+    with app.app_context():
+        if User.query.count() == 0:
+            hashed = bcrypt.hashpw('admin123'.encode('utf-8'), bcrypt.gensalt())
+            admin = User(
+                username='admin',
+                password=hashed.decode('utf-8'),
+                role='admin'
+            )
+            db.session.add(admin)
+            db.session.commit()
+            app.logger.info('Admin user created successfully')
+            print('Admin user created with credentials:')
+            print('Username: admin')
+            print('Password: admin123')
 
 # Serve frontend
 @app.route('/')
@@ -164,21 +182,9 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "version": "1.0.0",
-        "database": "MariaDB" if "mariadb" in app.config['SQLALCHEMY_DATABASE_URI'] else "SQLite"
+        "timestamp": datetime.utcnow().isoformat()
     })
 
-# Create database tables
-with app.app_context():
-    try:
-        db.create_all()
-        print("Database tables created successfully")
-    except Exception as e:
-        print(f"Error creating database tables: {e}")
-        if "mariadb" in app.config['SQLALCHEMY_DATABASE_URI']:
-            print("Falling back to SQLite database...")
-            app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///controlpanel.db'
-            db.create_all()
-
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5464))
-    app.run(host='0.0.0.0', port=port) 
+    create_admin_user()
+    app.run(debug=True, port=5000) 

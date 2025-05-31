@@ -1,5 +1,5 @@
 from datetime import datetime
-from models.virtual_host import db
+from models.database import db
 
 class DNSZone(db.Model):
     id = db.Column(db.Integer, primary_key=True)

@@ -125,6 +125,24 @@ const FTPManager: React.FC = () => {
         setNewRulePermissions('0755');
     };
 
+    const FormWrapper = ({ children, onSubmit }) => {
+        useEffect(() => {
+            const handleKeyPress = (e) => {
+                if (e.key === 'Escape') {
+                    // Close modal
+                }
+                if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                    e.preventDefault();
+                    onSubmit();
+                }
+            };
+            window.addEventListener('keydown', handleKeyPress);
+            return () => window.removeEventListener('keydown', handleKeyPress);
+        }, []);
+        
+        return <form>{children}</form>;
+    };
+
     if (loading) return <div className="p-4">Loading...</div>;
     if (error) return <div className="p-4 text-red-500">{error}</div>;
 

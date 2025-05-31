@@ -1,149 +1,145 @@
-# Web Hosting Control Panel
+# Control Panel
 
-A comprehensive web hosting control panel for managing websites, databases, DNS, FTP, and email services.
-
-## Quick Start
-
-```bash
-# Clone the repository
-git clone https://github.com/kingG4e/web-control-panel.git
-cd web-control-panel
-
-# Run the installation script (requires root/sudo)
-sudo ./setup.sh
-```
-
-The setup script will:
-1. Install MariaDB if not present
-2. Configure the database automatically
-3. Install all required dependencies
-4. Start both backend and frontend servers
-
-Access the control panel at:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8889
-
-Default database credentials:
-- Database: cpanel
-- Username: cpanel
-- Password: cpanel
-- Host: localhost
-- Port: 3306
+A comprehensive server management control panel with features for managing Virtual Hosts, DNS, Email, Database, SSL Certificates, and FTP.
 
 ## Features
 
-- Virtual Host Management
-- Database Management (MariaDB)
-- DNS Management
-- FTP Account Management
+- Virtual Hosts Management
+- DNS Zone and Records Management
+- Email Domain and Account Management
+- Database Management
 - SSL Certificate Management
-- Email Account Management
-- User Management with Role-based Access Control
-- Real-time System Monitoring
-- Backup Management
-- Security Features
+- FTP User Management
+- User Authentication and Authorization
+- Rate Limiting
+- Audit Logging
+- Security Headers
 
-## System Requirements
+## Requirements
 
-- Ubuntu Server 20.04 LTS or newer
-- Minimum 2GB RAM
-- 20GB free disk space
-- Public IP address (for production use)
-- Domain name (for production use)
+- Python 3.8+
+- Node.js 16+
+- Redis Server
+- Linux Operating System
+
+## Quick Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/controlpanel.git
+cd controlpanel
+```
+
+2. Run the setup script:
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+The setup script will:
+- Install required dependencies
+- Set up Python virtual environment
+- Install Python packages
+- Install and build frontend
+- Configure environment variables
+- Create and start systemd service
 
 ## Manual Installation
 
 If you prefer to install manually:
 
-1. Install system dependencies:
+1. Set up Python environment:
 ```bash
-# Install MariaDB
-sudo apt-get update
-sudo apt-get install -y mariadb-server mariadb-client
-
-# Install Python and Node.js
-sudo apt-get install -y python3 python3-pip python3-venv
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo bash -
-sudo apt-get install -y nodejs
-```
-
-2. Configure MariaDB:
-```bash
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS cpanel;"
-sudo mysql -e "CREATE USER IF NOT EXISTS 'cpanel'@'localhost' IDENTIFIED BY 'cpanel';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON cpanel.* TO 'cpanel'@'localhost';"
-sudo mysql -e "FLUSH PRIVILEGES;"
-```
-
-3. Set up the application:
-```bash
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install Python dependencies
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+```
 
-# Install and build frontend
+2. Set up frontend:
+```bash
 cd frontend
 npm install
 npm run build
+cd ..
 ```
 
-4. Start the servers:
+3. Create environment file:
 ```bash
-# Start backend (in a new terminal)
+cat > .env << EOL
+FLASK_APP=backend/app.py
+FLASK_ENV=production
+SECRET_KEY=your_secret_key
+JWT_SECRET_KEY=your_jwt_secret
+DATABASE_URL=sqlite:///instance/controlpanel.db
+REDIS_URL=redis://localhost:6379/0
+EOL
+```
+
+4. Start the application:
+```bash
 python backend/app.py
-
-# Start frontend (in another terminal)
-cd frontend && npm start
 ```
 
-## Security Recommendations
+## Usage
 
-1. Change default database password
-2. Enable SSL/TLS using Let's Encrypt
-3. Configure UFW firewall
-4. Set up fail2ban
-5. Regular system updates
-6. Regular database backups
+After installation:
 
-## Monitoring
+1. Access the control panel at `http://localhost:5000`
+2. Log in with default credentials:
+   - Username: admin
+   - Password: admin123
+3. Change the default password immediately after first login
 
-The control panel includes built-in monitoring for:
-- System resources (CPU, Memory, Disk)
-- Service status
-- Security events
-- Access logs
+## API Documentation
 
-## Backup and Restore
+The API endpoints are organized by feature:
 
-Backup scripts are included for:
-- Database backup
-- Configuration backup
-- Website content backup
+- Authentication: `/api/auth/*`
+- Virtual Hosts: `/api/virtual-hosts/*`
+- DNS: `/api/dns/*`
+- Email: `/api/email/*`
+- Database: `/api/databases/*`
+- SSL: `/api/ssl/*`
+- FTP: `/api/ftp/*`
 
-## Uninstallation
+For detailed API documentation, see [API.md](API.md)
 
-To remove the control panel:
+## Security
 
+- All passwords are hashed using bcrypt
+- JWT authentication for API access
+- Rate limiting on sensitive endpoints
+- Security headers enabled
+- Input validation and sanitization
+- Audit logging for all important actions
+
+## Development
+
+To run in development mode:
+
+1. Start backend:
 ```bash
-sudo ./uninstall.sh
+source venv/bin/activate
+export FLASK_ENV=development
+python backend/app.py
 ```
+
+2. Start frontend development server:
+```bash
+cd frontend
+npm start
+```
+
+The frontend will be available at `http://localhost:3000`
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-- Issue Tracker: [GitHub Issues](https://github.com/kingG4e/web-control-panel/issues)
-- Email: your.email@example.com
-
-## Authors
-
-- kingG4e - Initial work 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details 

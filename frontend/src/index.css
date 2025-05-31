@@ -2,38 +2,249 @@
 @tailwind components;
 @tailwind utilities;
 
+:root[data-theme="dark"] {
+  --primary-bg: #0f1520;
+  --secondary-bg: #1a2234;
+  --border-color: #2a3447;
+  --primary-text: #ffffff;
+  --secondary-text: #94a3b8;
+  --tertiary-text: #64748b;
+  --accent-color: #6366f1;
+  --accent-hover: #4f46e5;
+  --danger-color: #ef4444;
+  --success-color: #22c55e;
+  --warning-color: #f59e0b;
+  --info-color: #3b82f6;
+  
+  /* Shadows and Effects */
+  --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+  --hover-card-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+  --focus-ring: 0 0 0 3px rgba(99, 102, 241, 0.3);
+  --active-state: rgba(99, 102, 241, 0.2);
+  
+  /* Backgrounds */
+  --input-bg: #1a2234;
+  --hover-bg: rgba(255, 255, 255, 0.05);
+  --card-bg: #1a2234;
+  --stats-card-bg: rgba(26, 34, 52, 0.7);
+  --table-header-bg: #1a2234;
+  --code-bg: #2a3447;
+  --tooltip-bg: #0f1520;
+  --tooltip-text: #ffffff;
+  --modal-overlay: rgba(0, 0, 0, 0.7);
+  
+  /* Borders and Dividers */
+  --divider-color: #2a3447;
+  --hover-border: #3a4557;
+  --focus-border: #6366f1;
+}
+
+:root[data-theme="light"] {
+  --primary-bg: #f8fafc;
+  --secondary-bg: #ffffff;
+  --border-color: #e2e8f0;
+  --primary-text: #0f172a;
+  --secondary-text: #334155;
+  --tertiary-text: #64748b;
+  --accent-color: #4f46e5;
+  --accent-hover: #4338ca;
+  --danger-color: #dc2626;
+  --success-color: #16a34a;
+  --warning-color: #d97706;
+  --info-color: #2563eb;
+  
+  /* Shadows and Effects */
+  --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --hover-card-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --focus-ring: 0 0 0 3px rgba(79, 70, 229, 0.15);
+  --active-state: #e0e7ff;
+  
+  /* Backgrounds */
+  --input-bg: #ffffff;
+  --hover-bg: rgba(0, 0, 0, 0.02);
+  --card-bg: #ffffff;
+  --stats-card-bg: rgba(255, 255, 255, 0.95);
+  --table-header-bg: #f8fafc;
+  --code-bg: #f1f5f9;
+  --tooltip-bg: #1e293b;
+  --tooltip-text: #ffffff;
+  --modal-overlay: rgba(0, 0, 0, 0.5);
+  
+  /* Borders and Dividers */
+  --divider-color: #f1f5f9;
+  --hover-border: #cbd5e1;
+  --focus-border: #4f46e5;
+}
+
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900;
+    @apply bg-[var(--primary-bg)] text-[var(--primary-text)] antialiased;
+  }
+
+  select, input, textarea {
+    @apply bg-[var(--input-bg)] border-[var(--border-color)] text-[var(--primary-text)];
   }
 }
 
 @layer components {
-  .btn {
-    @apply px-4 py-2 rounded-md font-medium transition-colors duration-200;
-  }
-  
   .btn-primary {
-    @apply bg-primary-500 text-white hover:bg-primary-600;
+    @apply px-4 py-2.5 bg-[var(--accent-color)] hover:bg-[var(--accent-hover)] text-white rounded-lg 
+    transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm font-medium
+    focus:outline-none focus:ring-2 focus:ring-[var(--focus-border)] focus:ring-offset-2 focus:ring-offset-[var(--primary-bg)];
   }
   
   .btn-secondary {
-    @apply bg-secondary-500 text-white hover:bg-secondary-600;
+    @apply px-4 py-2.5 bg-[var(--secondary-bg)] border border-[var(--border-color)] text-[var(--secondary-text)] 
+    hover:border-[var(--accent-color)] hover:text-[var(--accent-color)] rounded-lg transition-all duration-200 
+    shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-[var(--focus-border)] focus:ring-offset-2 
+    focus:ring-offset-[var(--primary-bg)];
   }
   
-  .input {
-    @apply px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+  .input-field {
+    @apply w-full px-4 py-2.5 bg-[var(--input-bg)] border border-[var(--border-color)] 
+    rounded-lg focus:ring-2 focus:ring-[var(--focus-border)] focus:border-transparent 
+    text-[var(--primary-text)] placeholder-[var(--tertiary-text)] transition-all shadow-sm
+    hover:border-[var(--hover-border)];
   }
   
   .card {
-    @apply bg-white rounded-lg shadow-md p-6;
+    @apply bg-[var(--card-bg)] rounded-xl p-6 shadow-[var(--card-shadow)] border border-[var(--border-color)]
+    hover:shadow-[var(--hover-card-shadow)] transition-all duration-300;
+  }
+
+  .stats-card {
+    @apply bg-[var(--stats-card-bg)] backdrop-blur-sm rounded-xl p-6 shadow-[var(--card-shadow)] 
+    border border-[var(--border-color)] transition-all duration-300 
+    hover:shadow-[var(--hover-card-shadow)] hover:border-[var(--hover-border)];
+  }
+
+  .sidebar {
+    @apply bg-[var(--secondary-bg)] border-r border-[var(--border-color)] shadow-lg;
+  }
+
+  .sidebar-link {
+    @apply flex items-center space-x-3 px-4 py-2.5 text-[var(--secondary-text)]
+    hover:bg-[var(--hover-bg)] hover:text-[var(--accent-color)] rounded-lg transition-all duration-200
+    font-medium focus:outline-none focus:ring-2 focus:ring-[var(--focus-border)] focus:ring-offset-2 
+    focus:ring-offset-[var(--secondary-bg)];
+  }
+
+  .sidebar-link.active {
+    @apply bg-[var(--accent-color)] text-white hover:bg-[var(--accent-hover)] hover:text-white shadow-sm;
+  }
+
+  .navbar {
+    @apply bg-[var(--secondary-bg)] border-b border-[var(--border-color)] 
+    sticky top-0 z-[90] backdrop-blur-sm bg-opacity-90;
+  }
+
+  .navbar-content {
+    @apply flex items-center justify-between h-16 px-4 max-w-[1920px] mx-auto;
   }
   
-  .nav-link {
-    @apply text-gray-600 hover:text-primary-500 transition-colors duration-200;
+  .section-title {
+    @apply text-xl font-semibold text-[var(--primary-text)] mb-4;
+  }
+
+  .table-container {
+    @apply bg-[var(--card-bg)] rounded-lg border border-[var(--border-color)] overflow-hidden;
+  }
+
+  .table-header {
+    @apply bg-[var(--table-header-bg)] text-[var(--secondary-text)] text-sm font-medium uppercase tracking-wider;
+  }
+
+  .table-cell {
+    @apply px-6 py-4 text-sm text-[var(--primary-text)];
+  }
+
+  .table-row {
+    @apply hover:bg-[var(--hover-bg)] transition-colors duration-150;
+  }
+
+  .table-row:last-child .table-cell {
+    @apply border-b-0;
+  }
+
+  .table-cell {
+    @apply border-b border-[var(--border-color)];
+  }
+
+  .dropdown-menu {
+    @apply bg-[var(--secondary-bg)] border border-[var(--border-color)] shadow-lg rounded-lg 
+    divide-y divide-[var(--divider-color)];
+  }
+
+  .dropdown-item {
+    @apply px-4 py-2 text-sm text-[var(--primary-text)] hover:bg-[var(--hover-bg)] transition-colors duration-150
+    focus:outline-none focus:bg-[var(--active-state)];
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply bg-[var(--success-bg)] text-[var(--success-color)];
+    border: 1px solid rgba(var(--success-color-rgb), 0.2);
   }
   
-  .nav-link-active {
-    @apply text-primary-500 font-medium;
+  .badge-error {
+    @apply bg-[var(--danger-bg)] text-[var(--danger-color)];
+    border: 1px solid rgba(var(--danger-color-rgb), 0.2);
   }
+
+  .badge-warning {
+    @apply bg-[var(--warning-bg)] text-[var(--warning-color)];
+    border: 1px solid rgba(var(--warning-color-rgb), 0.2);
+  }
+
+  .badge-info {
+    @apply bg-[var(--info-bg)] text-[var(--info-color)];
+    border: 1px solid rgba(var(--info-color-rgb), 0.2);
+  }
+
+  .stat-value {
+    @apply text-3xl font-bold text-[var(--primary-text)];
+  }
+
+  .stat-label {
+    @apply text-sm font-medium text-[var(--secondary-text)];
+  }
+
+  .stat-icon {
+    @apply text-[var(--accent-color)] opacity-90;
+  }
+
+  .modal {
+    @apply fixed inset-0 z-50 flex items-center justify-center;
+  }
+
+  .modal-overlay {
+    @apply absolute inset-0 bg-[var(--modal-overlay)] backdrop-blur-sm;
+  }
+
+  .modal-content {
+    @apply bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)] shadow-[var(--card-shadow)]
+    w-full max-w-md p-6 relative z-10;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  }
+
+::-webkit-scrollbar-track {
+  background: var(--primary-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-color);
 } 

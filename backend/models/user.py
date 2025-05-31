@@ -1,6 +1,8 @@
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
-from .base import db
+from flask_sqlalchemy import SQLAlchemy
+
+db = SQLAlchemy()
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -8,10 +10,15 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(256), nullable=False)
+    password_hash = db.Column(db.String(120), nullable=True)  # Nullable for system users
+    role = db.Column(db.String(20), nullable=False, default='user')
+    is_system_user = db.Column(db.Boolean, default=False)
+    system_uid = db.Column(db.Integer, nullable=True)
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
+    failed_login_attempts = db.Column(db.Integer, default=0)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     virtual_hosts = db.relationship('VirtualHost', backref='owner', lazy=True)
@@ -19,10 +26,23 @@ class User(db.Model):
     email_accounts = db.relationship('EmailAccount', backref='owner', lazy=True)
     ftp_accounts = db.relationship('FTPAccount', backref='owner', lazy=True)
 
+    def __init__(self, username, role='user', password=None, is_system_user=False, system_uid=None):
+        self.username = username
+        self.role = role
+        self.is_system_user = is_system_user
+        self.system_uid = system_uid
+        if password and not is_system_user:
+            self.set_password(password)
+
     def set_password(self, password):
+        if self.is_system_user:
+            raise ValueError("Cannot set password for system users")
         self.password_hash = generate_password_hash(password)
 
-    def check_password(self, password):
+    def verify_password(self, password):
+        if self.is_system_user:
+            # System users are verified through PAM
+            return False
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self):
@@ -30,10 +50,16 @@ class User(db.Model):
             'id': self.id,
             'username': self.username,
             'email': self.email,
+            'role': self.role,
+            'is_system_user': self.is_system_user,
             'is_admin': self.is_admin,
             'created_at': self.created_at.isoformat(),
-            'last_login': self.last_login.isoformat() if self.last_login else None
+            'last_login': self.last_login.isoformat() if self.last_login else None,
+            'updated_at': self.updated_at.isoformat()
         }
+
+    def __repr__(self):
+        return f'<User {self.username}>'
 
 class Role(db.Model):
     id = db.Column(db.Integer, primary_key=True)

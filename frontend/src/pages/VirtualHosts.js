@@ -1,214 +1,237 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState } from 'react';
+import { useData } from '../contexts/DataContext';
 import {
   PlusIcon,
   PencilIcon,
   TrashIcon,
-  ArrowPathIcon,
+  GlobeAltIcon,
+  ServerIcon,
+  CodeBracketIcon,
 } from '@heroicons/react/24/outline';
 
 function VirtualHosts() {
-  const [virtualHosts, setVirtualHosts] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [selectedHost, setSelectedHost] = useState(null);
+  const {
+    virtualHosts,
+    addVirtualHost,
+    updateVirtualHost,
+    deleteVirtualHost
+  } = useData();
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingHost, setEditingHost] = useState(null);
   const [formData, setFormData] = useState({
-    domain_name: '',
+    domain: '',
     document_root: '',
-    server_admin: ''
+    server_admin: '',
+    php_version: '8.2',
   });
-
-  useEffect(() => {
-    fetchVirtualHosts();
-  }, []);
-
-  const fetchVirtualHosts = async () => {
-    try {
-      const response = await axios.get('http://localhost:5000/api/virtual-hosts');
-      setVirtualHosts(response.data);
-      setIsLoading(false);
-    } catch (err) {
-      setError('Failed to fetch virtual hosts');
-      setIsLoading(false);
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5000/api/virtual-hosts', formData);
-      setShowAddModal(false);
-      setFormData({ domain_name: '', document_root: '', server_admin: '' });
-      fetchVirtualHosts();
-    } catch (err) {
-      setError('Failed to create virtual host');
-    }
-  };
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this virtual host?')) {
-      try {
-        await axios.delete(`http://localhost:5000/api/virtual-hosts/${id}`);
-        fetchVirtualHosts();
-      } catch (err) {
-        setError('Failed to delete virtual host');
+      if (editingHost) {
+        updateVirtualHost(editingHost.id, formData);
+      } else {
+        addVirtualHost(formData);
       }
+
+      setShowForm(false);
+      setEditingHost(null);
+      setFormData({
+        domain: '',
+        document_root: '',
+        server_admin: '',
+        php_version: '8.2',
+      });
+    } catch (err) {
+      console.error('Failed to save virtual host:', err);
     }
   };
 
-  if (isLoading) return <div>Loading...</div>;
-  if (error) return <div className="text-red-500">{error}</div>;
+  const handleEdit = (host) => {
+    setEditingHost(host);
+    setFormData({
+      domain: host.domain,
+      document_root: host.document_root,
+      server_admin: host.server_admin,
+      php_version: host.php_version,
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (hostId) => {
+    if (!window.confirm('Are you sure you want to delete this virtual host? This action cannot be undone.')) {
+      return;
+    }
+
+      try {
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      deleteVirtualHost(hostId);
+      } catch (err) {
+      console.error('Failed to delete virtual host:', err);
+    }
+  };
 
   return (
-    <div className="container mx-auto px-4">
-      <div className="sm:flex sm:items-center sm:justify-between mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Virtual Hosts</h2>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Header */}
+      <div className="mb-8 flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--primary-text)] mb-2">Virtual Hosts</h1>
+          <p className="text-[var(--secondary-text)]">Manage your virtual hosts and configurations</p>
+        </div>
         <button
-          type="button"
-          onClick={() => setShowAddModal(true)}
-          className="btn btn-primary flex items-center"
+          onClick={() => {
+            setEditingHost(null);
+            setFormData({
+              domain: '',
+              document_root: '',
+              server_admin: '',
+              php_version: '8.2',
+            });
+            setShowForm(true);
+          }}
+          className="btn-primary flex items-center"
         >
-          <PlusIcon className="h-5 w-5 mr-2" />
-          Add Virtual Host
+          <PlusIcon className="w-5 h-5 mr-2" />
+          Add New Host
         </button>
       </div>
 
-      <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Domain
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Root Directory
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                PHP Version
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                SSL
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+      {/* Virtual Hosts Grid */}
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             {virtualHosts.map((host) => (
-              <tr key={host.id}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">
-                    {host.domain_name}
+          <div key={host.id} className="stats-card">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-[var(--accent-color)]/10 rounded-lg flex items-center justify-center">
+                  <GlobeAltIcon className="w-6 h-6 stat-icon" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-[var(--primary-text)]">{host.domain}</h3>
+                  <p className="text-sm text-[var(--secondary-text)]">{host.document_root}</p>
+                </div>
                   </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">{host.document_root}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">PHP {host.php_version}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      host.ssl_enabled
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-gray-100 text-gray-800'
-                    }`}
-                  >
-                    {host.ssl_enabled ? 'Enabled' : 'Disabled'}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      host.status === 'active'
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-red-100 text-red-800'
-                    }`}
-                  >
-                    {host.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <div className="flex justify-end space-x-2">
+              <div className="flex space-x-2">
                     <button
-                      onClick={() => setSelectedHost(host)}
-                      className="text-primary-600 hover:text-primary-900"
+                  onClick={() => handleEdit(host)}
+                  className="p-2 text-[var(--secondary-text)] hover:text-[var(--accent-color)] hover:bg-[var(--hover-bg)] rounded-lg transition-colors"
                     >
-                      <PencilIcon className="h-5 w-5" />
+                  <PencilIcon className="w-5 h-5" />
                     </button>
                     <button
                       onClick={() => handleDelete(host.id)}
-                      className="text-red-600 hover:text-red-900"
+                  className="p-2 text-[var(--danger-color)] hover:text-[var(--danger-color)] hover:bg-[var(--hover-bg)] rounded-lg transition-colors"
                     >
-                      <TrashIcon className="h-5 w-5" />
-                    </button>
-                    <button className="text-gray-600 hover:text-gray-900">
-                      <ArrowPathIcon className="h-5 w-5" />
+                  <TrashIcon className="w-5 h-5" />
                     </button>
                   </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center text-sm text-[var(--secondary-text)]">
+                <ServerIcon className="w-5 h-5 mr-2" />
+                <span>Admin: {host.server_admin}</span>
+              </div>
+              <div className="flex items-center text-sm text-[var(--secondary-text)]">
+                <CodeBracketIcon className="w-5 h-5 mr-2" />
+                <span>PHP: {host.php_version}</span>
+              </div>
+              <div className="flex items-center mt-4">
+                <div className={`w-2 h-2 rounded-full ${
+                  host.status === 'active' ? 'bg-[var(--success-color)]' : 'bg-[var(--border-color)]'
+                }`} />
+                <span className="ml-2 text-sm text-[var(--secondary-text)] capitalize">{host.status}</span>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {showAddModal && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
-              Add Virtual Host
-            </h3>
-            <form onSubmit={handleSubmit}>
-              <div className="mb-4">
-                <label className="block text-gray-700 text-sm font-bold mb-2">
+      {/* Add/Edit Form Modal */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center backdrop-blur-sm z-50">
+          <div className="card w-full max-w-md">
+            <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">
+              {editingHost ? 'Edit Virtual Host' : 'Add New Virtual Host'}
+            </h2>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
                   Domain Name
                 </label>
                 <input
                   type="text"
-                  value={formData.domain_name}
-                  onChange={(e) => setFormData({ ...formData, domain_name: e.target.value })}
-                  className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+                  value={formData.domain}
+                  onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+                  className="input-field"
+                  placeholder="example.com"
                   required
                 />
               </div>
-              <div className="mb-4">
-                <label className="block text-gray-700 text-sm font-bold mb-2">
+              <div>
+                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
                   Document Root
                 </label>
                 <input
                   type="text"
                   value={formData.document_root}
                   onChange={(e) => setFormData({ ...formData, document_root: e.target.value })}
-                  className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+                  className="input-field"
+                  placeholder="/var/www/example.com"
                   required
                 />
               </div>
-              <div className="mb-4">
-                <label className="block text-gray-700 text-sm font-bold mb-2">
+              <div>
+                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
                   Server Admin
                 </label>
                 <input
                   type="email"
                   value={formData.server_admin}
                   onChange={(e) => setFormData({ ...formData, server_admin: e.target.value })}
-                  className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+                  className="input-field"
+                  placeholder="admin@example.com"
+                  required
                 />
               </div>
-              <div className="mt-4 flex justify-end space-x-2">
+              <div>
+                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                  PHP Version
+                </label>
+                <select
+                  value={formData.php_version}
+                  onChange={(e) => setFormData({ ...formData, php_version: e.target.value })}
+                  className="input-field"
+                  required
+                >
+                  <option value="8.2">PHP 8.2</option>
+                  <option value="8.1">PHP 8.1</option>
+                  <option value="8.0">PHP 8.0</option>
+                  <option value="7.4">PHP 7.4</option>
+                </select>
+              </div>
+              <div className="flex justify-end space-x-4 mt-6">
                 <button
-                  onClick={() => setShowAddModal(false)}
-                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => {
+                    setShowForm(false);
+                    setEditingHost(null);
+                  }}
+                  className="btn-secondary"
                 >
                   Cancel
                 </button>
-                <button className="btn btn-primary">Save</button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                >
+                  {editingHost ? 'Save Changes' : 'Create'}
+                </button>
               </div>
             </form>
           </div>
