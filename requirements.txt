@@ -16,4 +16,4 @@ paramiko==3.3.1
 pyOpenSSL==23.2.0
 dnspython==2.4.2
 requests==2.31.0
-spwd==0.1.0 
+python-pam==2.0.2 
