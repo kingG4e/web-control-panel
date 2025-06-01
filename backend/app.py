@@ -1,44 +1,27 @@
-from flask import Flask, jsonify, send_from_directory, request, current_app
+from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 import os
 import secrets
 import bcrypt
-from datetime import timedelta, datetime
+from datetime import timedelta
 from models.database import db, init_db
-from utils.error_handlers import register_error_handlers, ValidationError, AuthenticationError
-from utils.security import setup_security_headers, RateLimiter, validate_password, authenticate_user
-from utils.logger import setup_logger, log_request, log_response, audit_log
 
 app = Flask(__name__, static_folder='../frontend/build', static_url_path='/')
 CORS(app)
 
-# Configure application
+# Generate secure random key
 app.config['SECRET_KEY'] = secrets.token_hex(32)
 app.config['JWT_SECRET_KEY'] = secrets.token_hex(32)
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
+
+# Use SQLite database
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///controlpanel.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
 init_db(app)
 jwt = JWTManager(app)
-rate_limiter = RateLimiter(app)
-
-# Setup error handlers and logging
-register_error_handlers(app)
-setup_logger(app)
-
-# Request logging
-@app.before_request
-def before_request():
-    log_request()
-
-# Response logging and security headers
-@app.after_request
-def after_request(response):
-    log_response(response)
-    return setup_security_headers(response)
 
 # User Model
 class User(db.Model):
@@ -46,16 +29,15 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password = db.Column(db.String(120), nullable=False)
     role = db.Column(db.String(20), nullable=False, default='user')
-    last_login = db.Column(db.DateTime)
-    failed_login_attempts = db.Column(db.Integer, default=0)
-    is_system_user = db.Column(db.Boolean, default=False)
     
     # Relationships
     virtual_hosts = db.relationship('VirtualHost', backref='user', lazy=True)
 
-# Import models and routes
+# Import models after db is initialized
 from models.virtual_host import VirtualHost
 from models.dns import DNSZone, DNSRecord
+
+# Import routes after models
 from routes.dns import dns_bp
 
 # Register blueprints
@@ -65,67 +47,34 @@ app.register_blueprint(dns_bp)
 with app.app_context():
     try:
         db.create_all()
-        app.logger.info("Database tables created successfully")
+        print("Database tables created successfully")
     except Exception as e:
-        app.logger.error(f"Error creating database tables: {e}")
+        print(f"Error creating database tables: {e}")
 
 # Authentication routes
 @app.route('/api/auth/login', methods=['POST'])
-@rate_limiter.limit('login', limit=5, period=300)  # 5 attempts per 5 minutes
 def login():
     data = request.get_json()
+    user = User.query.filter_by(username=data.get('username')).first()
     
-    if not data or not data.get('username') or not data.get('password'):
-        raise ValidationError("Username and password are required")
-    
-    try:
-        user = authenticate_user(data.get('username'), data.get('password'))
-        
-        # Update login info
-        user.failed_login_attempts = 0
-        user.last_login = datetime.utcnow()
-        db.session.commit()
-        
-        # Create access token
+    if user and bcrypt.checkpw(data.get('password').encode('utf-8'), user.password.encode('utf-8')):
         access_token = create_access_token(identity=user.username)
-        audit_log(user, 'login', {
-            'method': 'system_user' if user.is_system_user else 'local_user'
-        })
-        
-        return jsonify({
+    return jsonify({
             'token': access_token,
             'user': {
                 'username': user.username,
-                'role': user.role,
-                'is_system_user': user.is_system_user
-            }
+                'role': user.role
+        }
         }), 200
-        
-    except AuthenticationError as e:
-        audit_log(None, 'login_failed', {
-            'username': data.get('username'),
-            'reason': str(e)
-        })
-        raise ValidationError(str(e))
-    except Exception as e:
-        current_app.logger.error(f"Login error: {str(e)}")
-        raise ValidationError("An error occurred during login")
+    return jsonify({'message': 'Invalid credentials'}), 401
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
     data = request.get_json()
     
-    if not data or not data.get('username') or not data.get('password'):
-        raise ValidationError("Username and password are required")
-    
-    # Validate password strength
-    is_valid, message = validate_password(data.get('password'))
-    if not is_valid:
-        raise ValidationError(message)
-    
     if User.query.filter_by(username=data.get('username')).first():
-        raise ValidationError("Username already exists")
-    
+        return jsonify({'message': 'Username already exists'}), 400
+        
     hashed = bcrypt.hashpw(data.get('password').encode('utf-8'), bcrypt.gensalt())
     new_user = User(
         username=data.get('username'),
@@ -136,7 +85,6 @@ def register():
     db.session.add(new_user)
     db.session.commit()
     
-    audit_log(new_user, 'user_created')
     return jsonify({'message': 'User created successfully'}), 201
 
 @app.route('/api/users/me', methods=['GET'])
@@ -146,11 +94,10 @@ def get_current_user():
     user = User.query.filter_by(username=current_user).first()
     return jsonify({
         'username': user.username,
-        'role': user.role,
-        'last_login': user.last_login.isoformat() if user.last_login else None
+        'role': user.role
     }), 200
 
-# Create initial admin user
+# Create initial admin user if no users exist
 def create_admin_user():
     with app.app_context():
         if User.query.count() == 0:
@@ -162,7 +109,6 @@ def create_admin_user():
             )
             db.session.add(admin)
             db.session.commit()
-            app.logger.info('Admin user created successfully')
             print('Admin user created with credentials:')
             print('Username: admin')
             print('Password: admin123')
@@ -181,8 +127,7 @@ def serve_static(path):
 def health_check():
     return jsonify({
         "status": "healthy",
-        "version": "1.0.0",
-        "timestamp": datetime.utcnow().isoformat()
+        "version": "1.0.0"
     })
 
 if __name__ == '__main__':

@@ -139,6 +139,8 @@ install_dependencies() {
 setup_python() {
     log "INFO" "Setting up Python environment..."
     
+    # Copy project files to installation directory
+    cp -r . "${INSTALL_DIR}/" || error_exit "Failed to copy project files"
     cd "${INSTALL_DIR}" || error_exit "Failed to enter installation directory"
     
     # Create virtual environment
@@ -227,13 +229,34 @@ EOF
 configure_redis() {
     log "INFO" "Configuring Redis..."
     
-    systemctl start redis || error_exit "Failed to start Redis"
-    systemctl enable redis || error_exit "Failed to enable Redis"
+    # Determine Redis service name based on distribution
+    local redis_service
+    case $DISTRO in
+        "ubuntu"|"debian")
+            redis_service="redis-server"
+            ;;
+        *)
+            redis_service="redis"
+            ;;
+    esac
+    
+    systemctl start $redis_service || error_exit "Failed to start Redis"
+    systemctl enable $redis_service || error_exit "Failed to enable Redis"
+    
+    # Determine Redis config file location
+    local redis_conf
+    if [ -f "/etc/redis/redis.conf" ]; then
+        redis_conf="/etc/redis/redis.conf"
+    elif [ -f "/etc/redis.conf" ]; then
+        redis_conf="/etc/redis.conf"
+    else
+        error_exit "Redis configuration file not found"
+    fi
     
     # Configure Redis to listen on localhost only
-    sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
+    sed -i 's/^bind .*/bind 127.0.0.1/' $redis_conf
     
-    systemctl restart redis || error_exit "Failed to restart Redis"
+    systemctl restart $redis_service || error_exit "Failed to restart Redis"
     log "SUCCESS" "Redis configuration complete"
 }
 

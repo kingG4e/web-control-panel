@@ -3,9 +3,10 @@ from flask import request, current_app
 import redis
 from datetime import datetime, timedelta
 import bcrypt
-import spwd
-import crypt
+import platform
 from .error_handlers import AuthorizationError, AuthenticationError
+from models.user import User
+from models.database import db
 
 class RateLimiter:
     def __init__(self, app=None):
@@ -86,50 +87,25 @@ def validate_file_type(file, allowed_types):
     return ext in allowed_types
 
 def authenticate_user(username, password):
-    """Authenticate user against system or local database"""
-    from models import User  # Import here to avoid circular import
-    
+    """Authenticate user against local database"""
     user = User.query.filter_by(username=username).first()
     
-    # Try system authentication first
-    try:
-        shadow = spwd.getspnam(username)
-        encrypted = shadow.sp_pwd
-        if encrypted and encrypted not in ['*', '!']:
-            salt = encrypted.split('$')[2]
-            hashed = crypt.crypt(password, f'$6${salt}$')
-            if hashed == encrypted:
-                if not user:
-                    # Create user record for system user
-                    user = User(
-                        username=username,
-                        password='*system_user*',  # Placeholder
-                        role='admin' if username in ['root', 'admin'] else 'user',
-                        is_system_user=True
-                    )
-                    db.session.add(user)
-                    db.session.commit()
-                return user
-    except KeyError:
-        # User not in system, try local authentication
-        pass
-    except Exception as e:
-        current_app.logger.error(f"System authentication error: {str(e)}")
-        pass
-
-    # Local authentication
-    if user and not user.is_system_user:
+    if not user:
+        raise AuthenticationError("Invalid username or password")
+    
+    if user.failed_login_attempts >= 5:
+        lockout_time = datetime.utcnow() - timedelta(minutes=30)
+        if user.last_login and user.last_login > lockout_time:
+            raise AuthenticationError("Account is temporarily locked. Please try again later.")
+    
+    if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+        user.failed_login_attempts = 0
+        user.last_login = datetime.utcnow()
+        db.session.commit()
+        return user
+    else:
+        user.failed_login_attempts += 1
         if user.failed_login_attempts >= 5:
-            lockout_time = datetime.utcnow() - timedelta(minutes=30)
-            if user.last_login and user.last_login > lockout_time:
-                raise AuthenticationError("Account is temporarily locked. Please try again later.")
-        
-        if bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
-            return user
-        else:
-            user.failed_login_attempts += 1
-            if user.failed_login_attempts >= 5:
-                user.last_login = datetime.utcnow()
-            db.session.commit()
-            
-    raise AuthenticationError("Invalid username or password") 
+            user.last_login = datetime.utcnow()
+        db.session.commit()
+        raise AuthenticationError("Invalid username or password")

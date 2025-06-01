@@ -8,9 +8,9 @@ const variants = {
 };
 
 const sizes = {
-    sm: 'px-2.5 py-1.5 text-sm min-h-[32px]',
-    md: 'px-3.5 py-2 min-h-[40px]',
-    lg: 'px-5 py-2.5 text-lg min-h-[48px]',
+    sm: 'px-3 py-1.5 text-sm',
+    md: 'px-4 py-2',
+    lg: 'px-6 py-3 text-lg',
 };
 
 const Button = ({
@@ -20,18 +20,10 @@ const Button = ({
     className = '',
     isLoading = false,
     disabled = false,
-    fullWidth = false,
     icon,
     ...props
 }) => {
-    const baseClasses = `
-        inline-flex items-center justify-center font-medium rounded-lg 
-        transition-all duration-200 focus:outline-none focus:ring-2 
-        focus:ring-[var(--accent-color)]/20 focus:ring-offset-2 
-        focus:ring-offset-[var(--primary-bg)] disabled:opacity-50 
-        disabled:cursor-not-allowed shadow-sm touch-manipulation
-        ${fullWidth ? 'w-full' : ''}
-    `;
+    const baseClasses = 'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[var(--accent-color)]/20 focus:ring-offset-2 focus:ring-offset-[var(--primary-bg)] disabled:opacity-50 disabled:cursor-not-allowed shadow-sm';
     
     return (
         <button
@@ -45,8 +37,8 @@ const Button = ({
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
             )}
-            {icon && !isLoading && <span className="mr-2 flex-shrink-0">{icon}</span>}
-            <span className="truncate">{children}</span>
+            {icon && !isLoading && <span className="mr-2">{icon}</span>}
+            {children}
         </button>
     );
 };

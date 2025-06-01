@@ -2,7 +2,7 @@ import React from 'react';
 
 const Card = ({ children, className = '' }) => {
     return (
-        <div className={`bg-[var(--card-bg)] rounded-lg border border-[var(--border-color)] shadow-[var(--card-shadow)] p-4 md:p-6 ${className}`}>
+        <div className={`bg-[var(--card-bg)] rounded-lg border border-[var(--border-color)] shadow-[var(--card-shadow)] p-6 ${className}`}>
             {children}
         </div>
     );
@@ -10,7 +10,7 @@ const Card = ({ children, className = '' }) => {
 
 export const CardHeader = ({ children, className = '' }) => {
     return (
-        <div className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 mb-4 border-b border-[var(--border-color)] ${className}`}>
+        <div className={`flex items-center justify-between pb-4 mb-4 border-b border-[var(--border-color)] ${className}`}>
             {children}
         </div>
     );
@@ -34,7 +34,7 @@ export const CardDescription = ({ children, className = '' }) => {
 
 export const CardContent = ({ children, className = '' }) => {
     return (
-        <div className={`space-y-4 ${className}`}>
+        <div className={className}>
             {children}
         </div>
     );
@@ -42,7 +42,7 @@ export const CardContent = ({ children, className = '' }) => {
 
 export const CardFooter = ({ children, className = '' }) => {
     return (
-        <div className={`flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 pt-4 mt-4 border-t border-[var(--border-color)] ${className}`}>
+        <div className={`flex items-center justify-between pt-4 mt-4 border-t border-[var(--border-color)] ${className}`}>
             {children}
         </div>
     );

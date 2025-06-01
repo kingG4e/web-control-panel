@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import PageLayout from '../components/layout/PageLayout';
 import Button from '../components/ui/Button';
 import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
@@ -26,6 +27,8 @@ const Database = () => {
     deleteDatabase
   } = useData();
 
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState('all');
   const [selectedDatabases, setSelectedDatabases] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingDb, setEditingDb] = useState(null);
@@ -38,12 +41,26 @@ const Database = () => {
     password: '',
   });
 
-  const handleSelectDatabase = (id) => {
-    setSelectedDatabases(prev => 
-      prev.includes(id) 
-        ? prev.filter(dbId => dbId !== id)
-        : [...prev, id]
-    );
+  const filteredDatabases = databases.filter(db => {
+    const matchesSearch = db.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFilter = filterType === 'all' || db.type.toLowerCase() === filterType.toLowerCase();
+    return matchesSearch && matchesFilter;
+  });
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+      setSelectedDatabases(filteredDatabases.map(db => db.id));
+    } else {
+      setSelectedDatabases([]);
+    }
+  };
+
+  const handleSelect = (dbId) => {
+    if (selectedDatabases.includes(dbId)) {
+      setSelectedDatabases(selectedDatabases.filter(id => id !== dbId));
+    } else {
+      setSelectedDatabases([...selectedDatabases, dbId]);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -100,226 +117,156 @@ const Database = () => {
     }
   };
 
-  const actions = (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        icon={
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-          </svg>
-        }
+  const DatabaseActions = () => (
+    <div className="flex items-center space-x-2">
+      <button
+        disabled={selectedDatabases.length === 0}
+        className={`px-3 py-1 rounded text-sm ${
+          selectedDatabases.length === 0
+            ? 'bg-[var(--disabled-bg)] text-[var(--disabled-text)]'
+            : 'bg-[var(--primary)] text-white hover:bg-[var(--primary-dark)]'
+        } transition-colors`}
       >
-        Filter
-      </Button>
-      <Button
-        variant="primary"
-        size="sm"
-        onClick={() => {
-          setEditingDb(null);
-          setFormData({
-            name: '',
-            type: 'mysql',
-            charset: 'utf8mb4',
-            collation: 'utf8mb4_unicode_ci',
-            username: '',
-            password: '',
-          });
-          setShowForm(true);
-        }}
-        icon={<PlusIcon className="w-4 h-4" />}
+        Backup
+      </button>
+      <button
+        disabled={selectedDatabases.length === 0}
+        className={`px-3 py-1 rounded text-sm ${
+          selectedDatabases.length === 0
+            ? 'bg-[var(--disabled-bg)] text-[var(--disabled-text)]'
+            : 'bg-red-500 text-white hover:bg-red-600'
+        } transition-colors`}
       >
-        Create Database
-      </Button>
-    </>
+        Delete
+      </button>
+    </div>
   );
 
   return (
     <PageLayout
       title="Database Management"
       description="Create and manage your databases"
-      actions={actions}
     >
       <div className="space-y-6">
-        {/* Top Actions Bar */}
-        <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-          <div className="p-4 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<DocumentTextIcon className="w-4 h-4" />}
-              >
-                View Logs
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<Cog6ToothIcon className="w-4 h-4" />}
-              >
-                Settings
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<CommandLineIcon className="w-4 h-4" />}
-              >
-                Console
-              </Button>
-            </div>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<PlusIcon className="w-4 h-4" />}
-              onClick={() => {
-                setEditingDb(null);
-                setFormData({
-                  name: '',
-                  type: 'mysql',
-                  charset: 'utf8mb4',
-                  collation: 'utf8mb4_unicode_ci',
-                  username: '',
-                  password: '',
-                });
-                setShowForm(true);
-              }}
-            >
-              Create Database
-            </Button>
+        {/* Page Header */}
+        <div className="flex items-center justify-between">
+    <div>
+            <h1 className="text-2xl font-semibold text-[var(--text-primary)]">Databases</h1>
+            <p className="mt-1 text-[var(--text-secondary)]">Manage your MySQL and PostgreSQL databases</p>
           </div>
+          <Link
+            to="/database/new"
+            className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors"
+          >
+            Create Database
+          </Link>
         </div>
 
-        {/* Main Content */}
-        <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-          {/* Selection Actions */}
-          <div className="p-4 border-b border-[var(--border-color)] flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={selectedDatabases.length === 0}
-                icon={<TrashIcon className="w-4 h-4" />}
+        {/* Filters and Search */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex-1">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search databases..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:border-[var(--primary)] text-[var(--text-primary)]"
+              />
+              <svg
+                className="absolute left-3 top-2.5 h-5 w-5 text-[var(--text-secondary)]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                Delete Selected
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={selectedDatabases.length === 0}
-                icon={<CircleStackIcon className="w-4 h-4" />}
-              >
-                Backup Selected
-              </Button>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
+            </div>
       </div>
-            <span className="text-sm text-[var(--secondary-text)]">
-              {selectedDatabases.length} selected
-            </span>
+          <div className="flex gap-2">
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="px-4 py-2 bg-[var(--input-bg)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:border-[var(--primary)] text-[var(--text-primary)]"
+            >
+              <option value="all">All Types</option>
+              <option value="mysql">MySQL</option>
+              <option value="postgresql">PostgreSQL</option>
+            </select>
+            <DatabaseActions />
+          </div>
           </div>
 
-          {/* Database Table */}
+        {/* Database Table */}
+        <div className="bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-              <tr>
-                  <th className="w-4 p-4">
+                <tr className="border-b border-[var(--border-color)] bg-[var(--secondary-bg)]">
+                  <th className="px-6 py-3 text-left">
                     <input
                       type="checkbox"
-                      className="rounded border-[var(--border-color)] text-[var(--accent-color)] focus:ring-[var(--accent-color)]"
-                      onChange={(e) => {
-                        setSelectedDatabases(
-                          e.target.checked && Array.isArray(databases) ? databases.map(db => db.id) : []
-                        );
-                      }}
-                      checked={Array.isArray(databases) && selectedDatabases.length === databases.length && databases.length > 0}
+                      checked={selectedDatabases.length === filteredDatabases.length}
+                      onChange={handleSelectAll}
+                      className="rounded border-[var(--border-color)]"
                     />
                 </th>
-                  <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Name</th>
-                  <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Type</th>
-                  <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Charset</th>
-                  <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Users</th>
-                  <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Actions</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Name</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Type</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Size</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Tables</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Last Backup</th>
+                  <th className="px-6 py-3 text-right text-sm font-medium text-[var(--text-secondary)]">Actions</th>
               </tr>
             </thead>
-              <tbody className="divide-y divide-[var(--border-color)]">
-                {Array.isArray(databases) && databases.map((db) => (
-                  <tr key={db.id} className="hover:bg-[var(--hover-bg)] transition-colors">
-                    <td className="w-4 p-4">
+              <tbody>
+                {filteredDatabases.map((db) => (
+                  <tr
+                    key={db.id}
+                    className="border-b border-[var(--border-color)] hover:bg-[var(--hover-bg)] transition-colors"
+                  >
+                    <td className="px-6 py-4">
                       <input
                         type="checkbox"
-                        className="rounded border-[var(--border-color)] text-[var(--accent-color)] focus:ring-[var(--accent-color)]"
                         checked={selectedDatabases.includes(db.id)}
-                        onChange={() => handleSelectDatabase(db.id)}
+                        onChange={() => handleSelect(db.id)}
+                        className="rounded border-[var(--border-color)]"
                       />
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center">
-                        <CircleStackIcon className="w-5 h-5 text-[var(--accent-color)] mr-3" />
-                        <span className="text-sm font-medium text-[var(--primary-text)]">{db.name}</span>
+                        <span className="font-medium text-[var(--text-primary)]">{db.name}</span>
                     </div>
                   </td>
                     <td className="px-6 py-4">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--accent-color)]/10 text-[var(--accent-color)]">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--primary)] bg-opacity-10 text-[var(--primary)]">
                         {db.type}
-                      </span>
-                  </td>
-                    <td className="px-6 py-4 text-sm text-[var(--primary-text)]">
-                      {db.charset}_{db.collation}
-                  </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        db.status === 'active'
-                          ? 'bg-[var(--success-color)]/10 text-[var(--success-color)]'
-                          : 'bg-[var(--border-color)] text-[var(--secondary-text)]'
-                      }`}>
-                      {db.status}
                     </span>
                   </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center space-x-1">
-                        {db.users?.map((user) => (
-                          <div
-                            key={user.id}
-                            className="w-6 h-6 rounded-full bg-[var(--accent-color)]/10 flex items-center justify-center"
-                            title={user.username}
-                      >
-                            <UserIcon className="w-4 h-4 text-[var(--accent-color)]" />
-                          </div>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center space-x-3">
-                      <button
-                          onClick={() => handleEdit(db)}
-                          className="text-[var(--secondary-text)] hover:text-[var(--accent-color)] transition-colors"
-                      >
-                          <PencilIcon className="w-5 h-5" />
+                    <td className="px-6 py-4 text-[var(--text-secondary)]">{db.size}</td>
+                    <td className="px-6 py-4 text-[var(--text-secondary)]">{db.tables}</td>
+                    <td className="px-6 py-4 text-[var(--text-secondary)]">{db.lastBackup}</td>
+                    <td className="px-6 py-4 text-right">
+                    <div className="flex justify-end space-x-2">
+                        <button className="p-1 hover:bg-[var(--hover-bg)] rounded transition-colors">
+                          <svg className="w-5 h-5 text-[var(--text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
                       </button>
-                      <button
-                          onClick={() => {}}
-                          className="text-[var(--secondary-text)] hover:text-[var(--accent-color)] transition-colors"
-                      >
-                          <CommandLineIcon className="w-5 h-5" />
-                      </button>
-                      <button
-                          onClick={() => handleDelete(db.id)}
-                          className="text-[var(--danger-color)] hover:text-[var(--danger-color)]/80 transition-colors"
-                      >
-                          <TrashIcon className="w-5 h-5" />
+                        <button className="p-1 hover:bg-[var(--hover-bg)] rounded transition-colors">
+                          <svg className="w-5 h-5 text-[var(--text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
                       </button>
                     </div>
                   </td>
                 </tr>
               ))}
-                {(!Array.isArray(databases) || databases.length === 0) && (
-                  <tr>
-                    <td colSpan="7" className="px-6 py-8 text-center text-[var(--secondary-text)]">
-                      No databases found. Click "Create Database" to add one.
-                    </td>
-                  </tr>
-                )}
             </tbody>
           </table>
         </div>

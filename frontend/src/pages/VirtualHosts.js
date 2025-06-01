@@ -1,244 +1,159 @@
 import React, { useState } from 'react';
-import { useData } from '../contexts/DataContext';
-import {
-  PlusIcon,
-  PencilIcon,
-  TrashIcon,
-  GlobeAltIcon,
-  ServerIcon,
-  CodeBracketIcon,
-} from '@heroicons/react/24/outline';
+import { Link } from 'react-router-dom';
 
-function VirtualHosts() {
-  const {
-    virtualHosts,
-    addVirtualHost,
-    updateVirtualHost,
-    deleteVirtualHost
-  } = useData();
+const VirtualHosts = () => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  
+  // Mock data - replace with actual API calls
+  const websites = [
+    {
+      id: 1,
+      domain: 'example.com',
+      status: 'active',
+      type: 'PHP',
+      ssl: true,
+      diskUsage: '2.1 GB',
+      lastBackup: '2024-02-20',
+    },
+    {
+      id: 2,
+      domain: 'test.com',
+      status: 'maintenance',
+      type: 'Node.js',
+      ssl: true,
+      diskUsage: '1.5 GB',
+      lastBackup: '2024-02-19',
+    },
+    // Add more mock data as needed
+  ];
 
-  const [showForm, setShowForm] = useState(false);
-  const [editingHost, setEditingHost] = useState(null);
-  const [formData, setFormData] = useState({
-    domain: '',
-    document_root: '',
-    server_admin: '',
-    php_version: '8.2',
+  const filteredWebsites = websites.filter(site => {
+    const matchesSearch = site.domain.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFilter = filterStatus === 'all' || site.status === filterStatus;
+    return matchesSearch && matchesFilter;
   });
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+  const StatusBadge = ({ status }) => {
+    const colors = {
+      active: 'bg-green-100 text-green-800',
+      maintenance: 'bg-yellow-100 text-yellow-800',
+      suspended: 'bg-red-100 text-red-800',
+    };
 
-      if (editingHost) {
-        updateVirtualHost(editingHost.id, formData);
-      } else {
-        addVirtualHost(formData);
-      }
-
-      setShowForm(false);
-      setEditingHost(null);
-      setFormData({
-        domain: '',
-        document_root: '',
-        server_admin: '',
-        php_version: '8.2',
-      });
-    } catch (err) {
-      console.error('Failed to save virtual host:', err);
-    }
-  };
-
-  const handleEdit = (host) => {
-    setEditingHost(host);
-    setFormData({
-      domain: host.domain,
-      document_root: host.document_root,
-      server_admin: host.server_admin,
-      php_version: host.php_version,
-    });
-    setShowForm(true);
-  };
-
-  const handleDelete = async (hostId) => {
-    if (!window.confirm('Are you sure you want to delete this virtual host? This action cannot be undone.')) {
-      return;
-    }
-
-      try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      deleteVirtualHost(hostId);
-      } catch (err) {
-      console.error('Failed to delete virtual host:', err);
-    }
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colors[status]}`}>
+        {status.charAt(0).toUpperCase() + status.slice(1)}
+      </span>
+    );
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="mb-8 flex justify-between items-center">
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--primary-text)] mb-2">Virtual Hosts</h1>
-          <p className="text-[var(--secondary-text)]">Manage your virtual hosts and configurations</p>
+          <h1 className="text-2xl font-semibold text-[var(--text-primary)]">Virtual Hosts</h1>
+          <p className="mt-1 text-[var(--text-secondary)]">Manage your websites and domains</p>
         </div>
-        <button
-          onClick={() => {
-            setEditingHost(null);
-            setFormData({
-              domain: '',
-              document_root: '',
-              server_admin: '',
-              php_version: '8.2',
-            });
-            setShowForm(true);
-          }}
-          className="btn-primary flex items-center"
+        <Link
+          to="/virtual-hosts/new"
+          className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors"
         >
-          <PlusIcon className="w-5 h-5 mr-2" />
-          Add New Host
-        </button>
+          Add New Website
+        </Link>
       </div>
 
-      {/* Virtual Hosts Grid */}
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-            {virtualHosts.map((host) => (
-          <div key={host.id} className="stats-card">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-[var(--accent-color)]/10 rounded-lg flex items-center justify-center">
-                  <GlobeAltIcon className="w-6 h-6 stat-icon" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-[var(--primary-text)]">{host.domain}</h3>
-                  <p className="text-sm text-[var(--secondary-text)]">{host.document_root}</p>
-                </div>
-                  </div>
-              <div className="flex space-x-2">
-                    <button
-                  onClick={() => handleEdit(host)}
-                  className="p-2 text-[var(--secondary-text)] hover:text-[var(--accent-color)] hover:bg-[var(--hover-bg)] rounded-lg transition-colors"
-                    >
-                  <PencilIcon className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(host.id)}
-                  className="p-2 text-[var(--danger-color)] hover:text-[var(--danger-color)] hover:bg-[var(--hover-bg)] rounded-lg transition-colors"
-                    >
-                  <TrashIcon className="w-5 h-5" />
-                    </button>
-                  </div>
-            </div>
+      {/* Filters and Search */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex-1">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search domains..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:border-[var(--primary)] text-[var(--text-primary)]"
+            />
+            <svg
+              className="absolute left-3 top-2.5 h-5 w-5 text-[var(--text-secondary)]"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-4 py-2 bg-[var(--input-bg)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:border-[var(--primary)] text-[var(--text-primary)]"
+          >
+            <option value="all">All Status</option>
+            <option value="active">Active</option>
+            <option value="maintenance">Maintenance</option>
+            <option value="suspended">Suspended</option>
+          </select>
+        </div>
+      </div>
 
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center text-sm text-[var(--secondary-text)]">
-                <ServerIcon className="w-5 h-5 mr-2" />
-                <span>Admin: {host.server_admin}</span>
+      {/* Websites Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {filteredWebsites.map((site) => (
+          <div
+            key={site.id}
+            className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] hover:border-[var(--primary)] transition-colors"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-lg font-medium text-[var(--text-primary)]">{site.domain}</h3>
+                <div className="mt-2 space-y-2">
+                  <div className="flex items-center">
+                    <StatusBadge status={site.status} />
+                    <span className="ml-2 text-sm text-[var(--text-secondary)]">{site.type}</span>
+                  </div>
+                  <div className="flex items-center text-sm text-[var(--text-secondary)]">
+                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7" />
+                    </svg>
+                    {site.diskUsage}
+                  </div>
+                  <div className="flex items-center text-sm text-[var(--text-secondary)]">
+                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Last backup: {site.lastBackup}
+                  </div>
+      </div>
               </div>
-              <div className="flex items-center text-sm text-[var(--secondary-text)]">
-                <CodeBracketIcon className="w-5 h-5 mr-2" />
-                <span>PHP: {host.php_version}</span>
+              <div className="flex flex-col items-center space-y-2">
+                {site.ssl && (
+                  <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                )}
               </div>
-              <div className="flex items-center mt-4">
-                <div className={`w-2 h-2 rounded-full ${
-                  host.status === 'active' ? 'bg-[var(--success-color)]' : 'bg-[var(--border-color)]'
-                }`} />
-                <span className="ml-2 text-sm text-[var(--secondary-text)] capitalize">{host.status}</span>
               </div>
-            </div>
+              <div className="mt-4 flex justify-end space-x-2">
+              <button className="px-3 py-1 text-sm bg-[var(--hover-bg)] text-[var(--text-primary)] rounded hover:bg-[var(--hover-bg-dark)] transition-colors">
+                Edit
+              </button>
+              <button className="px-3 py-1 text-sm bg-[var(--primary)] text-white rounded hover:bg-[var(--primary-dark)] transition-colors">
+                Manage
+                </button>
+              </div>
           </div>
         ))}
-      </div>
-
-      {/* Add/Edit Form Modal */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center backdrop-blur-sm z-50">
-          <div className="card w-full max-w-md">
-            <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">
-              {editingHost ? 'Edit Virtual Host' : 'Add New Virtual Host'}
-            </h2>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Domain Name
-                </label>
-                <input
-                  type="text"
-                  value={formData.domain}
-                  onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
-                  className="input-field"
-                  placeholder="example.com"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Document Root
-                </label>
-                <input
-                  type="text"
-                  value={formData.document_root}
-                  onChange={(e) => setFormData({ ...formData, document_root: e.target.value })}
-                  className="input-field"
-                  placeholder="/var/www/example.com"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Server Admin
-                </label>
-                <input
-                  type="email"
-                  value={formData.server_admin}
-                  onChange={(e) => setFormData({ ...formData, server_admin: e.target.value })}
-                  className="input-field"
-                  placeholder="admin@example.com"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  PHP Version
-                </label>
-                <select
-                  value={formData.php_version}
-                  onChange={(e) => setFormData({ ...formData, php_version: e.target.value })}
-                  className="input-field"
-                  required
-                >
-                  <option value="8.2">PHP 8.2</option>
-                  <option value="8.1">PHP 8.1</option>
-                  <option value="8.0">PHP 8.0</option>
-                  <option value="7.4">PHP 7.4</option>
-                </select>
-              </div>
-              <div className="flex justify-end space-x-4 mt-6">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowForm(false);
-                    setEditingHost(null);
-                  }}
-                  className="btn-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn-primary"
-                >
-                  {editingHost ? 'Save Changes' : 'Create'}
-                </button>
-              </div>
-            </form>
-          </div>
         </div>
-      )}
     </div>
   );
-}
+};
 
 export default VirtualHosts; 

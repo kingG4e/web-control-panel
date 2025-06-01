@@ -5,11 +5,11 @@ from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
 
 class User(db.Model):
-    __tablename__ = 'users'
+    __tablename__ = 'user'
     
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=True)
     password_hash = db.Column(db.String(120), nullable=True)  # Nullable for system users
     role = db.Column(db.String(20), nullable=False, default='user')
     is_system_user = db.Column(db.Boolean, default=False)
@@ -32,7 +32,7 @@ class User(db.Model):
         self.is_system_user = is_system_user
         self.system_uid = system_uid
         if password and not is_system_user:
-            self.set_password(password)
+            self.password_hash = password
 
     def set_password(self, password):
         if self.is_system_user:
@@ -41,7 +41,6 @@ class User(db.Model):
 
     def verify_password(self, password):
         if self.is_system_user:
-            # System users are verified through PAM
             return False
         return check_password_hash(self.password_hash, password)
 
