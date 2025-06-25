@@ -1,48 +1,48 @@
 import React, { useState, useEffect } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useSearchParams } from 'react-router-dom';
+import PageLayout from '../components/layout/PageLayout';
+import Button from '../components/ui/Button';
+import Card from '../components/ui/Card';
+import { dns, virtualHosts } from '../services/api';
 import {
   PlusIcon,
   PencilIcon,
   TrashIcon,
   GlobeAltIcon,
   ArrowPathIcon,
-  DocumentDuplicateIcon,
-  ShieldCheckIcon,
+  DocumentTextIcon,
   ServerIcon,
   MagnifyingGlassIcon,
   FunnelIcon,
   InformationCircleIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  EyeIcon,
+  CommandLineIcon,
+  WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
-import PageLayout from '../components/layout/PageLayout';
-import Button from '../components/ui/Button';
-import Card from '../components/ui/Card';
 
 const DNSManagement = () => {
-  const {
-    dnsZones,
-    addDNSZone,
-    updateDNSZone,
-    deleteDNSZone,
-    addDNSRecord,
-    updateDNSRecord,
-    deleteDNSRecord
-  } = useData();
-
-  const [selectedZone, setSelectedZone] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [searchParams] = useSearchParams();
+  const [domains, setDomains] = useState([]);
+  const [selectedDomain, setSelectedDomain] = useState(null);
+  const [dnsZone, setDnsZone] = useState(null);
+  const [dnsRecords, setDnsRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showZoneForm, setShowZoneForm] = useState(false);
+  const [actionLoading, setActionLoading] = useState({});
+  
+  // Modals and forms
   const [showRecordForm, setShowRecordForm] = useState(false);
+  const [showZoneFile, setShowZoneFile] = useState(false);
+  const [zoneFileContent, setZoneFileContent] = useState('');
+  const [editingRecord, setEditingRecord] = useState(null);
+  
+  // Search and filter
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState([]);
-  const [expandedZones, setExpandedZones] = useState({});
-  const [showTooltip, setShowTooltip] = useState(null);
-  const [zoneFormData, setZoneFormData] = useState({
-    domain_name: '',
-    nameserver_ip: '127.0.0.1'
-  });
+  const [filterType, setFilterType] = useState('all');
+  
+  // Form data
   const [recordFormData, setRecordFormData] = useState({
     name: '',
     record_type: 'A',
@@ -50,200 +50,292 @@ const DNSManagement = () => {
     ttl: 3600,
     priority: null
   });
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [selectedRecord, setSelectedRecord] = useState(null);
+
+  const recordTypes = [
+    { value: 'A', label: 'A - IPv4 Address', description: 'Maps domain to IPv4 address' },
+    { value: 'AAAA', label: 'AAAA - IPv6 Address', description: 'Maps domain to IPv6 address' },
+    { value: 'CNAME', label: 'CNAME - Canonical Name', description: 'Maps domain to another domain' },
+    { value: 'MX', label: 'MX - Mail Exchange', description: 'Mail server for domain' },
+    { value: 'NS', label: 'NS - Name Server', description: 'Authoritative name server' },
+    { value: 'TXT', label: 'TXT - Text Record', description: 'Text information' },
+    { value: 'SPF', label: 'SPF - Sender Policy Framework', description: 'Email authentication' },
+    { value: 'DKIM', label: 'DKIM - DomainKeys Identified Mail', description: 'Email signing' }
+  ];
 
   useEffect(() => {
-    fetchZones();
-  }, []);
+    fetchDomains();
+    
+    // Check for domain parameter from URL
+    const domainParam = searchParams.get('domain');
+    if (domainParam) {
+      // Wait for domains to load, then select the domain
+      setTimeout(() => {
+        const domain = domains.find(d => d.domain === domainParam);
+        if (domain) {
+          handleDomainSelect(domain);
+        }
+      }, 1000);
+    }
+  }, [searchParams]);
 
-  const fetchZones = async () => {
+  useEffect(() => {
+    if (selectedDomain) {
+      fetchDnsRecords();
+    }
+  }, [selectedDomain]);
+
+  const fetchDomains = async () => {
     try {
-      setIsLoading(true);
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      setLoading(true);
+      const data = await virtualHosts.getAll();
+      setDomains(data || []);
       setError(null);
     } catch (err) {
-      setError('Failed to fetch DNS zones');
+      setError('Failed to fetch domains');
+      console.error('Failed to fetch domains:', err);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  const handleCreateZone = async (e) => {
-    e.preventDefault();
+  const fetchDnsRecords = async () => {
+    if (!selectedDomain) return;
+    
     try {
-      setError(null);
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      setActionLoading(prev => ({ ...prev, records: true }));
       
-      addDNSZone(zoneFormData);
-      setShowZoneForm(false);
-      setZoneFormData({ domain_name: '', nameserver_ip: '127.0.0.1' });
+      // Try to get existing DNS zone
+      const zones = await dns.getZones();
+      const existingZone = zones.find(z => z.domain_name === selectedDomain.domain);
+      
+      if (existingZone) {
+        setDnsZone(existingZone);
+        const records = await dns.getRecords(existingZone.id);
+        setDnsRecords(records || []);
+      } else {
+        // Create DNS zone if it doesn't exist
+        const newZone = await dns.createZone({
+          domain_name: selectedDomain.domain,
+          nameserver_ip: '127.0.0.1'
+        });
+        setDnsZone(newZone);
+        setDnsRecords([]);
+      }
+      
+      setError(null);
     } catch (err) {
-      setError('Failed to create DNS zone');
+      setError('Failed to fetch DNS records');
+      console.error('Failed to fetch DNS records:', err);
+    } finally {
+      setActionLoading(prev => ({ ...prev, records: false }));
     }
+  };
+
+  const handleDomainSelect = (domain) => {
+    setSelectedDomain(domain);
+    setDnsRecords([]);
+    setDnsZone(null);
   };
 
   const handleCreateRecord = async (e) => {
     e.preventDefault();
-    if (!selectedZone) return;
+    if (!dnsZone) return;
 
     try {
-      setError(null);
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      addDNSRecord(selectedZone.id, recordFormData);
-      setShowRecordForm(false);
-      setRecordFormData({
-        name: '',
-        record_type: 'A',
-        content: '',
-        ttl: 3600,
-        priority: null
-      });
-    } catch (err) {
-      setError('Failed to create DNS record');
-    }
-  };
-
-  const handleDeleteZone = async (zoneId) => {
-    if (!window.confirm('Are you sure you want to delete this zone? This action cannot be undone.')) {
-      return;
-    }
-
-    try {
-      setError(null);
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      deleteDNSZone(zoneId);
-      } catch (err) {
-        setError('Failed to delete DNS zone');
-    }
-  };
-
-  const handleDeleteRecord = async (zoneId, recordId) => {
-    if (!window.confirm('Are you sure you want to delete this record? This action cannot be undone.')) {
-      return;
-    }
-
-    try {
-      setError(null);
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      deleteDNSRecord(zoneId, recordId);
-      } catch (err) {
-        setError('Failed to delete DNS record');
+      setActionLoading(prev => ({ ...prev, form: true }));
+      
+      if (editingRecord) {
+        // Update existing record
+        await dns.updateRecord(dnsZone.id, editingRecord.id, recordFormData);
+      } else {
+        // Create new record
+        await dns.createRecord(dnsZone.id, recordFormData);
       }
+      
+      await fetchDnsRecords();
+      setShowRecordForm(false);
+      setEditingRecord(null);
+      resetForm();
+      setError(null);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save DNS record');
+    } finally {
+      setActionLoading(prev => ({ ...prev, form: false }));
+    }
+  };
+
+  const handleEditRecord = (record) => {
+    setEditingRecord(record);
+    setRecordFormData({
+      name: record.name,
+      record_type: record.record_type,
+      content: record.content,
+      ttl: record.ttl,
+      priority: record.priority
+    });
+    setShowRecordForm(true);
+  };
+
+  const handleDeleteRecord = async (record) => {
+    if (!window.confirm(`Are you sure you want to delete this ${record.record_type} record?`)) {
+      return;
+    }
+
+    try {
+      setActionLoading(prev => ({ ...prev, [record.id]: true }));
+      await dns.deleteRecord(dnsZone.id, record.id);
+      await fetchDnsRecords();
+      setError(null);
+    } catch (err) {
+      setError('Failed to delete DNS record');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [record.id]: false }));
+    }
+  };
+
+  const handleViewZoneFile = async () => {
+    if (!dnsZone) return;
+
+    try {
+      setActionLoading(prev => ({ ...prev, zonefile: true }));
+      const response = await dns.getZoneFile(dnsZone.id);
+      setZoneFileContent(response.content);
+      setShowZoneFile(true);
+    } catch (err) {
+      setError('Failed to load zone file');
+    } finally {
+      setActionLoading(prev => ({ ...prev, zonefile: false }));
+    }
+  };
+
+  const handleReloadBind = async () => {
+    try {
+      setActionLoading(prev => ({ ...prev, reload: true }));
+      await dns.reloadBind();
+      setError(null);
+      // Show success message
+      setTimeout(() => {
+        setActionLoading(prev => ({ ...prev, reload: false }));
+      }, 2000);
+    } catch (err) {
+      setError('Failed to reload BIND');
+      setActionLoading(prev => ({ ...prev, reload: false }));
+    }
+  };
+
+  const handleRebuildDns = async () => {
+    if (!window.confirm('This will rebuild all DNS zones. Continue?')) return;
+
+    try {
+      setActionLoading(prev => ({ ...prev, rebuild: true }));
+      await dns.rebuildDns();
+      await fetchDnsRecords();
+      setError(null);
+    } catch (err) {
+      setError('Failed to rebuild DNS');
+    } finally {
+      setActionLoading(prev => ({ ...prev, rebuild: false }));
+    }
+  };
+
+  const resetForm = () => {
+    setRecordFormData({
+      name: '',
+      record_type: 'A',
+      content: '',
+      ttl: 3600,
+      priority: null
+    });
   };
 
   const getRecordTypeColor = (type) => {
-    if (!type) return 'bg-gray-500/10 text-gray-500';
-    
-    switch (type.toUpperCase()) {
-      case 'A':
-        return 'bg-blue-500/10 text-blue-500';
-      case 'AAAA':
-        return 'bg-purple-500/10 text-purple-500';
-      case 'CNAME':
-        return 'bg-green-500/10 text-green-500';
-      case 'MX':
-        return 'bg-yellow-500/10 text-yellow-500';
-      case 'TXT':
-        return 'bg-pink-500/10 text-pink-500';
-      case 'NS':
-        return 'bg-orange-500/10 text-orange-500';
-      default:
-        return 'bg-gray-500/10 text-gray-500';
-    }
+    const colors = {
+      A: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+      AAAA: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300',
+      CNAME: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+      MX: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
+      NS: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+      TXT: 'bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300',
+      SPF: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
+      DKIM: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300'
+    };
+    return colors[type] || 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300';
   };
 
-  const getRecordTypeIcon = (type) => {
-    if (!type) return null;
-    
-    switch (type.toUpperCase()) {
-      case 'A':
-      case 'AAAA':
-        return <ServerIcon className="w-4 h-4" />;
-      case 'CNAME':
-        return <DocumentDuplicateIcon className="w-4 h-4" />;
-      case 'MX':
-        return <ArrowPathIcon className="w-4 h-4" />;
-      case 'TXT':
-        return <ShieldCheckIcon className="w-4 h-4" />;
-      case 'NS':
-        return <GlobeAltIcon className="w-4 h-4" />;
-      default:
-        return null;
-    }
-  };
-
-  const groupRecordsByType = (records) => {
-    if (!Array.isArray(records)) return {};
-    
-    return records.reduce((groups, record) => {
-      if (!record || !record.record_type) return groups;
-      
-      const type = record.record_type.toUpperCase();
-      if (!groups[type]) {
-        groups[type] = [];
-      }
-      groups[type].push(record);
-      return groups;
-    }, {});
-  };
-
-  const toggleZoneExpansion = (zoneId) => {
-    setExpandedZones(prev => ({
-      ...prev,
-      [zoneId]: !prev[zoneId]
-    }));
-  };
-
-  const filteredZones = dnsZones.filter(zone => {
-    const matchesSearch = zone.domain_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      zone.records.some(record => 
-        record.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        record.content.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-
-    if (!matchesSearch) return false;
-    if (selectedTypes.length === 0) return true;
-
-    return zone.records.some(record => selectedTypes.includes(record.record_type));
+  // Filter records
+  const filteredRecords = dnsRecords.filter(record => {
+    const matchesSearch = record.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         record.content.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFilter = filterType === 'all' || record.record_type === filterType;
+    return matchesSearch && matchesFilter;
   });
 
-  const recordTypes = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'];
+  // Group records by type
+  const groupedRecords = filteredRecords.reduce((groups, record) => {
+    const type = record.record_type;
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(record);
+    return groups;
+  }, {});
 
-  const getTooltipContent = (type) => {
-    switch (type) {
-      case 'A':
-        return 'Maps a domain to IPv4 address';
-      case 'AAAA':
-        return 'Maps a domain to IPv6 address';
-      case 'CNAME':
-        return 'Creates an alias pointing to another domain';
-      case 'MX':
-        return 'Specifies mail servers for the domain';
-      case 'TXT':
-        return 'Stores text information (SPF, DKIM, etc.)';
-      case 'NS':
-        return 'Specifies authoritative nameservers';
-      default:
-        return '';
-    }
-  };
-
-  if (isLoading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent-color)]"></div>
-    </div>
-  );
-
-  if (error) return (
-    <div className="bg-red-500/10 text-red-500 p-4 rounded-lg border border-red-500/20">
-      {error}
+  const actions = (
+    <div className="flex items-center space-x-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={fetchDnsRecords}
+        disabled={!selectedDomain || actionLoading.records}
+        icon={<ArrowPathIcon className="w-4 h-4" />}
+      >
+        Refresh
+      </Button>
+      
+      {dnsZone && (
+        <>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleViewZoneFile}
+            disabled={actionLoading.zonefile}
+            icon={<EyeIcon className="w-4 h-4" />}
+          >
+            View Zone File
+          </Button>
+          
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleReloadBind}
+            disabled={actionLoading.reload}
+            icon={<CommandLineIcon className="w-4 h-4" />}
+          >
+            {actionLoading.reload ? 'Reloading...' : 'Reload BIND'}
+          </Button>
+          
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleRebuildDns}
+            disabled={actionLoading.rebuild}
+            icon={<WrenchScrewdriverIcon className="w-4 h-4" />}
+          >
+            {actionLoading.rebuild ? 'Rebuilding...' : 'Rebuild DNS'}
+          </Button>
+          
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setEditingRecord(null);
+              resetForm();
+              setShowRecordForm(true);
+            }}
+            icon={<PlusIcon className="w-4 h-4" />}
+          >
+            Add Record
+          </Button>
+        </>
+      )}
     </div>
   );
 
@@ -251,409 +343,404 @@ const DNSManagement = () => {
     <PageLayout
       title="DNS Management"
       description="Manage DNS records for your domains"
+      actions={actions}
     >
       <div className="space-y-6">
-        {/* Search and Filters Bar */}
-        <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-          <div className="p-4">
-            <div className="flex items-center justify-between gap-4 flex-wrap">
-              <div className="flex-1 min-w-[300px]">
-                <div className="relative">
-                  <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-[var(--secondary-text)]" />
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search domains, records, or content..."
-                    className="w-full pl-10 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--border-color)] rounded-lg text-[var(--primary-text)] placeholder-[var(--secondary-text)]"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex flex-wrap gap-2">
-                  {recordTypes.map(type => (
-                    <div
-                      key={type}
-                      className="relative"
-                      onMouseEnter={() => setShowTooltip(type)}
-                      onMouseLeave={() => setShowTooltip(null)}
-                    >
-                      <button
-                        onClick={() => setSelectedTypes(prev => 
-                          prev.includes(type) 
-                            ? prev.filter(t => t !== type)
-                            : [...prev, type]
-                        )}
-                        className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                          selectedTypes.includes(type)
-                            ? getRecordTypeColor(type)
-                            : 'bg-[var(--border-color)] text-[var(--secondary-text)]'
-                        }`}
-                      >
-                        {getRecordTypeIcon(type)}
-                        <span className="ml-1">{type}</span>
-                      </button>
-                      {showTooltip === type && (
-                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/75 text-white text-xs rounded whitespace-nowrap">
-                          {getTooltipContent(type)}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<PlusIcon className="w-4 h-4" />}
-                  onClick={() => setShowZoneForm(true)}
-                >
-                  Add Zone
-                </Button>
-              </div>
+        {/* Error Alert */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 dark:bg-red-900/20 dark:border-red-800">
+            <div className="flex items-center">
+              <InformationCircleIcon className="w-5 h-5 text-red-500 mr-2" />
+              <span className="text-red-800 dark:text-red-200">{error}</span>
+              <button
+                onClick={() => setError(null)}
+                className="ml-auto text-red-500 hover:text-red-700 dark:hover:text-red-300"
+              >
+                ×
+              </button>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* DNS Zones */}
-        {filteredZones.length > 0 ? (
-          <div className="space-y-4">
-            {filteredZones.map((zone) => (
-              <Card key={zone.id} className="overflow-hidden">
-                <div 
-                  className="p-4 border-b border-[var(--border-color)] cursor-pointer hover:bg-[var(--hover-bg)] transition-colors"
-                  onClick={() => toggleZoneExpansion(zone.id)}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <GlobeAltIcon className="w-6 h-6 text-[var(--accent-color)]" />
-        <div>
-                        <h3 className="text-lg font-medium text-[var(--primary-text)]">{zone.domain_name}</h3>
-                        <p className="text-sm text-[var(--secondary-text)]">
-                          {zone.records.length} records · Serial: {zone.serial}
-          </p>
-        </div>
-                    </div>
-                    <div className="flex items-center space-x-4">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        icon={<DocumentDuplicateIcon className="w-4 h-4" />}
-                      >
-                        Export
-                      </Button>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        icon={<PlusIcon className="w-4 h-4" />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedZone(zone);
-                          setShowRecordForm(true);
-                        }}
-                      >
-                        Add Record
-                      </Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        icon={<TrashIcon className="w-4 h-4" />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteZone(zone.id);
-                        }}
-                      >
-                        Delete Zone
-                      </Button>
-                      {expandedZones[zone.id] ? (
-                        <ChevronUpIcon className="w-5 h-5 text-[var(--secondary-text)]" />
-                      ) : (
-                        <ChevronDownIcon className="w-5 h-5 text-[var(--secondary-text)]" />
-                      )}
-                    </div>
+        {/* Domain Selection */}
+        <Card>
+          <div className="p-6">
+            <h2 className="text-lg font-semibold text-[var(--primary-text)] mb-4">
+              Select Domain
+            </h2>
+            
+            {loading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[...Array(6)].map((_, i) => (
+                  <div key={i} className="animate-pulse">
+                    <div className="h-20 bg-[var(--border-color)] rounded-lg"></div>
                   </div>
-                </div>
-
-                {expandedZones[zone.id] && (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr>
-                          <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Name</th>
-                          <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Type</th>
-                          <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Content</th>
-                          <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">TTL</th>
-                          <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Priority</th>
-                          <th className="px-6 py-3 bg-[var(--secondary-bg)] text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--border-color)]">
-                        {Array.isArray(zone.records) && zone.records.length > 0 ? (
-                          zone.records
-                            .filter(record => selectedTypes.length === 0 || selectedTypes.includes(record.record_type))
-                            .sort((a, b) => {
-                              // Sort by record type first
-                              const typeOrder = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'];
-                              const typeA = typeOrder.indexOf(a.record_type);
-                              const typeB = typeOrder.indexOf(b.record_type);
-                              if (typeA !== typeB) return typeA - typeB;
-                              
-                              // Then sort by name
-                              const nameA = a.name || '@';
-                              const nameB = b.name || '@';
-                              return nameA.localeCompare(nameB);
-                            })
-                            .map((record) => (
-                              <tr key={record.id} className="hover:bg-[var(--hover-bg)] transition-colors">
-                                <td className="px-6 py-4">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="text-sm text-[var(--primary-text)]">{record.name || '@'}</span>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium space-x-1 ${getRecordTypeColor(record.record_type)}`}>
-                                    {getRecordTypeIcon(record.record_type)}
-                                    <span>{record.record_type}</span>
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <div className="flex items-center space-x-2">
-                                    <code className="text-sm text-[var(--primary-text)] font-mono bg-[var(--border-color)]/20 px-2 py-0.5 rounded">
-                                      {record.content}
-                                    </code>
-                                    <button
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(record.content);
-                                        // TODO: Show copy success toast
-                                      }}
-                                      className="text-[var(--secondary-text)] hover:text-[var(--accent-color)] transition-colors"
-                                    >
-                                      <DocumentDuplicateIcon className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--border-color)] text-[var(--secondary-text)]">
-                                    {record.ttl}s
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4">
-                                  {record.priority ? (
-                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--accent-color)]/10 text-[var(--accent-color)]">
-                                      {record.priority}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[var(--secondary-text)]">-</span>
-                                  )}
-                                </td>
-                                <td className="px-6 py-4">
-                                  <div className="flex items-center space-x-3">
-                                    <button
-                                      onClick={() => {
-                                        setSelectedRecord(record);
-                                        setRecordFormData({
-                                          ...record,
-                                          name: record.name || '',
-                                        });
-                                        setShowRecordForm(true);
-                                      }}
-                                      className="text-[var(--secondary-text)] hover:text-[var(--accent-color)] transition-colors"
-                                    >
-                                      <PencilIcon className="w-5 h-5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteRecord(zone.id, record.id)}
-                                      className="text-[var(--danger-color)] hover:text-[var(--danger-color)]/80 transition-colors"
-                                    >
-                                      <TrashIcon className="w-5 h-5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))
-                        ) : (
-                          <tr>
-                            <td colSpan="6" className="px-6 py-8 text-center text-[var(--secondary-text)]">
-                              No DNS records found. Click "Add Record" to create one.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-8 text-[var(--secondary-text)]">
-            {searchTerm || selectedTypes.length > 0 ? (
-              <div>
-                <p className="mb-2">No DNS zones or records match your search criteria.</p>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setSearchTerm('');
-                    setSelectedTypes([]);
-                  }}
-                >
-                  Clear Filters
-                </Button>
+                ))}
+              </div>
+            ) : domains.length === 0 ? (
+              <div className="text-center py-8">
+                <GlobeAltIcon className="w-12 h-12 text-[var(--secondary-text)] mx-auto mb-4" />
+                <p className="text-[var(--secondary-text)] mb-4">No domains found</p>
+                <p className="text-sm text-[var(--tertiary-text)]">
+                  Create a Virtual Host first to manage DNS records
+                </p>
               </div>
             ) : (
-              <div>
-                <p className="mb-2">No DNS zones found. Click "Add Zone" to create one.</p>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<PlusIcon className="w-4 h-4" />}
-                  onClick={() => setShowZoneForm(true)}
-                >
-                  Add Zone
-                </Button>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {domains.map((domain) => (
+                  <button
+                    key={domain.id}
+                    onClick={() => handleDomainSelect(domain)}
+                    className={`p-4 rounded-lg border-2 transition-all text-left hover:shadow-md ${
+                      selectedDomain?.id === domain.id
+                        ? 'border-[var(--accent-color)] bg-[var(--accent-color)]/5'
+                        : 'border-[var(--border-color)] hover:border-[var(--accent-color)]/50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="font-medium text-[var(--primary-text)]">
+                          {domain.domain}
+                        </h3>
+                        <p className="text-sm text-[var(--secondary-text)]">
+                          {domain.linux_username}
+                        </p>
+                      </div>
+                      <GlobeAltIcon className="w-5 h-5 text-[var(--secondary-text)]" />
+                    </div>
+                  </button>
+                ))}
               </div>
             )}
           </div>
-        )}
-      </div>
+        </Card>
 
-      {/* Zone Form Modal */}
-      {showZoneForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-md">
-            <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">Add New DNS Zone</h2>
-            <form onSubmit={handleCreateZone}>
-              <div className="space-y-4">
+        {/* DNS Records Management */}
+        {selectedDomain && (
+          <Card>
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
                 <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Domain Name
-                </label>
-                <input
-                  type="text"
-                  value={zoneFormData.domain_name}
-                  onChange={(e) => setZoneFormData({ ...zoneFormData, domain_name: e.target.value })}
-                    className="input-field"
-                    placeholder="example.com"
-                  required
-                />
-              </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Nameserver IP
-                </label>
-                <input
-                  type="text"
-                  value={zoneFormData.nameserver_ip}
-                  onChange={(e) => setZoneFormData({ ...zoneFormData, nameserver_ip: e.target.value })}
-                    className="input-field"
-                    placeholder="127.0.0.1"
-                  required
-                />
+                  <h2 className="text-lg font-semibold text-[var(--primary-text)]">
+                    DNS Records for {selectedDomain.domain}
+                  </h2>
+                  <p className="text-sm text-[var(--secondary-text)]">
+                    {dnsRecords.length} record{dnsRecords.length !== 1 ? 's' : ''}
+                  </p>
                 </div>
               </div>
-              <div className="flex justify-end space-x-4 mt-6">
-                <Button
-                  variant="secondary"
-                  onClick={() => setShowZoneForm(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  type="submit"
-                >
-                  Create
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {/* Record Form Modal */}
-      {showRecordForm && selectedZone && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-md">
-            <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">Add New DNS Record</h2>
-            <form onSubmit={handleCreateRecord}>
-              <div className="space-y-4">
+              {/* Search and Filter */}
+              <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                <div className="flex-1">
+                  <div className="relative">
+                    <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-[var(--secondary-text)]" />
+                    <input
+                      type="text"
+                      placeholder="Search records..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                    />
+                  </div>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <FunnelIcon className="w-5 h-5 text-[var(--secondary-text)]" />
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value)}
+                    className="px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                  >
+                    <option value="all">All Types</option>
+                    {recordTypes.map(type => (
+                      <option key={type.value} value={type.value}>
+                        {type.value}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Records Table */}
+              {actionLoading.records ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent-color)] mx-auto mb-4"></div>
+                  <p className="text-[var(--secondary-text)]">Loading DNS records...</p>
+                </div>
+              ) : filteredRecords.length === 0 ? (
+                <div className="text-center py-8">
+                  <ServerIcon className="w-12 h-12 text-[var(--secondary-text)] mx-auto mb-4" />
+                  <p className="text-[var(--secondary-text)] mb-4">
+                    {dnsRecords.length === 0 ? 'No DNS records found' : 'No records match your search'}
+                  </p>
+                  {dnsRecords.length === 0 && (
+                    <Button
+                      variant="primary"
+                      onClick={() => {
+                        setEditingRecord(null);
+                        resetForm();
+                        setShowRecordForm(true);
+                      }}
+                      icon={<PlusIcon className="w-4 h-4" />}
+                    >
+                      Add First Record
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead className="bg-[var(--table-header-bg)] border-y border-[var(--border-color)]">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">
+                          Name
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">
+                          Type
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">
+                          Content
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">
+                          TTL
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">
+                          Priority
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">
+                          Actions
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-[var(--card-bg)] divide-y divide-[var(--border-color)]">
+                      {filteredRecords.map((record) => (
+                        <tr key={record.id} className="hover:bg-[var(--hover-bg)] transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-[var(--primary-text)]">
+                              {record.name || '@'}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${getRecordTypeColor(record.record_type)}`}>
+                              {record.record_type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-[var(--primary-text)] max-w-xs truncate">
+                              {record.content}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--secondary-text)]">
+                            {record.ttl}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--secondary-text)]">
+                            {record.priority || '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <div className="flex items-center space-x-2">
+                              <button
+                                onClick={() => handleEditRecord(record)}
+                                className="text-[var(--accent-color)] hover:text-[var(--accent-hover)] transition-colors"
+                                title="Edit Record"
+                              >
+                                <PencilIcon className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteRecord(record)}
+                                disabled={actionLoading[record.id]}
+                                className="text-red-600 hover:text-red-800 disabled:opacity-50 transition-colors"
+                                title="Delete Record"
+                              >
+                                {actionLoading[record.id] ? (
+                                  <div className="w-4 h-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent"></div>
+                                ) : (
+                                  <TrashIcon className="w-4 h-4" />
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {/* Record Form Modal */}
+        {showRecordForm && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[120] overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center p-4">
+              <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-md my-8">
+              <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">
+                {editingRecord ? 'Edit DNS Record' : 'Add DNS Record'}
+              </h2>
+              
+              <form onSubmit={handleCreateRecord} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Name
-                </label>
-                <input
-                  type="text"
-                  value={recordFormData.name}
-                  onChange={(e) => setRecordFormData({ ...recordFormData, name: e.target.value })}
-                    className="input-field"
-                    placeholder="@"
-                  required
-                />
-              </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Record Type
-                </label>
-                <select
-                  value={recordFormData.record_type}
-                  onChange={(e) => setRecordFormData({ ...recordFormData, record_type: e.target.value })}
-                    className="input-field"
-                  required
-                >
-                  <option value="A">A</option>
-                  <option value="AAAA">AAAA</option>
-                  <option value="CNAME">CNAME</option>
-                  <option value="MX">MX</option>
-                  <option value="TXT">TXT</option>
-                </select>
-              </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Content
-                </label>
-                <input
-                  type="text"
-                  value={recordFormData.content}
-                  onChange={(e) => setRecordFormData({ ...recordFormData, content: e.target.value })}
-                    className="input-field"
-                    placeholder="192.168.1.1"
-                  required
-                />
-              </div>
-              {recordFormData.record_type === 'MX' && (
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                    Priority
+                    Name
                   </label>
                   <input
-                    type="number"
-                    value={recordFormData.priority || ''}
-                    onChange={(e) => setRecordFormData({ ...recordFormData, priority: parseInt(e.target.value) })}
-                      className="input-field"
-                      placeholder="10"
+                    type="text"
+                    value={recordFormData.name}
+                    onChange={(e) => setRecordFormData({ ...recordFormData, name: e.target.value })}
+                    placeholder="@ or subdomain"
+                    className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                    required
+                  />
+                  <p className="text-xs text-[var(--tertiary-text)] mt-1">
+                    Use @ for root domain or enter subdomain name
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                    Record Type
+                  </label>
+                  <select
+                    value={recordFormData.record_type}
+                    onChange={(e) => setRecordFormData({ ...recordFormData, record_type: e.target.value })}
+                    className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                  >
+                    {recordTypes.map(type => (
+                      <option key={type.value} value={type.value}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-[var(--tertiary-text)] mt-1">
+                    {recordTypes.find(t => t.value === recordFormData.record_type)?.description}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                    Content
+                  </label>
+                  <input
+                    type="text"
+                    value={recordFormData.content}
+                    onChange={(e) => setRecordFormData({ ...recordFormData, content: e.target.value })}
+                    placeholder={
+                      recordFormData.record_type === 'A' ? '192.168.1.1' :
+                      recordFormData.record_type === 'AAAA' ? '2001:db8::1' :
+                      recordFormData.record_type === 'CNAME' ? 'example.com' :
+                      recordFormData.record_type === 'MX' ? 'mail.example.com' :
+                      recordFormData.record_type === 'TXT' ? 'v=spf1 include:_spf.google.com ~all' :
+                      'Record content'
+                    }
+                    className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
                     required
                   />
                 </div>
-              )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      TTL (seconds)
+                    </label>
+                    <input
+                      type="number"
+                      value={recordFormData.ttl}
+                      onChange={(e) => setRecordFormData({ ...recordFormData, ttl: parseInt(e.target.value) })}
+                      min="60"
+                      max="86400"
+                      className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                    />
+                  </div>
+
+                  {recordFormData.record_type === 'MX' && (
+                    <div>
+                      <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                        Priority
+                      </label>
+                      <input
+                        type="number"
+                        value={recordFormData.priority || ''}
+                        onChange={(e) => setRecordFormData({ ...recordFormData, priority: parseInt(e.target.value) })}
+                        min="0"
+                        max="65535"
+                        className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                        required
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end space-x-3 mt-6">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setShowRecordForm(false);
+                      setEditingRecord(null);
+                      resetForm();
+                    }}
+                    disabled={actionLoading.form}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={actionLoading.form}
+                  >
+                    {actionLoading.form ? (
+                      <div className="flex items-center">
+                        <div className="w-4 h-4 animate-spin rounded-full border-2 border-white border-t-transparent mr-2"></div>
+                        {editingRecord ? 'Updating...' : 'Creating...'}
+                      </div>
+                    ) : (
+                      editingRecord ? 'Update Record' : 'Create Record'
+                    )}
+                  </Button>
+                </div>
+              </form>
               </div>
-              <div className="flex justify-end space-x-4 mt-6">
+            </div>
+          </div>
+        )}
+
+        {/* Zone File Modal */}
+        {showZoneFile && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[125] overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center p-4">
+              <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-4xl my-8">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-[var(--primary-text)]">
+                  Zone File: {selectedDomain?.domain}
+                </h2>
+                <button
+                  onClick={() => setShowZoneFile(false)}
+                  className="text-[var(--secondary-text)] hover:text-[var(--primary-text)]"
+                >
+                  <ChevronUpIcon className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="bg-[var(--code-bg)] border border-[var(--border-color)] rounded-lg p-4 overflow-x-auto">
+                <pre className="text-sm text-[var(--code-text)] whitespace-pre-wrap font-mono">
+                  {zoneFileContent}
+                </pre>
+              </div>
+              
+              <div className="flex justify-end mt-4">
                 <Button
                   variant="secondary"
-                  onClick={() => setShowRecordForm(false)}
+                  onClick={() => setShowZoneFile(false)}
                 >
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  type="submit"
-                >
-                  Create
+                  Close
                 </Button>
               </div>
-            </form>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </PageLayout>
   );
 };

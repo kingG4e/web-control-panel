@@ -1,26 +1,29 @@
+# Import base first
 from .base import db
-from .user import User
-from .virtual_host import VirtualHost, VirtualHostAlias
-from .ssl import SSLCertificate, SSLCertificateLog
-from .ftp import FTPAccount, FTPAccessRule
-from .database import Database, DatabaseUser
-from .email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias
-from .dns import DNSRecord
 
+# Import models in correct order to avoid circular imports
+from .user import User
+from .notification import Notification
+from .virtual_host import VirtualHost, VirtualHostAlias
+from .database import Database
+from .dns import DNSRecord
+from .email import EmailAccount
+from .ftp import FTPAccount
+from .ssl_certificate import SSLCertificate
+from .ssl import SSLCertificate as SSLCert, SSLCertificateLog
+
+# Make sure all models are available
 __all__ = [
     'db',
     'User',
+    'Notification', 
     'VirtualHost',
     'VirtualHostAlias',
-    'SSLCertificate',
-    'SSLCertificateLog',
-    'FTPAccount',
-    'FTPAccessRule',
     'Database',
-    'DatabaseUser',
-    'EmailDomain',
+    'DNSRecord',
     'EmailAccount',
-    'EmailForwarder',
-    'EmailAlias',
-    'DNSRecord'
+    'FTPAccount',
+    'SSLCertificate',
+    'SSLCert',
+    'SSLCertificateLog'
 ] 

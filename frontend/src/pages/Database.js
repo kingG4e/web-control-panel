@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import PageLayout from '../components/layout/PageLayout';
 import Button from '../components/ui/Button';
 import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
 import Table, { TableHeader, TableBody, TableRow, TableCell, TableHeaderCell } from '../components/ui/Table';
 import { useData } from '../contexts/DataContext';
+import { useAuth } from '../contexts/AuthContext';
+import { database as dbApi, virtualHosts } from '../services/api';
 import {
   PlusIcon,
   PencilIcon,
@@ -17,18 +19,31 @@ import {
   DocumentTextIcon,
   Cog6ToothIcon,
   CommandLineIcon,
+  GlobeAltIcon,
+  ExclamationCircleIcon,
+  EyeIcon,
+  ShieldCheckIcon,
+  LockClosedIcon
 } from '@heroicons/react/24/outline';
 
 const Database = () => {
+  const { user } = useAuth();
   const {
     databases,
     addDatabase,
     updateDatabase,
-    deleteDatabase
+    deleteDatabase,
+    setDatabases
   } = useData();
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [userDomains, setUserDomains] = useState([]);
+  const [userDatabases, setUserDatabases] = useState([]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
+  const [filterDomain, setFilterDomain] = useState('all');
   const [selectedDatabases, setSelectedDatabases] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingDb, setEditingDb] = useState(null);
@@ -39,12 +54,65 @@ const Database = () => {
     collation: 'utf8mb4_unicode_ci',
     username: '',
     password: '',
+    domain: '',
   });
 
-  const filteredDatabases = databases.filter(db => {
+  useEffect(() => {
+    if (user) {
+      fetchUserData();
+    }
+  }, [user]);
+
+  const fetchUserData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Fetch user's virtual hosts to get their domains
+      const virtualHostsData = await virtualHosts.getAll();
+      const userVirtualHosts = virtualHostsData.filter(vh => 
+        vh.user_id === user.id || (user.role === 'admin')
+      );
+      setUserDomains(userVirtualHosts);
+
+      // Fetch all databases and filter for user's databases
+      const allDatabases = await dbApi.getDatabases();
+      
+      // Filter databases based on user ownership or domain association
+      let filteredDatabases = [];
+      
+      if (user.role === 'admin') {
+        // Admins can see all databases
+        filteredDatabases = allDatabases;
+      } else {
+        // Regular users can only see databases associated with their domains
+        const userDomainNames = userVirtualHosts.map(vh => vh.domain);
+        filteredDatabases = allDatabases.filter(db => {
+          // Check if database belongs to user's domains
+          return userDomainNames.some(domain => 
+            db.name.includes(domain.replace(/\./g, '_')) || 
+            db.associated_domain === domain ||
+            db.owner_id === user.id
+          );
+        });
+      }
+      
+      setUserDatabases(filteredDatabases);
+      setDatabases(filteredDatabases);
+    } catch (err) {
+      setError('Failed to fetch databases. Please ensure you have proper permissions and the database service is running.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredDatabases = userDatabases.filter(db => {
     const matchesSearch = db.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = filterType === 'all' || db.type.toLowerCase() === filterType.toLowerCase();
-    return matchesSearch && matchesFilter;
+    const matchesType = filterType === 'all' || db.type.toLowerCase() === filterType.toLowerCase();
+    const matchesDomain = filterDomain === 'all' || 
+      (db.associated_domain === filterDomain) ||
+      (db.name.includes(filterDomain.replace(/\./g, '_')));
+    return matchesSearch && matchesType && matchesDomain;
   });
 
   const handleSelectAll = (e) => {
@@ -66,15 +134,18 @@ const Database = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Add user_id and domain association to form data
+      const submitData = {
+        ...formData,
+        user_id: user.id,
+        associated_domain: formData.domain || null
+      };
 
       if (editingDb) {
-        updateDatabase(editingDb.id, formData);
+        console.log("Updating (not implemented yet)");
       } else {
-        addDatabase(formData);
+        await dbApi.createDatabase(submitData);
       }
-
       setShowForm(false);
       setEditingDb(null);
       setFormData({
@@ -84,13 +155,22 @@ const Database = () => {
         collation: 'utf8mb4_unicode_ci',
         username: '',
         password: '',
+        domain: '',
       });
+      fetchUserData();
     } catch (err) {
       console.error('Failed to save database:', err);
+      setError(err.response?.data?.error || 'Failed to save database');
     }
   };
 
   const handleEdit = (db) => {
+    // Check if user has permission to edit this database
+    if (user.role !== 'admin' && db.owner_id !== user.id) {
+      setError('You do not have permission to edit this database.');
+      return;
+    }
+
     setEditingDb(db);
     setFormData({
       name: db.name,
@@ -99,21 +179,29 @@ const Database = () => {
       collation: db.collation,
       username: db.users?.[0]?.username || '',
       password: '',
+      domain: db.associated_domain || '',
     });
     setShowForm(true);
   };
 
   const handleDelete = async (dbId) => {
-    if (!window.confirm('Are you sure you want to delete this database? This action cannot be undone.')) {
+    const database = userDatabases.find(db => db.id === dbId);
+    
+    // Check if user has permission to delete this database
+    if (user.role !== 'admin' && database?.owner_id !== user.id) {
+      setError('You do not have permission to delete this database.');
       return;
     }
 
+    if (!window.confirm('Are you sure you want to delete this database? This action cannot be undone.')) {
+      return;
+    }
     try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      deleteDatabase(dbId);
+      await dbApi.deleteDatabase(dbId);
+      fetchUserData();
     } catch (err) {
       console.error('Failed to delete database:', err);
+      setError(err.response?.data?.error || 'Failed to delete database');
     }
   };
 
@@ -142,25 +230,90 @@ const Database = () => {
     </div>
   );
 
+  const getUserPermissionLevel = (database) => {
+    if (user.role === 'admin') return 'admin';
+    if (database.owner_id === user.id) return 'owner';
+    return 'viewer';
+  };
+
+  const canEditDatabase = (database) => {
+    return user.role === 'admin' || database.owner_id === user.id;
+  };
+
+  const canDeleteDatabase = (database) => {
+    return user.role === 'admin' || database.owner_id === user.id;
+  };
+
   return (
     <PageLayout
       title="Database Management"
-      description="Create and manage your databases"
+      description="Manage your databases securely"
     >
       <div className="space-y-6">
-        {/* Page Header */}
+        {/* Page Header with User Context */}
         <div className="flex items-center justify-between">
-    <div>
-            <h1 className="text-2xl font-semibold text-[var(--text-primary)]">Databases</h1>
-            <p className="mt-1 text-[var(--text-secondary)]">Manage your MySQL and PostgreSQL databases</p>
+          <div>
+            <h1 className="text-2xl font-semibold text-[var(--text-primary)]">My Databases</h1>
+            <p className="mt-1 text-[var(--text-secondary)]">
+              {user?.role === 'admin' ? 
+                'Manage all system databases' : 
+                `Manage databases for your ${userDomains.length} domain(s)`
+              }
+            </p>
           </div>
-          <Link
-            to="/database/new"
-            className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors"
-          >
-            Create Database
-          </Link>
+          <div className="flex items-center space-x-3">
+            {/* User Permission Badge */}
+            <div className="flex items-center px-3 py-1 bg-blue-50 border border-blue-200 rounded-lg">
+              <ShieldCheckIcon className="w-4 h-4 text-blue-500 mr-2" />
+              <span className="text-sm text-blue-700 font-medium">
+                {user?.role === 'admin' ? 'Administrator' : 'Domain Owner'}
+              </span>
+            </div>
+            <button
+              onClick={() => setShowForm(true)}
+              className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
+            >
+              <PlusIcon className="w-4 h-4 mr-2" />
+              Create Database
+            </button>
+          </div>
         </div>
+
+        {/* Error Display */}
+        {error && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start">
+            <ExclamationCircleIcon className="w-5 h-5 text-red-500 mr-3 mt-0.5 flex-shrink-0" />
+            <div>
+              <h4 className="text-red-800 font-medium">Access Error</h4>
+              <p className="text-red-700 text-sm mt-1">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/* User Domains Info */}
+        {user?.role !== 'admin' && userDomains.length > 0 && (
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-start">
+              <GlobeAltIcon className="w-5 h-5 text-blue-500 mr-3 mt-0.5" />
+              <div>
+                <h4 className="text-blue-800 font-medium">Your Domains</h4>
+                <p className="text-blue-700 text-sm mt-1">
+                  You can create databases for the following domains:
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {userDomains.map(domain => (
+                    <span 
+                      key={domain.id}
+                      className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded"
+                    >
+                      {domain.domain}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Filters and Search */}
         <div className="flex flex-col sm:flex-row gap-4">
@@ -168,7 +321,7 @@ const Database = () => {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Search databases..."
+                placeholder="Search your databases..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:border-[var(--primary)] text-[var(--text-primary)]"
@@ -187,7 +340,7 @@ const Database = () => {
                 />
               </svg>
             </div>
-      </div>
+          </div>
           <div className="flex gap-2">
             <select
               value={filterType}
@@ -198,9 +351,19 @@ const Database = () => {
               <option value="mysql">MySQL</option>
               <option value="postgresql">PostgreSQL</option>
             </select>
+            <select
+              value={filterDomain}
+              onChange={(e) => setFilterDomain(e.target.value)}
+              className="px-4 py-2 bg-[var(--input-bg)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:border-[var(--primary)] text-[var(--text-primary)]"
+            >
+              <option value="all">All Domains</option>
+              {userDomains.map(domain => (
+                <option key={domain.id} value={domain.domain}>{domain.domain}</option>
+              ))}
+            </select>
             <DatabaseActions />
           </div>
-          </div>
+        </div>
 
         {/* Database Table */}
         <div className="bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)] overflow-hidden">
@@ -211,21 +374,54 @@ const Database = () => {
                   <th className="px-6 py-3 text-left">
                     <input
                       type="checkbox"
-                      checked={selectedDatabases.length === filteredDatabases.length}
+                      checked={selectedDatabases.length === filteredDatabases.length && filteredDatabases.length > 0}
                       onChange={handleSelectAll}
                       className="rounded border-[var(--border-color)]"
                     />
-                </th>
+                  </th>
                   <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Name</th>
                   <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Type</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Domain</th>
                   <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Size</th>
-                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Tables</th>
-                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Last Backup</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Permission</th>
                   <th className="px-6 py-3 text-right text-sm font-medium text-[var(--text-secondary)]">Actions</th>
-              </tr>
-            </thead>
+                </tr>
+              </thead>
               <tbody>
-                {filteredDatabases.map((db) => (
+                {loading && (
+                  <tr>
+                    <td colSpan="7" className="text-center py-8">
+                      <div className="flex items-center justify-center">
+                        <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full mr-3"></div>
+                        Loading your databases...
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {!loading && error && (
+                  <tr>
+                    <td colSpan="7" className="text-center py-8 text-red-500">
+                      {error}
+                    </td>
+                  </tr>
+                )}
+                {!loading && !error && filteredDatabases.length === 0 && (
+                  <tr>
+                    <td colSpan="7" className="text-center py-8">
+                      <div className="flex flex-col items-center">
+                        <CircleStackIcon className="w-12 h-12 text-gray-400 mb-4" />
+                        <p className="text-[var(--text-secondary)] text-lg">No databases found</p>
+                        <p className="text-[var(--text-secondary)] text-sm">
+                          {userDomains.length === 0 ? 
+                            'You need to create a virtual host first' :
+                            'Create your first database to get started'
+                          }
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {!loading && !error && filteredDatabases.map((db) => (
                   <tr
                     key={db.id}
                     className="border-b border-[var(--border-color)] hover:bg-[var(--hover-bg)] transition-colors"
@@ -240,48 +436,114 @@ const Database = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center">
-                        <span className="font-medium text-[var(--text-primary)]">{db.name}</span>
-                    </div>
-                  </td>
+                        <CircleStackIcon className="w-5 h-5 text-blue-500 mr-3" />
+                        <div>
+                          <span className="font-medium text-[var(--text-primary)]">{db.name}</span>
+                          {db.owner_id === user.id && (
+                            <div className="flex items-center mt-1">
+                              <UserIcon className="w-3 h-3 text-green-500 mr-1" />
+                              <span className="text-xs text-green-600">Owner</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--primary)] bg-opacity-10 text-[var(--primary)]">
-                        {db.type}
-                    </span>
-                  </td>
-                    <td className="px-6 py-4 text-[var(--text-secondary)]">{db.size}</td>
-                    <td className="px-6 py-4 text-[var(--text-secondary)]">{db.tables}</td>
-                    <td className="px-6 py-4 text-[var(--text-secondary)]">{db.lastBackup}</td>
+                        {db.type || 'MySQL'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      {db.associated_domain ? (
+                        <div className="flex items-center">
+                          <GlobeAltIcon className="w-4 h-4 text-gray-400 mr-2" />
+                          <span className="text-sm text-[var(--text-secondary)]">{db.associated_domain}</span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400">No domain</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">
+                      {db.size_mb ? `${db.size_mb.toFixed(2)} MB` : 'N/A'}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center">
+                        {getUserPermissionLevel(db) === 'admin' && (
+                          <div className="flex items-center text-purple-600">
+                            <ShieldCheckIcon className="w-4 h-4 mr-1" />
+                            <span className="text-xs">Admin</span>
+                          </div>
+                        )}
+                        {getUserPermissionLevel(db) === 'owner' && (
+                          <div className="flex items-center text-green-600">
+                            <UserIcon className="w-4 h-4 mr-1" />
+                            <span className="text-xs">Owner</span>
+                          </div>
+                        )}
+                        {getUserPermissionLevel(db) === 'viewer' && (
+                          <div className="flex items-center text-gray-500">
+                            <EyeIcon className="w-4 h-4 mr-1" />
+                            <span className="text-xs">View</span>
+                          </div>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end space-x-2">
-                        <button className="p-1 hover:bg-[var(--hover-bg)] rounded transition-colors">
-                          <svg className="w-5 h-5 text-[var(--text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                      </button>
-                        <button className="p-1 hover:bg-[var(--hover-bg)] rounded transition-colors">
-                          <svg className="w-5 h-5 text-[var(--text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      <div className="flex justify-end space-x-2">
+                        {canEditDatabase(db) ? (
+                          <button 
+                            onClick={() => handleEdit(db)}
+                            className="p-1 hover:bg-[var(--hover-bg)] rounded transition-colors"
+                            title="Edit Database"
+                          >
+                            <PencilIcon className="w-5 h-5 text-[var(--text-secondary)]" />
+                          </button>
+                        ) : (
+                          <button 
+                            disabled
+                            className="p-1 rounded transition-colors opacity-50 cursor-not-allowed"
+                            title="No edit permission"
+                          >
+                            <LockClosedIcon className="w-5 h-5 text-gray-400" />
+                          </button>
+                        )}
+                        {canDeleteDatabase(db) ? (
+                          <button 
+                            onClick={() => handleDelete(db.id)}
+                            className="p-1 hover:bg-red-50 rounded transition-colors"
+                            title="Delete Database"
+                          >
+                            <TrashIcon className="w-5 h-5 text-red-500" />
+                          </button>
+                        ) : (
+                          <button 
+                            disabled
+                            className="p-1 rounded transition-colors opacity-50 cursor-not-allowed"
+                            title="No delete permission"
+                          >
+                            <LockClosedIcon className="w-5 h-5 text-gray-400" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Database Status */}
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-[var(--primary-text)]">Database Status</h3>
+              <h3 className="text-lg font-medium text-[var(--primary-text)]">Your Database Status</h3>
               <Button
                 variant="ghost"
                 size="sm"
                 icon={<ArrowPathIcon className="w-4 h-4" />}
+                onClick={fetchUserData}
               >
                 Refresh
               </Button>
@@ -289,20 +551,22 @@ const Database = () => {
             <div className="space-y-4">
               <div>
                 <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-[var(--secondary-text)]">Active Databases</span>
-                  <span className="text-[var(--primary-text)]">
-                    {Array.isArray(databases) ? databases.filter(db => db.status === 'active').length : 0} / {Array.isArray(databases) ? databases.length : 0}
+                  <span className="text-[var(--secondary-text)]">Total Databases</span>
+                  <span className="text-[var(--primary-text)] font-medium">
+                    {userDatabases.length}
                   </span>
                 </div>
-                <div className="h-2 bg-[var(--border-color)] rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-[var(--success-color)] rounded-full" 
-                    style={{ 
-                      width: Array.isArray(databases) && databases.length > 0
-                        ? `${(databases.filter(db => db.status === 'active').length / databases.length) * 100}%`
-                        : '0%'
-                    }}
-                  />
+                <div className="flex items-center justify-between text-sm mb-2">
+                  <span className="text-[var(--secondary-text)]">Your Domains</span>
+                  <span className="text-[var(--primary-text)] font-medium">
+                    {userDomains.length}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-[var(--secondary-text)]">Permission Level</span>
+                  <span className="text-[var(--primary-text)] font-medium">
+                    {user?.role === 'admin' ? 'Administrator' : 'Domain Owner'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -312,20 +576,13 @@ const Database = () => {
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-medium text-[var(--primary-text)]">Database Types</h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<ArrowPathIcon className="w-4 h-4" />}
-              >
-                Refresh
-              </Button>
             </div>
             <div className="space-y-3">
-              {Array.isArray(databases) && databases.length > 0 ? (
+              {userDatabases.length > 0 ? (
                 Object.entries(
-                  databases.reduce((acc, db) => ({
+                  userDatabases.reduce((acc, db) => ({
                     ...acc,
-                    [db.type]: (acc[db.type] || 0) + 1
+                    [db.type || 'MySQL']: (acc[db.type || 'MySQL'] || 0) + 1
                   }), {})
                 ).map(([type, count]) => (
                   <div key={type} className="flex items-center justify-between text-sm">
@@ -348,8 +605,9 @@ const Database = () => {
                 size="sm"
                 icon={<CircleStackIcon className="w-4 h-4" />}
                 className="justify-start"
+                disabled={selectedDatabases.length === 0}
               >
-                Backup All
+                Backup
               </Button>
               <Button
                 variant="secondary"
@@ -381,116 +639,141 @@ const Database = () => {
 
         {/* Database Form Modal */}
         {showForm && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center backdrop-blur-sm z-50">
-            <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-md">
-              <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">
-                {editingDb ? 'Edit Database' : 'Create Database'}
-              </h2>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Database Name
-                </label>
-                <input
-                  type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="input-field"
-                    placeholder="my_database"
-                    required
-                />
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[120] overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center p-4">
+              <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-md my-8">
+                <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">
+                  {editingDb ? 'Edit Database' : 'Create Database'}
+                </h2>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Database Name
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      className="input-field"
+                      placeholder="my_database"
+                      required
+                    />
+                  </div>
+                  
+                  {/* Domain Selection */}
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Associated Domain
+                    </label>
+                    <select
+                      value={formData.domain}
+                      onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+                      className="input-field"
+                      required={user?.role !== 'admin'}
+                    >
+                      <option value="">Select a domain</option>
+                      {userDomains.map(domain => (
+                        <option key={domain.id} value={domain.domain}>
+                          {domain.domain}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-[var(--secondary-text)] mt-1">
+                      Database will be associated with this domain
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Database Type
+                    </label>
+                    <select
+                      value={formData.type}
+                      onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                      className="input-field"
+                    >
+                      <option value="mysql">MySQL</option>
+                      <option value="postgresql">PostgreSQL</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Charset
+                    </label>
+                    <select
+                      value={formData.charset}
+                      onChange={(e) => setFormData({ ...formData, charset: e.target.value })}
+                      className="input-field"
+                    >
+                      <option value="utf8mb4">UTF-8 Unicode (utf8mb4)</option>
+                      <option value="utf8">UTF-8 (utf8)</option>
+                      <option value="latin1">Latin1 (latin1)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Collation
+                    </label>
+                    <select
+                      value={formData.collation}
+                      onChange={(e) => setFormData({ ...formData, collation: e.target.value })}
+                      className="input-field"
+                    >
+                      <option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</option>
+                      <option value="utf8mb4_general_ci">utf8mb4_general_ci</option>
+                      <option value="utf8_unicode_ci">utf8_unicode_ci</option>
+                      <option value="utf8_general_ci">utf8_general_ci</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Database User
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.username}
+                      onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                      className="input-field"
+                      placeholder="database_user"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Password
+                    </label>
+                    <input
+                      type="password"
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      className="input-field"
+                      placeholder={editingDb ? 'Leave blank to keep current password' : 'Enter password'}
+                      required={!editingDb}
+                    />
+                  </div>
+                  <div className="flex justify-end space-x-3 mt-6">
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setShowForm(false);
+                        setEditingDb(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="primary"
+                      type="submit"
+                    >
+                      {editingDb ? 'Save Changes' : 'Create Database'}
+                    </Button>
+                  </div>
+                </form>
               </div>
-              <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                    Database Type
-                  </label>
-                  <select
-                    value={formData.type}
-                    onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                    className="input-field"
-                  >
-                    <option value="mysql">MySQL</option>
-                    <option value="postgresql">PostgreSQL</option>
-                    <option value="mongodb">MongoDB</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                    Charset
-                  </label>
-                  <select
-                    value={formData.charset}
-                    onChange={(e) => setFormData({ ...formData, charset: e.target.value })}
-                    className="input-field"
-                  >
-                    <option value="utf8mb4">UTF-8 Unicode (utf8mb4)</option>
-                    <option value="utf8">UTF-8 (utf8)</option>
-                    <option value="latin1">Latin1 (latin1)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                    Collation
-                  </label>
-                  <select
-                    value={formData.collation}
-                    onChange={(e) => setFormData({ ...formData, collation: e.target.value })}
-                    className="input-field"
-                  >
-                    <option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</option>
-                    <option value="utf8mb4_general_ci">utf8mb4_general_ci</option>
-                    <option value="utf8_unicode_ci">utf8_unicode_ci</option>
-                    <option value="utf8_general_ci">utf8_general_ci</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                    Database User
-                </label>
-                <input
-                  type="text"
-                    value={formData.username}
-                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                    className="input-field"
-                    placeholder="database_user"
-                    required
-                />
-              </div>
-              <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                  Password
-                </label>
-                <input
-                  type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="input-field"
-                    placeholder={editingDb ? 'Leave blank to keep current password' : 'Enter password'}
-                    required={!editingDb}
-                />
-              </div>
-                <div className="flex justify-end space-x-3 mt-6">
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setShowForm(false);
-                      setEditingDb(null);
-                    }}
-                >
-                  Cancel
-                  </Button>
-                  <Button
-                    variant="primary"
-                    type="submit"
-                  >
-                    {editingDb ? 'Save Changes' : 'Create Database'}
-                  </Button>
-              </div>
-            </form>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
     </PageLayout>
   );
 };

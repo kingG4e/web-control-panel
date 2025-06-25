@@ -7,6 +7,9 @@ import platform
 from .error_handlers import AuthorizationError, AuthenticationError
 from models.user import User
 from models.database import db
+import os
+import re
+from werkzeug.utils import secure_filename
 
 class RateLimiter:
     def __init__(self, app=None):
@@ -75,9 +78,102 @@ def validate_password(password):
         return False, "Password must contain at least one special character"
     return True, None
 
+def sanitize_path(path):
+    """
+    Sanitize a file path to prevent directory traversal attacks.
+    Ensures proper Linux path handling.
+    """
+    # Remove any null bytes
+    path = path.replace('\0', '')
+    
+    # Convert Windows backslashes to forward slashes
+    path = path.replace('\\', '/')
+    
+    # Normalize path separators and remove any '..' path traversal attempts
+    path = os.path.normpath(path)
+    
+    # Convert back to forward slashes for consistency
+    path = path.replace('\\', '/')
+    
+    # Remove leading slashes to make path relative
+    path = path.lstrip('/')
+    
+    # Remove any attempts to traverse up directories
+    path = '/'.join(part for part in path.split('/') if part and part != '..')
+    
+    return path
+
 def sanitize_filename(filename):
-    """Sanitize uploaded file name"""
-    return ''.join(c for c in filename if c.isalnum() or c in '._-')
+    """
+    Sanitize a filename to be safe for saving on Linux systems.
+    """
+    # Use werkzeug's secure_filename for basic sanitization
+    safe_name = secure_filename(filename)
+    
+    # Additional sanitization for Linux compatibility
+    # Remove any characters that could cause issues
+    safe_name = re.sub(r'[^a-zA-Z0-9._-]', '', safe_name)
+    
+    # Ensure the filename doesn't start with a dash
+    safe_name = safe_name.lstrip('-')
+    
+    # If filename becomes empty after sanitization, provide a default
+    if not safe_name:
+        safe_name = 'unnamed_file'
+    
+    return safe_name
+
+def is_safe_path(base_path, path):
+    """
+    Check if a path is safe (doesn't try to access parent directories).
+    Handles Linux paths correctly with improved access checks.
+    """
+    try:
+        # Normalize paths to absolute paths with forward slashes
+        base_path = os.path.abspath(base_path).replace('\\', '/')
+        if not path:
+            return True  # Empty path is safe (refers to base_path)
+            
+        # Handle absolute paths that might be symlinks
+        if os.path.isabs(path):
+            real_base = os.path.realpath(base_path)
+            real_path = os.path.realpath(path)
+            is_safe = real_path.startswith(real_base)
+            print(f"Absolute path check: {real_path} -> {real_base} = {is_safe}")
+            return is_safe
+            
+        # For relative paths, join with base and check
+        full_path = os.path.abspath(os.path.join(base_path, path)).replace('\\', '/')
+        real_base = os.path.realpath(base_path)
+        real_full = os.path.realpath(full_path)
+        
+        print(f"Base path (real): {real_base}")
+        print(f"Full path (real): {real_full}")
+        
+        # Check if the path is within base directory
+        is_safe = real_full.startswith(real_base)
+        if not is_safe:
+            print(f"Path safety check failed: {real_full} is not within {real_base}")
+            return False
+            
+        # Additional permission check
+        try:
+            # Check if path exists
+            if os.path.exists(full_path):
+                # Try to access the path
+                if os.path.isdir(full_path):
+                    os.listdir(full_path)
+                else:
+                    with open(full_path, 'r'):
+                        pass
+        except (PermissionError, OSError) as e:
+            print(f"Permission check failed for {full_path}: {e}")
+            return False
+            
+        return True
+    except Exception as e:
+        print(f"Error in path safety check: {e}")
+        return False
 
 def validate_file_type(file, allowed_types):
     """Validate uploaded file type"""

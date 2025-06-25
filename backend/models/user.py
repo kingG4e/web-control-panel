@@ -1,8 +1,6 @@
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_sqlalchemy import SQLAlchemy
-
-db = SQLAlchemy()
+from .database import db
 
 class User(db.Model):
     __tablename__ = 'user'
@@ -22,13 +20,11 @@ class User(db.Model):
 
     # Relationships
     virtual_hosts = db.relationship('VirtualHost', backref='owner', lazy=True)
-    databases = db.relationship('Database', backref='owner', lazy=True)
-    email_accounts = db.relationship('EmailAccount', backref='owner', lazy=True)
-    ftp_accounts = db.relationship('FTPAccount', backref='owner', lazy=True)
 
-    def __init__(self, username, role='user', password=None, is_system_user=False, system_uid=None):
+    def __init__(self, username, role='user', password=None, is_system_user=False, system_uid=None, email=None):
         self.username = username
         self.role = role
+        self.email = email
         self.is_system_user = is_system_user
         self.system_uid = system_uid
         if password and not is_system_user:

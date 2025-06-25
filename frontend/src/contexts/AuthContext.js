@@ -1,5 +1,4 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { authApi } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -21,9 +20,20 @@ export const AuthProvider = ({ children }) => {
       const token = localStorage.getItem('token');
       if (token) {
         try {
-          const response = await authApi.getCurrentUser();
-          setUser(response.data);
+          const response = await fetch('/api/auth/user', {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (response.ok) {
+            const userData = await response.json();
+            setUser(userData);
           setIsAuthenticated(true);
+          } else {
+            localStorage.removeItem('token');
+          }
         } catch (error) {
           console.error('Failed to get current user:', error);
           localStorage.removeItem('token');
@@ -37,32 +47,69 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (credentials) => {
     try {
-      const response = await authApi.login(credentials);
-      const { token, user } = response.data;
-      localStorage.setItem('token', token);
-      setUser(user);
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          username: credentials.username,
+          password: credentials.password
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        localStorage.setItem('token', data.token);
+        setUser(data.user);
       setIsAuthenticated(true);
       return { success: true };
+      } else {
+        return {
+          success: false,
+          error: data.error || 'Login failed'
+        };
+      }
     } catch (error) {
+      console.error('Login error:', error);
       return {
         success: false,
-        error: error.response?.data?.message || 'Login failed'
+        error: 'Network error. Please try again.'
       };
     }
   };
 
   const register = async (userData) => {
     try {
-      const response = await authApi.register(userData);
-      const { token, user } = response.data;
-      localStorage.setItem('token', token);
-      setUser(user);
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          username: userData.username,
+          password: userData.password
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        localStorage.setItem('token', data.token);
+        setUser(data.user);
       setIsAuthenticated(true);
       return { success: true };
+      } else {
+        return {
+          success: false,
+          error: data.error || 'Registration failed'
+        };
+      }
     } catch (error) {
       return {
         success: false,
-        error: error.response?.data?.message || 'Registration failed'
+        error: 'Network error. Please try again.'
       };
     }
   };

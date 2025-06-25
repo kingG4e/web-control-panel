@@ -27,7 +27,7 @@ export const LoadingProvider = ({ children }) => {
         <LoadingContext.Provider value={{ isLoading, showLoading, hideLoading }}>
             {children}
             {isLoading && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[140] flex items-center justify-center">
                     <div className="flex flex-col items-center space-y-4">
                         <LoadingSpinner size="lg" />
                         {loadingText && (

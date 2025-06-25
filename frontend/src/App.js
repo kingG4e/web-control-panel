@@ -1,57 +1,52 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { DataProvider } from './contexts/DataContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Sidebar from './components/layout/Sidebar';
 import Navbar from './components/layout/Navbar';
 import VirtualHosts from './pages/VirtualHosts';
 import CreateVirtualHost from './pages/CreateVirtualHost';
+import EditVirtualHost from './pages/EditVirtualHost';
 import DNSManagement from './pages/DNSManagement';
 import EmailSettings from './pages/EmailSettings';
 import Database from './pages/Database';
 import UserSettings from './pages/UserSettings';
+import SSLSettings from './pages/SSLSettings';
+
 import Breadcrumb from './components/layout/Breadcrumb';
 import FileManager from './pages/FileManager';
+import ProtectedRoute from './components/ProtectedRoute';
 
-const App = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('token'));
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+const AppContent = () => {
+  const { isAuthenticated, isLoading } = useAuth();
+  const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
 
-  useEffect(() => {
-    const handleStorageChange = () => {
-      setIsAuthenticated(!!localStorage.getItem('token'));
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[var(--primary-bg)] flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[var(--accent-color)] mx-auto mb-4"></div>
+          <p className="text-[var(--secondary-text)]">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
-  return (
-      <ThemeProvider>
-    <Router>
+    return (
           <div className="min-h-screen bg-[var(--primary-bg)] flex items-center justify-center">
-              <Routes>
-                <Route
-                path="/login" 
-                element={<Login setIsAuthenticated={setIsAuthenticated} />} 
-                />
-                <Route 
-                path="*" 
-                element={<Navigate to="/login" />} 
-                />
-              </Routes>
-            </div>
-        </Router>
-      </ThemeProvider>
+            <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<Navigate to="/login" />} />
+            </Routes>
+          </div>
     );
   }
 
   return (
-    <ThemeProvider>
-      <Router>
         <DataProvider>
           <div className="flex flex-col h-screen bg-[var(--primary-bg)] overflow-hidden">
             {/* Top Header */}
@@ -70,23 +65,36 @@ const App = () => {
                   {/* Content Container */}
                   <div className="container mx-auto px-4 py-4 max-w-7xl">
                     <Routes>
-                      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                      <Route path="/dashboard" element={<Dashboard />} />
-                      <Route path="/virtual-hosts" element={<VirtualHosts />} />
-                      <Route path="/virtual-hosts/new" element={<CreateVirtualHost />} />
-                      <Route path="/dns" element={<DNSManagement />} />
-                      <Route path="/email" element={<EmailSettings />} />
-                      <Route path="/database" element={<Database />} />
-                      <Route path="/users" element={<UserSettings />} />
-                      <Route path="/file-manager" element={<FileManager />} />
+                      <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                      <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                      <Route path="/virtual-hosts" element={<ProtectedRoute><VirtualHosts /></ProtectedRoute>} />
+                      <Route path="/virtual-hosts/new" element={<ProtectedRoute><CreateVirtualHost /></ProtectedRoute>} />
+                      <Route path="/virtual-hosts/:id/edit" element={<ProtectedRoute><EditVirtualHost /></ProtectedRoute>} />
+                      <Route path="/dns" element={<ProtectedRoute><DNSManagement /></ProtectedRoute>} />
+                      <Route path="/email" element={<ProtectedRoute><EmailSettings /></ProtectedRoute>} />
+                      <Route path="/database" element={<ProtectedRoute><Database /></ProtectedRoute>} />
+                      <Route path="/users" element={<ProtectedRoute><UserSettings /></ProtectedRoute>} />
+                      <Route path="/ssl" element={<ProtectedRoute><SSLSettings /></ProtectedRoute>} />
+                      
+                      <Route path="/file-manager" element={<ProtectedRoute><FileManager /></ProtectedRoute>} />
                     </Routes>
                   </div>
                 </div>
               </div>
-        </div>
-      </div>
+            </div>
+          </div>
         </DataProvider>
-    </Router>
+  );
+};
+
+const App = () => {
+  return (
+    <ThemeProvider>
+      <AuthProvider>
+        <Router>
+          <AppContent />
+      </Router>
+      </AuthProvider>
     </ThemeProvider>
   );
 };

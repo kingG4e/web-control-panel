@@ -1,5 +1,5 @@
 from datetime import datetime
-from models.virtual_host import db
+from models.database import db
 
 class SSLCertificate(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -12,8 +12,12 @@ class SSLCertificate(db.Model):
     valid_until = db.Column(db.DateTime)
     auto_renewal = db.Column(db.Boolean, default=True)
     status = db.Column(db.String(50), default='pending')  # pending, active, expired, revoked
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Add relationship
+    user = db.relationship('User', backref='ssl_certificates')
 
     def to_dict(self):
         return {

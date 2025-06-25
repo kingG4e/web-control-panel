@@ -14,6 +14,7 @@ const Breadcrumb = () => {
     'database': 'Database',
     'users': 'User Settings',
     'ssl': 'SSL Settings',
+    'settings': 'Account Settings',
     'ftp': 'FTP Management'
   };
 
@@ -23,7 +24,7 @@ const Breadcrumb = () => {
         <div className="flex items-center text-sm">
           <Link 
             to="/" 
-            className="text-[var(--text-primary)] hover:text-[var(--primary)]"
+            className="text-[var(--primary-text)] hover:text-[var(--accent-color)]"
           >
             Home
           </Link>
@@ -33,15 +34,15 @@ const Breadcrumb = () => {
             
             return (
               <React.Fragment key={name}>
-                <span className="mx-2 text-[var(--text-secondary)]">/</span>
+                <span className="mx-2 text-[var(--secondary-text)]">/</span>
                 {isLast ? (
-                  <span className="text-[var(--text-primary)] font-medium">
+                  <span className="text-[var(--primary-text)] font-medium">
                     {routeNames[name] || name}
                   </span>
                 ) : (
                   <Link
                     to={routeTo}
-                    className="text-[var(--text-primary)] hover:text-[var(--primary)]"
+                    className="text-[var(--primary-text)] hover:text-[var(--accent-color)]"
                   >
                     {routeNames[name] || name}
                   </Link>

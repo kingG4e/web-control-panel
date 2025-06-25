@@ -1,5 +1,6 @@
 import os
 import subprocess
+import platform
 from datetime import datetime
 from jinja2 import Template
 
@@ -57,9 +58,8 @@ ns2     IN      A       {{ nameserver_ip }}
             # Update named.conf.local
             self._update_named_conf_local(zone.domain_name)
             
-            # In development, skip BIND reload
-            if os.getenv('FLASK_ENV') != 'development':
-                self._reload_bind()
+            # Reload BIND (will be skipped in Windows/development)
+            self._reload_bind()
             
         except Exception as e:
             raise Exception(f'Failed to create DNS zone: {str(e)}')
@@ -87,9 +87,8 @@ ns2     IN      A       {{ nameserver_ip }}
             # Remove from named.conf.local
             self._remove_from_named_conf_local(domain_name)
             
-            # In development, skip BIND reload
-            if os.getenv('FLASK_ENV') != 'development':
-                self._reload_bind()
+            # Reload BIND (will be skipped in Windows/development)
+            self._reload_bind()
             
         except Exception as e:
             raise Exception(f'Failed to delete DNS zone: {str(e)}')
@@ -133,7 +132,22 @@ zone "{domain_name}" {{
 
     def _reload_bind(self):
         """Reload BIND service"""
+        # Skip BIND reload in Windows environment
+        if platform.system() == 'Windows' or os.name == 'nt':
+            print("Skipping BIND reload in Windows environment")
+            return
+            
+        # Skip BIND reload in development environment
+        if os.getenv('FLASK_ENV') == 'development':
+            print("Skipping BIND reload in development environment")
+            return
+            
         try:
             subprocess.run(['systemctl', 'reload', 'bind9'], check=True)
+            print("BIND reloaded successfully")
         except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to reload BIND: {str(e)}') 
+            # Don't raise exception, just log warning
+            print(f"Warning: Failed to reload BIND: {str(e)}")
+        except FileNotFoundError:
+            # systemctl not found (not on Linux)
+            print("Warning: systemctl not found, skipping BIND reload")

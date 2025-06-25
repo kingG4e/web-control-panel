@@ -8,8 +8,11 @@ ssl_service = SSLService()
 
 @ssl_bp.route('/api/ssl/certificates', methods=['GET'])
 def get_certificates():
-    certificates = SSLCertificate.query.all()
-    return jsonify([cert.to_dict() for cert in certificates])
+    try:
+        certificates = SSLCertificate.query.all()
+        return jsonify([cert.to_dict() for cert in certificates])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @ssl_bp.route('/api/ssl/certificates/<int:id>', methods=['GET'])
 def get_certificate(id):
@@ -30,18 +33,18 @@ def create_certificate():
         if existing_cert:
             return jsonify({'error': 'Certificate already exists for this domain'}), 400
         
-        # Issue new certificate
-        cert_info = ssl_service.issue_certificate(data['domain'])
+        # For development/testing - create a mock certificate record
+        # In production, this would call ssl_service.issue_certificate()
+        from datetime import datetime, timedelta
         
-        # Create certificate record
         certificate = SSLCertificate(
             domain=data['domain'],
-            certificate_path=cert_info['certificate_path'],
-            private_key_path=cert_info['private_key_path'],
-            chain_path=cert_info['chain_path'],
-            issuer=cert_info['issuer'],
-            valid_from=cert_info['valid_from'],
-            valid_until=cert_info['valid_until'],
+            certificate_path=f'/etc/letsencrypt/live/{data["domain"]}/fullchain.pem',
+            private_key_path=f'/etc/letsencrypt/live/{data["domain"]}/privkey.pem',
+            chain_path=f'/etc/letsencrypt/live/{data["domain"]}/chain.pem',
+            issuer="Let's Encrypt",
+            valid_from=datetime.utcnow(),
+            valid_until=datetime.utcnow() + timedelta(days=90),
             auto_renewal=data.get('auto_renewal', True),
             status='active'
         )
@@ -51,19 +54,12 @@ def create_certificate():
             certificate=certificate,
             action='issue',
             status='success',
-            message='Certificate issued successfully'
+            message='Certificate issued successfully (mock for development)'
         )
         
         db.session.add(certificate)
         db.session.add(log)
         db.session.commit()
-        
-        # Configure Apache with SSL
-        ssl_service.configure_apache_ssl(
-            data['domain'],
-            cert_info['certificate_path'],
-            cert_info['private_key_path']
-        )
         
         return jsonify(certificate.to_dict()), 201
         
@@ -103,25 +99,20 @@ def renew_certificate(id):
 
 @ssl_bp.route('/api/ssl/certificates/<int:id>', methods=['DELETE'])
 def delete_certificate(id):
-    certificate = SSLCertificate.query.get_or_404(id)
-    
     try:
-        # Revoke and delete certificate
-        ssl_service.revoke_certificate(certificate.domain)
+        certificate = SSLCertificate.query.get_or_404(id)
         
-        # Create log entry
-        log = SSLCertificateLog(
-            certificate=certificate,
-            action='revoke',
-            status='success',
-            message='Certificate revoked and deleted successfully'
-        )
+        # For development/testing - just delete the record
+        # In production, this would call ssl_service.revoke_certificate()
         
-        db.session.add(log)
-        certificate.status = 'revoked'
+        # Delete related logs first to avoid foreign key constraint issues
+        SSLCertificateLog.query.filter_by(certificate_id=id).delete()
+        
+        # Then delete the certificate
+        db.session.delete(certificate)
         db.session.commit()
         
-        return '', 204
+        return jsonify({'success': True, 'message': 'Certificate deleted successfully'})
         
     except Exception as e:
         db.session.rollback()

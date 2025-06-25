@@ -1,13 +1,29 @@
 import os
 import subprocess
 import hashlib
+import platform
 from datetime import datetime
 
 class EmailService:
     def __init__(self):
-        self.virtual_mailbox_base = '/var/mail/vhosts'  # Changed to Linux path
-        self.postfix_config_dir = '/etc/postfix'  # Changed to Linux path
-        self.dovecot_config_dir = '/etc/dovecot'  # Changed to Linux path
+        # Detect operating system
+        self.is_windows = platform.system() == 'Windows'
+        
+        if self.is_windows:
+            # Windows simulation mode - use temp directories
+            self.virtual_mailbox_base = os.path.join(os.environ.get('TEMP', 'C:\\temp'), 'mail_simulation')
+            self.postfix_config_dir = os.path.join(os.environ.get('TEMP', 'C:\\temp'), 'postfix_simulation')
+            self.dovecot_config_dir = os.path.join(os.environ.get('TEMP', 'C:\\temp'), 'dovecot_simulation')
+            
+            # Create simulation directories
+            os.makedirs(self.virtual_mailbox_base, exist_ok=True)
+            os.makedirs(self.postfix_config_dir, exist_ok=True)
+            os.makedirs(self.dovecot_config_dir, exist_ok=True)
+        else:
+            # Linux production mode
+            self.virtual_mailbox_base = '/var/mail/vhosts'
+            self.postfix_config_dir = '/etc/postfix'
+            self.dovecot_config_dir = '/etc/dovecot'
 
     def create_domain(self, domain):
         """Create a new email domain"""
@@ -15,17 +31,27 @@ class EmailService:
             # Create domain directory
             domain_dir = os.path.join(self.virtual_mailbox_base, domain)
             os.makedirs(domain_dir, exist_ok=True)
-            os.chmod(domain_dir, 0o755)
+            
+            if not self.is_windows:
+                os.chmod(domain_dir, 0o755)
 
             # Update Postfix virtual domains
-            with open(f"{self.postfix_config_dir}/virtual_domains", "a") as f:
+            virtual_domains_file = os.path.join(self.postfix_config_dir, "virtual_domains")
+            with open(virtual_domains_file, "a") as f:
                 f.write(f"{domain}\n")
 
-            # Reload Postfix
-            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
+            # Reload Postfix (only on Linux)
+            if not self.is_windows:
+                subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
+            else:
+                print(f"[SIMULATION] Would reload Postfix for domain: {domain}")
 
         except Exception as e:
-            raise Exception(f'Failed to create email domain: {str(e)}')
+            if self.is_windows:
+                print(f"[SIMULATION] Email domain creation for {domain}: {str(e)}")
+                # Don't raise exception in Windows simulation mode
+            else:
+                raise Exception(f'Failed to create email domain: {str(e)}')
 
     def delete_domain(self, domain):
         """Delete an email domain"""
@@ -55,7 +81,9 @@ class EmailService:
             # Create user directory
             user_dir = os.path.join(self.virtual_mailbox_base, domain, username)
             os.makedirs(user_dir, exist_ok=True)
-            os.chmod(user_dir, 0o700)
+            
+            if not self.is_windows:
+                os.chmod(user_dir, 0o700)
 
             # Hash password using SHA-256
             salt = os.urandom(32).hex()
@@ -63,19 +91,31 @@ class EmailService:
             password_entry = f"{salt}${hashed_password}"
 
             # Update Dovecot users
-            with open(f"{self.dovecot_config_dir}/users", "a") as f:
-                f.write(f"{username}@{domain}:{password_entry}:{os.getuid()}:{os.getgid()}::{user_dir}::{quota}M\n")
+            dovecot_users_file = os.path.join(self.dovecot_config_dir, "users")
+            with open(dovecot_users_file, "a") as f:
+                if self.is_windows:
+                    f.write(f"{username}@{domain}:{password_entry}:1000:1000::{user_dir}::{quota}M\n")
+                else:
+                    f.write(f"{username}@{domain}:{password_entry}:{os.getuid()}:{os.getgid()}::{user_dir}::{quota}M\n")
 
             # Update Postfix virtual mailboxes
-            with open(f"{self.postfix_config_dir}/virtual_mailboxes", "a") as f:
+            virtual_mailboxes_file = os.path.join(self.postfix_config_dir, "virtual_mailboxes")
+            with open(virtual_mailboxes_file, "a") as f:
                 f.write(f"{username}@{domain} {domain}/{username}/\n")
 
-            # Reload services
-            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
-            subprocess.run(['systemctl', 'reload', 'dovecot'], check=True)
+            # Reload services (only on Linux)
+            if not self.is_windows:
+                subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
+                subprocess.run(['systemctl', 'reload', 'dovecot'], check=True)
+            else:
+                print(f"[SIMULATION] Would reload Postfix and Dovecot for account: {username}@{domain}")
 
         except Exception as e:
-            raise Exception(f'Failed to create email account: {str(e)}')
+            if self.is_windows:
+                print(f"[SIMULATION] Email account creation for {username}@{domain}: {str(e)}")
+                # Don't raise exception in Windows simulation mode
+            else:
+                raise Exception(f'Failed to create email account: {str(e)}')
 
     def delete_account(self, username, domain):
         """Delete an email account"""
@@ -182,4 +222,57 @@ class EmailService:
             return size
 
         except Exception as e:
-            raise Exception(f'Failed to get quota usage: {str(e)}') 
+            raise Exception(f'Failed to get quota usage: {str(e)}')
+
+    def update_account_password(self, username, domain, new_password):
+        """Update password for an email account"""
+        try:
+            # Hash new password using SHA-256
+            salt = os.urandom(32).hex()
+            hashed_password = hashlib.sha256(f"{salt}{new_password}".encode()).hexdigest()
+            password_entry = f"{salt}${hashed_password}"
+
+            # Update Dovecot users file
+            users_file = f"{self.dovecot_config_dir}/users"
+            with open(users_file, "r") as f:
+                users = f.readlines()
+            
+            with open(users_file, "w") as f:
+                for user in users:
+                    if user.startswith(f"{username}@{domain}:"):
+                        # Replace password part
+                        parts = user.strip().split(":")
+                        parts[1] = password_entry
+                        f.write(":".join(parts) + "\n")
+                    else:
+                        f.write(user)
+
+            # Reload Dovecot
+            subprocess.run(['systemctl', 'reload', 'dovecot'], check=True)
+
+        except Exception as e:
+            raise Exception(f'Failed to update account password: {str(e)}')
+
+    def update_account_quota(self, username, domain, new_quota):
+        """Update quota for an email account"""
+        try:
+            # Update Dovecot users file
+            users_file = f"{self.dovecot_config_dir}/users"
+            with open(users_file, "r") as f:
+                users = f.readlines()
+            
+            with open(users_file, "w") as f:
+                for user in users:
+                    if user.startswith(f"{username}@{domain}:"):
+                        # Replace quota part (last field)
+                        parts = user.strip().split(":")
+                        parts[-1] = f"{new_quota}M"
+                        f.write(":".join(parts) + "\n")
+                    else:
+                        f.write(user)
+
+            # Reload Dovecot
+            subprocess.run(['systemctl', 'reload', 'dovecot'], check=True)
+
+        except Exception as e:
+            raise Exception(f'Failed to update account quota: {str(e)}') 

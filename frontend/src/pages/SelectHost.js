@@ -1,154 +1,200 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { virtualHosts } from '../services/api';
+import {
+  ServerIcon,
+  ChevronRightIcon,
+  ExclamationTriangleIcon,
+  MagnifyingGlassIcon
+} from '@heroicons/react/24/outline';
 
 const SelectHost = () => {
-  const [searchTerm, setSearchTerm] = useState('');
   const navigate = useNavigate();
-  
-  // Mock data - replace with API call
-  const hosts = [
-    {
-      id: 1,
-      domain: 'example.com',
-      status: 'active',
-      type: 'PHP',
-      ssl: true,
-      diskUsage: '2.1 GB',
-      lastBackup: '2024-02-20',
-      thumbnail: null
-    },
-    {
-      id: 2,
-      domain: 'test.com',
-      status: 'maintenance',
-      type: 'Node.js',
-      ssl: true,
-      diskUsage: '1.5 GB',
-      lastBackup: '2024-02-19',
-      thumbnail: null
-    }
-  ];
+  const [hosts, setHosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredHosts = hosts.filter(host =>
-    host.domain.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  useEffect(() => {
+    fetchHosts();
+  }, []);
 
-  const handleSelectHost = (hostId) => {
-    navigate(`/host/${hostId}/overview`);
-  };
-
-  const StatusBadge = ({ status }) => {
-    const colors = {
-      active: 'bg-green-100 text-green-800',
-      maintenance: 'bg-yellow-100 text-yellow-800',
-      suspended: 'bg-red-100 text-red-800',
+    const fetchHosts = async () => {
+      try {
+        setLoading(true);
+      const data = await virtualHosts.getAll();
+      setHosts(data);
+        setError(null);
+      } catch (err) {
+      setError(err.message || 'Failed to fetch virtual hosts');
+      } finally {
+        setLoading(false);
+      }
     };
 
-    return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colors[status]}`}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </span>
-    );
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'active':
+        return 'text-[var(--success-color)]';
+      case 'maintenance':
+        return 'text-[var(--warning-color)]';
+      case 'suspended':
+        return 'text-[var(--danger-color)]';
+      default:
+        return 'text-[var(--secondary-text)]';
+    }
   };
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-semibold text-[var(--text-primary)]">Select Website to Manage</h1>
-          <p className="mt-1 text-[var(--text-secondary)]">Choose a website to configure and manage</p>
+  const getStatusBg = (status) => {
+    switch (status) {
+      case 'active':
+        return { backgroundColor: 'var(--success-color)', opacity: 0.1 };
+      case 'maintenance':
+        return { backgroundColor: 'var(--warning-color)', opacity: 0.1 };
+      case 'suspended':
+        return { backgroundColor: 'var(--danger-color)', opacity: 0.1 };
+      default:
+        return { backgroundColor: 'var(--secondary-bg)' };
+    }
+  };
+
+  const filteredHosts = hosts.filter(host =>
+    host.domain.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    host.linux_username.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleSelectHost = (host) => {
+    // Store selected host in localStorage or context
+    localStorage.setItem('selectedHost', JSON.stringify(host));
+    navigate('/dashboard');
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[var(--primary-bg)] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-[var(--accent-color)] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-[var(--secondary-text)]">Loading virtual hosts...</p>
         </div>
-        <button
-          onClick={() => navigate('/host/new')}
-          className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
-        >
-          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-          </svg>
-          Add New Website
-        </button>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[var(--primary-bg)] flex items-center justify-center p-6">
+        <div className="max-w-md w-full">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6 text-center" style={{ borderColor: 'var(--danger-color)' }}>
+            <ExclamationTriangleIcon className="w-12 h-12 mx-auto mb-4" style={{ color: 'var(--danger-color)' }} />
+            <h3 className="text-lg font-semibold text-[var(--primary-text)] mb-2">Unable to Load Hosts</h3>
+            <p className="text-[var(--secondary-text)] mb-6">{error}</p>
+            <button
+              onClick={fetchHosts}
+              className="inline-flex items-center px-6 py-3 text-white rounded-lg transition-colors font-medium"
+              style={{ backgroundColor: 'var(--accent-color)' }}
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[var(--primary-bg)]">
+      <div className="max-w-4xl mx-auto p-6">
+      {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-[var(--primary-text)] mb-2">
+            Select Virtual Host
+          </h1>
+          <p className="text-[var(--secondary-text)]">
+            Choose a virtual host to manage
+          </p>
       </div>
 
       {/* Search */}
       <div className="mb-6">
-        <div className="relative">
+          <div className="relative max-w-md mx-auto">
+            <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-[var(--tertiary-text)]" />
           <input
             type="text"
-            placeholder="Search websites..."
+              placeholder="Search hosts..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:border-[var(--primary)] text-[var(--text-primary)]"
-          />
-          <svg
-            className="absolute left-3 top-2.5 h-5 w-5 text-[var(--text-secondary)]"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              className="w-full pl-10 pr-4 py-3 bg-[var(--secondary-bg)] border border-[var(--border-color)] rounded-lg text-[var(--primary-text)] placeholder-[var(--tertiary-text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent transition-all duration-200"
             />
-          </svg>
+          </div>
         </div>
-      </div>
 
-      {/* Websites Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {/* Hosts List */}
+        {filteredHosts.length === 0 ? (
+          <div className="bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)] p-12 text-center">
+            <ServerIcon className="w-16 h-16 mx-auto mb-4 text-[var(--tertiary-text)]" />
+            <h3 className="text-lg font-semibold text-[var(--primary-text)] mb-2">
+              {searchTerm ? 'No matching hosts found' : 'No virtual hosts available'}
+            </h3>
+            <p className="text-[var(--secondary-text)]">
+              {searchTerm ? 'Try adjusting your search terms' : 'Create a virtual host to get started'}
+            </p>
+      </div>
+        ) : (
+          <div className="space-y-4">
         {filteredHosts.map((host) => (
-          <div
+              <button
             key={host.id}
-            onClick={() => handleSelectHost(host.id)}
-            className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] hover:border-[var(--primary)] cursor-pointer transition-all hover:shadow-lg"
+                onClick={() => handleSelectHost(host)}
+                className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6 text-left hover:border-[var(--accent-color)] hover:shadow-[var(--shadow-md)] transition-all duration-200 group"
           >
-            {/* Website Preview */}
-            <div className="aspect-video rounded-lg bg-[var(--secondary-bg)] mb-4 overflow-hidden">
-              {host.thumbnail ? (
-                <img
-                  src={host.thumbnail}
-                  alt={host.domain}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <svg className="w-12 h-12 text-[var(--text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-                  </svg>
-                </div>
-              )}
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-3 mb-2">
+                      <h3 className="text-lg font-semibold text-[var(--primary-text)] group-hover:text-[var(--accent-color)] transition-colors">
+                        {host.domain}
+                      </h3>
+                      <span
+                        className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusColor(host.status)}`}
+                        style={getStatusBg(host.status)}
+                      >
+                        <div className="w-1.5 h-1.5 rounded-full mr-1.5" style={{ backgroundColor: host.status === 'active' ? 'var(--success-color)' : host.status === 'maintenance' ? 'var(--warning-color)' : 'var(--danger-color)' }}></div>
+                        {host.status.charAt(0).toUpperCase() + host.status.slice(1)}
+                      </span>
             </div>
 
-            {/* Website Info */}
-            <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div>
-                <h3 className="text-lg font-medium text-[var(--text-primary)]">{host.domain}</h3>
-                <div className="mt-2 flex items-center space-x-2">
-                  <StatusBadge status={host.status} />
-                  <span className="text-sm text-[var(--text-secondary)]">{host.type}</span>
+                        <span className="text-[var(--secondary-text)]">User:</span>
+                        <span className="text-[var(--primary-text)] ml-2 font-mono">{host.linux_username}</span>
                 </div>
+                      <div>
+                        <span className="text-[var(--secondary-text)]">PHP:</span>
+                        <span className="text-[var(--primary-text)] ml-2">{host.php_version || 'N/A'}</span>
               </div>
-
-              <div className="flex items-center justify-between text-sm text-[var(--text-secondary)]">
-                <div className="flex items-center">
-                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7" />
+                      <div>
+                        <span className="text-[var(--secondary-text)]">SSL:</span>
+                        <span className={`ml-2 ${host.ssl_enabled ? 'text-[var(--success-color)]' : 'text-[var(--warning-color)]'}`}>
+                          {host.ssl_enabled ? (
+                            <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  {host.diskUsage}
-                </div>
-                <div className="flex items-center">
-                  {host.ssl && (
-                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                          ) : (
+                            <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   )}
+                          <span className="ml-1">{host.ssl_enabled ? 'Enabled' : 'Disabled'}</span>
+                        </span>
                 </div>
               </div>
             </div>
+                  
+                  <ChevronRightIcon className="w-5 h-5 text-[var(--tertiary-text)] group-hover:text-[var(--accent-color)] transition-colors" />
+                </div>
+              </button>
+            ))}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );

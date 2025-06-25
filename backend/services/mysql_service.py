@@ -192,4 +192,9 @@ class MySQLService:
             return size
             
         except Error as e:
-            raise Exception(f'Failed to get database size: {str(e)}') 
+            raise Exception(f'Failed to get database size: {str(e)}')
+
+    def get_databases_by_user(self, user_id: int) -> list:
+        """Get all databases owned by a specific user"""
+        from models.database import Database
+        return Database.query.filter_by(owner_id=user_id).all() 

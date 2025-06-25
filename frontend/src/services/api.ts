@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+const API_URL = (window as any).REACT_APP_API_URL || 'http://192.168.1.174:5000/api';
 
 // Create axios instance with default config
 const api = axios.create({
@@ -50,7 +50,78 @@ export const auth = {
     },
     
     getCurrentUser: async () => {
-        const response = await api.get('/users/me');
+        const response = await api.get('/auth/user');
+        return response.data;
+    }
+};
+
+// Users API
+export const users = {
+    getAll: async () => {
+        const response = await api.get('/users');
+        return response.data;
+    },
+    
+    get: async (id: number) => {
+        const response = await api.get(`/users/${id}`);
+        return response.data;
+    },
+    
+    create: async (data: any) => {
+        const response = await api.post('/users', data);
+        return response.data;
+    },
+    
+    update: async (id: number, data: any) => {
+        const response = await api.put(`/users/${id}`, data);
+        return response.data;
+    },
+    
+    delete: async (id: number) => {
+        const response = await api.delete(`/users/${id}`);
+        return response.data;
+    },
+    
+    getStats: async () => {
+        const response = await api.get('/users/stats');
+        return response.data;
+    },
+    
+    getPermissions: async (id: number) => {
+        const response = await api.get(`/users/${id}/permissions`);
+        return response.data;
+    },
+    
+    setDomainPermissions: async (id: number, data: any) => {
+        const response = await api.post(`/users/${id}/domain-permissions`, data);
+        return response.data;
+    },
+    
+    removeDomainPermissions: async (id: number, domain: string) => {
+        const response = await api.delete(`/users/${id}/domain-permissions/${domain}`);
+        return response.data;
+    }
+};
+
+// Roles API
+export const roles = {
+    getAll: async () => {
+        const response = await api.get('/roles');
+        return response.data;
+    },
+    
+    create: async (data: any) => {
+        const response = await api.post('/roles', data);
+        return response.data;
+    },
+    
+    update: async (id: number, data: any) => {
+        const response = await api.put(`/roles/${id}`, data);
+        return response.data;
+    },
+    
+    delete: async (id: number) => {
+        const response = await api.delete(`/roles/${id}`);
         return response.data;
     }
 };
@@ -59,27 +130,42 @@ export const auth = {
 export const virtualHosts = {
     getAll: async () => {
         const response = await api.get('/virtual-hosts');
-        return response.data;
+        if (response.data.success) {
+            return response.data.data;
+        }
+        throw new Error(response.data.error || 'Failed to fetch virtual hosts');
     },
     
     get: async (id: number) => {
         const response = await api.get(`/virtual-hosts/${id}`);
-        return response.data;
+        if (response.data.success) {
+            return response.data.data;
+        }
+        throw new Error(response.data.error || 'Failed to fetch virtual host');
     },
     
     create: async (data: any) => {
         const response = await api.post('/virtual-hosts', data);
-        return response.data;
+        if (response.data.success) {
+            return response.data.data;
+        }
+        throw new Error(response.data.error || 'Failed to create virtual host');
     },
     
     update: async (id: number, data: any) => {
         const response = await api.put(`/virtual-hosts/${id}`, data);
-        return response.data;
+        if (response.data.success) {
+            return response.data.data;
+        }
+        throw new Error(response.data.error || 'Failed to update virtual host');
     },
     
     delete: async (id: number) => {
         const response = await api.delete(`/virtual-hosts/${id}`);
-        return response.data;
+        if (response.data.success) {
+            return response.data;
+        }
+        throw new Error(response.data.error || 'Failed to delete virtual host');
     }
 };
 
@@ -256,6 +342,98 @@ export const ftp = {
         const response = await api.delete(`/ftp/users/${id}`);
         return response.data;
     }
+};
+
+export const dashboardApi = {
+  // Get system statistics
+  getSystemStats: async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/dashboard/system-stats`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching system stats:', error);
+      throw error;
+    }
+  },
+
+  // Get general statistics
+  getStats: async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/dashboard/stats`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+      throw error;
+    }
+  },
+
+  // Get recent activities
+  getRecentActivities: async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/dashboard/activities`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching recent activities:', error);
+      throw error;
+    }
+  },
+
+  // Get server info
+  getServerInfo: async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/dashboard/server-info`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching server info:', error);
+      throw error;
+    }
+  },
+
+  // Get services status
+  getServicesStatus: async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/dashboard/services`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching services status:', error);
+      throw error;
+    }
+  }
 };
 
 export default {

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import { NavLink } from 'react-router-dom';
 
 const menuGroups = [
@@ -123,13 +124,30 @@ const menuGroups = [
     }
 ];
 
-const Sidebar = ({ isOpen, setIsOpen }) => {
+const Sidebar = ({ isOpen, setIsOpen, isMobile }) => {
+  const { user } = useAuth();
+  const isAdmin = user && (user.is_admin || user.role === 'admin' || user.username === 'root');
+
+  // Filter out Users and Groups for non-admins
+  const filteredGroups = menuGroups.map(group => {
+    if (group.title === 'System Settings' && !isAdmin) {
+      return {
+        ...group,
+        items: group.items.filter(item => item.path !== '/users')
+      };
+    }
+    return group;
+  });
+
   return (
         <aside 
             className={`
                 flex flex-col bg-[var(--secondary-bg)] border-r border-[var(--border-color)] 
-                transition-all duration-300 fixed md:relative h-full z-[100]
-                ${isOpen ? 'w-64 translate-x-0' : '-translate-x-full md:translate-x-0 md:w-20'} 
+                transition-all duration-300 h-[calc(100vh-4rem)] z-[75]
+                ${isMobile 
+                  ? `fixed top-16 left-0 ${isOpen ? 'w-64 translate-x-0' : 'w-64 -translate-x-full'}` 
+                  : `relative ${isOpen ? 'w-64' : 'w-20'}`
+                }
             `}
         >
             {/* Logo and Toggle */}
@@ -138,49 +156,56 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                     <svg className="w-8 h-8 text-[var(--accent-color)] flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M13.5 2C13.5 2.83 12.83 3.5 12 3.5C11.17 3.5 10.5 2.83 10.5 2C10.5 1.17 11.17 0.5 12 0.5C12.83 0.5 13.5 1.17 13.5 2ZM12 22C6.48 22 2 17.52 2 12C2 6.48 6.48 2 12 2C17.52 2 22 6.48 22 12C22 17.52 17.52 22 12 22ZM12 20C16.42 20 20 16.42 20 12C20 7.58 16.42 4 12 4C7.58 4 4 7.58 4 12C4 16.42 7.58 20 12 20Z"/>
                     </svg>
-                    <span className={`text-lg font-semibold text-[var(--primary-text)] whitespace-nowrap transition-opacity duration-300 ${!isOpen ? 'opacity-0 md:hidden' : 'opacity-100'}`}>
-        Control Panel
+                    <span className={`text-lg font-semibold text-[var(--primary-text)] whitespace-nowrap transition-opacity duration-300 ${!isOpen || (!isMobile && !isOpen) ? 'opacity-0' : 'opacity-100'} ${!isMobile && !isOpen ? 'hidden' : ''}`}>
+                        Control Panel
                     </span>
                 </div>
-                <button
-                    onClick={() => setIsOpen(!isOpen)}
-                    className="ml-auto p-2 rounded-lg hover:bg-[var(--hover-bg)] text-[var(--secondary-text)] hover:text-[var(--primary-text)] transition-colors md:hidden"
-                >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-      </div>
+                {isMobile && (
+                    <button
+                        onClick={() => setIsOpen(false)}
+                        className="ml-auto p-2 rounded-lg hover:bg-[var(--hover-bg)] text-[var(--secondary-text)] hover:text-[var(--primary-text)] transition-colors"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                )}
+            </div>
 
             {/* Navigation */}
             <nav className="flex-1 py-4 overflow-y-auto">
-                {menuGroups.map((group, groupIndex) => (
+                {filteredGroups.map((group, groupIndex) => (
                     <div key={group.title} className={`px-3 ${groupIndex > 0 ? 'mt-6' : ''}`}>
-                        <h2 className={`mb-2 px-3 text-xs font-semibold text-[var(--tertiary-text)] uppercase tracking-wider transition-opacity duration-300 ${!isOpen ? 'md:opacity-0' : 'opacity-100'}`}>
+                        <h2 className={`mb-2 px-3 text-xs font-semibold text-[var(--tertiary-text)] uppercase tracking-wider transition-opacity duration-300 ${!isOpen || (!isMobile && !isOpen) ? 'opacity-0' : 'opacity-100'} ${!isMobile && !isOpen ? 'hidden' : ''}`}>
                             {group.title}
                         </h2>
                         <div className="space-y-1">
                             {group.items.map((item) => (
                                 <NavLink
-              key={item.path}
-              to={item.path}
+                                    key={item.path}
+                                    to={item.path}
+                                    onClick={() => {
+                                        if (isMobile) {
+                                            setIsOpen(false);
+                                        }
+                                    }}
                                     className={({ isActive }) =>
                                         `flex items-center px-3 py-2 rounded-lg transition-colors relative group
-                ${isActive
+                                        ${isActive
                                             ? 'bg-[var(--accent-color)] text-white' 
                                             : 'text-[var(--secondary-text)] hover:text-[var(--primary-text)] hover:bg-[var(--hover-bg)]'
                                         }`
                                     }
-            >
+                                >
                                     <div className="flex items-center">
                                         <span className="flex-shrink-0">{item.icon}</span>
-                                        <span className={`ml-3 text-sm font-medium transition-opacity duration-300 ${!isOpen ? 'md:hidden' : ''}`}>
+                                        <span className={`ml-3 text-sm font-medium transition-opacity duration-300 ${!isOpen || (!isMobile && !isOpen) ? 'opacity-0' : 'opacity-100'} ${!isMobile && !isOpen ? 'hidden' : ''}`}>
                                             {item.name}
                                         </span>
                                     </div>
                                     {/* Tooltip for collapsed state */}
-                                    {!isOpen && (
-                                        <div className="hidden md:group-hover:block absolute left-full ml-2 px-2 py-1 bg-[var(--tooltip-bg)] text-[var(--tooltip-text)] text-xs rounded whitespace-nowrap">
+                                    {!isMobile && !isOpen && (
+                                        <div className="hidden group-hover:block absolute left-full ml-2 px-2 py-1 bg-[var(--tooltip-bg)] text-[var(--tooltip-text)] text-xs rounded whitespace-nowrap z-[90]">
                                             {item.name}
                                         </div>
                                     )}
@@ -189,14 +214,14 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                         </div>
                     </div>
                 ))}
-      </nav>
+            </nav>
 
             {/* Footer */}
-            <div className={`p-4 border-t border-[var(--border-color)] ${!isOpen ? 'md:text-center' : ''}`}>
+            <div className={`p-4 border-t border-[var(--border-color)] ${!isOpen && !isMobile ? 'text-center' : ''}`}>
                 <div className="text-xs text-[var(--tertiary-text)]">
                     v1.0.0
                 </div>
-    </div>
+            </div>
         </aside>
   );
 };

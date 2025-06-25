@@ -1,18 +1,33 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 import SettingsModal from '../modals/SettingsModal';
+import NotificationDropdown from '../NotificationDropdown';
 
 const Navbar = ({ onMenuClick }) => {
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const { user, logout } = useAuth();
     const navigate = useNavigate();
 
-    const handleLogout = () => {
-        localStorage.removeItem('token');
-        navigate('/login');
+    const handleLogout = async () => {
+        try {
+            await logout();
+            // Force a hard redirect to ensure App.js re-evaluates authentication state
+            window.location.href = '/login';
+        } catch (error) {
+            console.error('Error logging out:', error);
+            // Force redirect even if logout fails
+            window.location.href = '/login';
+        }
     };
 
-  return (
+    // Get first letter of username for avatar
+    const getInitial = () => {
+        return user?.username ? user.username[0].toUpperCase() : '?';
+    };
+
+    return (
         <>
             <header className="navbar">
                 <div className="navbar-content">
@@ -25,7 +40,7 @@ const Navbar = ({ onMenuClick }) => {
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                             </svg>
-            </button>
+                        </button>
                         <nav className="hidden md:flex items-center space-x-2 text-sm">
                             <span className="text-[var(--secondary-text)]">Control Panel</span>
                             <span className="text-[var(--tertiary-text)]">/</span>
@@ -62,8 +77,8 @@ const Navbar = ({ onMenuClick }) => {
                                     />
                                 </svg>
                             </div>
-          </div>
-          
+                        </div>
+
                         {/* Help */}
                         <button className="p-2 rounded-lg text-[var(--secondary-text)] hover:text-[var(--primary-text)] hover:bg-[var(--hover-bg)] transition-colors">
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -72,33 +87,31 @@ const Navbar = ({ onMenuClick }) => {
                         </button>
 
                         {/* Notifications */}
-                        <button className="p-2 rounded-lg text-[var(--secondary-text)] hover:text-[var(--primary-text)] hover:bg-[var(--hover-bg)] transition-colors relative">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                            </svg>
-                            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[var(--danger-color)] rounded-full"></span>
-                        </button>
+                        <NotificationDropdown />
 
                         {/* Profile Dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setIsProfileOpen(!isProfileOpen)}
+                        <div className="relative">
+                            <button
+                                onClick={() => setIsProfileOpen(!isProfileOpen)}
                                 className="flex items-center space-x-3 p-2 rounded-lg text-[var(--secondary-text)] hover:text-[var(--primary-text)] hover:bg-[var(--hover-bg)] transition-colors"
-              >
+                            >
                                 <div className="w-8 h-8 rounded-full bg-[var(--accent-color)] flex items-center justify-center text-white font-medium">
-                                    A
+                                    {getInitial()}
                                 </div>
-                                <span className="hidden md:block text-sm font-medium">Admin</span>
-              </button>
+                                <span className="hidden md:block text-sm font-medium">
+                                    {user?.username || 'Loading...'}
+                                </span>
+                            </button>
 
-              {isProfileOpen && (
-                                <div className="absolute right-0 mt-2 w-48 py-2 bg-[var(--card-bg)] rounded-lg shadow-[var(--card-shadow)] border border-[var(--border-color)] z-50">
-                  <a
-                                        href="#profile"
-                                        className="block px-4 py-2 text-sm text-[var(--secondary-text)] hover:bg-[var(--hover-bg)] hover:text-[var(--primary-text)] transition-colors"
-                  >
-                                        Your Profile
-                                    </a>
+                            {isProfileOpen && (
+                                <div className="absolute right-0 mt-2 w-48 py-2 bg-[var(--card-bg)] rounded-lg shadow-[var(--card-shadow)] border border-[var(--border-color)] z-[85]">
+                                    <div className="px-4 py-2">
+                                        <div className="text-sm font-medium text-[var(--primary-text)]">{user?.username}</div>
+                                        <div className="text-xs text-[var(--tertiary-text)]">
+                                            {user?.role === 'admin' || user?.username === 'root' ? 'Administrator' : 'User'}
+                                        </div>
+                                    </div>
+                                    <div className="border-t border-[var(--border-color)] my-2"></div>
                                     <button
                                         onClick={() => {
                                             setIsSettingsOpen(true);
@@ -106,7 +119,7 @@ const Navbar = ({ onMenuClick }) => {
                                         }}
                                         className="block w-full text-left px-4 py-2 text-sm text-[var(--secondary-text)] hover:bg-[var(--hover-bg)] hover:text-[var(--primary-text)] transition-colors"
                                     >
-                    Settings
+                                        Settings
                                     </button>
                                     <div className="border-t border-[var(--border-color)] my-2"></div>
                                     <button
@@ -115,11 +128,11 @@ const Navbar = ({ onMenuClick }) => {
                                     >
                                         Sign out
                                     </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
             </header>
 
             <SettingsModal 
@@ -127,7 +140,7 @@ const Navbar = ({ onMenuClick }) => {
                 onClose={() => setIsSettingsOpen(false)}
             />
         </>
-  );
+    );
 };
 
 export default Navbar; 

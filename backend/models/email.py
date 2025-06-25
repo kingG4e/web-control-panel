@@ -4,6 +4,7 @@ from models.virtual_host import db
 class EmailDomain(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     domain = db.Column(db.String(255), unique=True, nullable=False)
+    virtual_host_id = db.Column(db.Integer, db.ForeignKey('virtual_host.id'), nullable=True)
     status = db.Column(db.String(50), default='active')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -1,69 +1,105 @@
 from flask import Blueprint, request, jsonify
 from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias, db
+from models.virtual_host import VirtualHost
 from services.email_service import EmailService
+from utils.auth import token_required
 from datetime import datetime
 
 email_bp = Blueprint('email', __name__)
 email_service = EmailService()
 
 @email_bp.route('/api/email/domains', methods=['GET'])
-def get_domains():
-    domains = EmailDomain.query.all()
-    return jsonify([domain.to_dict() for domain in domains])
-
-@email_bp.route('/api/email/domains/<int:id>', methods=['GET'])
-def get_domain(id):
-    domain = EmailDomain.query.get_or_404(id)
-    return jsonify(domain.to_dict())
-
-@email_bp.route('/api/email/domains', methods=['POST'])
-def create_domain():
-    data = request.get_json()
-    
-    # Validate required fields
-    if 'domain' not in data:
-        return jsonify({'error': 'Missing required field: domain'}), 400
-    
+@token_required
+def get_domains(current_user):
+    """Get all email domains for the current user"""
     try:
-        # Create domain in Postfix
-        email_service.create_domain(data['domain'])
+        # Get user's virtual hosts
+        virtual_hosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
+        domain_names = [vh.domain for vh in virtual_hosts]
         
-        # Create domain record
-        domain = EmailDomain(
-            domain=data['domain']
-        )
+        # Get email domains for these virtual hosts
+        email_domains = EmailDomain.query.filter(EmailDomain.domain.in_(domain_names)).all()
         
-        db.session.add(domain)
-        db.session.commit()
+        # Include accounts for each domain
+        result = []
+        for domain in email_domains:
+            domain_dict = domain.to_dict()
+            domain_dict['accounts'] = [account.to_dict() for account in domain.accounts]
+            result.append(domain_dict)
         
-        return jsonify(domain.to_dict()), 201
+        return jsonify(result)
     except Exception as e:
-        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@email_bp.route('/api/email/domains/<int:id>/accounts', methods=['POST'])
-def create_account(id):
-    domain = EmailDomain.query.get_or_404(id)
-    data = request.get_json()
-    
-    # Validate required fields
-    required_fields = ['username', 'password']
-    for field in required_fields:
-        if field not in data:
-            return jsonify({'error': f'Missing required field: {field}'}), 400
-    
+@email_bp.route('/api/email/domains/<int:virtual_host_id>/accounts', methods=['GET'])
+@token_required
+def get_domain_accounts(current_user, virtual_host_id):
+    """Get email accounts for a specific domain"""
     try:
-        # Create account in Postfix/Dovecot
+        # Verify Virtual Host ownership
+        virtual_host = VirtualHost.query.filter_by(id=virtual_host_id, user_id=current_user.id).first()
+        if not virtual_host:
+            return jsonify({'error': 'Virtual Host not found or access denied'}), 404
+        
+        # Get email domain
+        email_domain = EmailDomain.query.filter_by(domain=virtual_host.domain).first()
+        if not email_domain:
+            return jsonify([])
+        
+        # Get accounts
+        accounts = EmailAccount.query.filter_by(domain_id=email_domain.id).all()
+        return jsonify([account.to_dict() for account in accounts])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@email_bp.route('/api/email/domains/<int:virtual_host_id>/accounts', methods=['POST'])
+@token_required
+def create_account(current_user, virtual_host_id):
+    """Create email account for a Virtual Host domain"""
+    try:
+        # Verify Virtual Host ownership
+        virtual_host = VirtualHost.query.filter_by(id=virtual_host_id, user_id=current_user.id).first()
+        if not virtual_host:
+            return jsonify({'error': 'Virtual Host not found or access denied'}), 404
+        
+        # Get or create EmailDomain
+        email_domain = EmailDomain.query.filter_by(domain=virtual_host.domain).first()
+        if not email_domain:
+            email_domain = EmailDomain(
+                domain=virtual_host.domain,
+                virtual_host_id=virtual_host.id,
+                status='active'
+            )
+            db.session.add(email_domain)
+            db.session.flush()
+        
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['username', 'password']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        # Check if account already exists
+        existing_account = EmailAccount.query.filter_by(
+            domain_id=email_domain.id, 
+            username=data['username']
+        ).first()
+        if existing_account:
+            return jsonify({'error': 'Email account already exists'}), 400
+        
+        # Create account in email system
         email_service.create_account(
             data['username'],
-            domain.domain,
+            virtual_host.domain,
             data['password'],
             quota=data.get('quota', 1024)
         )
         
         # Create account record
         account = EmailAccount(
-            domain_id=domain.id,
+            domain_id=email_domain.id,
             username=data['username'],
             password=data['password'],  # Note: In production, encrypt this
             quota=data.get('quota', 1024)
@@ -77,95 +113,62 @@ def create_account(id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@email_bp.route('/api/email/domains/<int:id>/forwarders', methods=['POST'])
-def create_forwarder(id):
-    domain = EmailDomain.query.get_or_404(id)
-    data = request.get_json()
-    
-    # Validate required fields
-    required_fields = ['source', 'destination']
-    for field in required_fields:
-        if field not in data:
-            return jsonify({'error': f'Missing required field: {field}'}), 400
-    
+@email_bp.route('/api/email/accounts/<int:id>', methods=['PUT'])
+@token_required
+def update_account(current_user, id):
+    """Update email account"""
     try:
-        # Create forwarder in Postfix
-        email_service.create_forwarder(
-            data['source'],
-            data['destination'],
-            domain.domain
-        )
+        account = EmailAccount.query.get_or_404(id)
         
-        # Create forwarder record
-        forwarder = EmailForwarder(
-            domain_id=domain.id,
-            source=data['source'],
-            destination=data['destination']
-        )
+        # Verify ownership through Virtual Host
+        email_domain = account.email_domain
+        virtual_host = VirtualHost.query.filter_by(domain=email_domain.domain, user_id=current_user.id).first()
+        if not virtual_host:
+            return jsonify({'error': 'Access denied'}), 403
         
-        db.session.add(forwarder)
+        data = request.get_json()
+        
+        # Update password if provided
+        if 'password' in data and data['password']:
+            email_service.update_account_password(
+                account.username, 
+                email_domain.domain, 
+                data['password']
+            )
+            account.password = data['password']
+        
+        # Update quota if provided
+        if 'quota' in data:
+            email_service.update_account_quota(
+                account.username, 
+                email_domain.domain, 
+                data['quota']
+            )
+            account.quota = data['quota']
+        
+        account.updated_at = datetime.utcnow()
         db.session.commit()
         
-        return jsonify(forwarder.to_dict()), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-@email_bp.route('/api/email/accounts/<int:id>/aliases', methods=['POST'])
-def create_alias(id):
-    account = EmailAccount.query.get_or_404(id)
-    data = request.get_json()
-    
-    # Validate required fields
-    if 'alias' not in data:
-        return jsonify({'error': 'Missing required field: alias'}), 400
-    
-    try:
-        # Create alias in Postfix
-        email_service.create_alias(
-            data['alias'],
-            account.get_email()
-        )
-        
-        # Create alias record
-        alias = EmailAlias(
-            account_id=account.id,
-            alias=data['alias']
-        )
-        
-        db.session.add(alias)
-        db.session.commit()
-        
-        return jsonify(alias.to_dict()), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-@email_bp.route('/api/email/domains/<int:id>', methods=['DELETE'])
-def delete_domain(id):
-    domain = EmailDomain.query.get_or_404(id)
-    
-    try:
-        # Delete domain from Postfix
-        email_service.delete_domain(domain.domain)
-        
-        # Delete from our database
-        db.session.delete(domain)
-        db.session.commit()
-        
-        return '', 204
+        return jsonify(account.to_dict())
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 @email_bp.route('/api/email/accounts/<int:id>', methods=['DELETE'])
-def delete_account(id):
-    account = EmailAccount.query.get_or_404(id)
-    domain = account.email_domain
-    
+@token_required
+def delete_account(current_user, id):
+    """Delete email account"""
     try:
-        # Delete account from Postfix/Dovecot
-        email_service.delete_account(account.username, domain.domain)
+        account = EmailAccount.query.get_or_404(id)
+        
+        # Verify ownership through Virtual Host
+        email_domain = account.email_domain
+        virtual_host = VirtualHost.query.filter_by(domain=email_domain.domain, user_id=current_user.id).first()
+        if not virtual_host:
+            return jsonify({'error': 'Access denied'}), 403
+        
+        # Delete account from email system
+        email_service.delete_account(account.username, email_domain.domain)
         
         # Delete from our database
         db.session.delete(account)
@@ -174,60 +177,4 @@ def delete_account(id):
         return '', 204
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-@email_bp.route('/api/email/forwarders/<int:id>', methods=['DELETE'])
-def delete_forwarder(id):
-    forwarder = EmailForwarder.query.get_or_404(id)
-    domain = forwarder.email_domain
-    
-    try:
-        # Delete forwarder from Postfix
-        email_service.delete_forwarder(forwarder.source, domain.domain)
-        
-        # Delete from our database
-        db.session.delete(forwarder)
-        db.session.commit()
-        
-        return '', 204
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-@email_bp.route('/api/email/aliases/<int:id>', methods=['DELETE'])
-def delete_alias(id):
-    alias = EmailAlias.query.get_or_404(id)
-    
-    try:
-        # Delete alias from Postfix
-        email_service.delete_alias(alias.alias)
-        
-        # Delete from our database
-        db.session.delete(alias)
-        db.session.commit()
-        
-        return '', 204
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-@email_bp.route('/api/email/accounts/<int:id>/quota', methods=['GET'])
-def get_quota_usage(id):
-    account = EmailAccount.query.get_or_404(id)
-    domain = account.email_domain
-    
-    try:
-        # Get quota usage from filesystem
-        used_quota = email_service.get_quota_usage(account.username, domain.domain)
-        
-        # Update account record
-        account.used_quota = used_quota
-        db.session.commit()
-        
-        return jsonify({
-            'quota': account.quota,
-            'used_quota': used_quota,
-            'available_quota': account.quota - used_quota
-        })
-    except Exception as e:
         return jsonify({'error': str(e)}), 500 

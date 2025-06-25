@@ -16,9 +16,9 @@ class VirtualHostService(BaseService):
             # Create virtual host record
             virtual_host = super().create(data)
 
-            # Create root directory if it doesn't exist
-            os.makedirs(virtual_host.root_directory, exist_ok=True)
-            os.chmod(virtual_host.root_directory, 0o755)
+            # Create document root directory if it doesn't exist
+            os.makedirs(virtual_host.document_root, exist_ok=True)
+            os.chmod(virtual_host.document_root, 0o755)
 
             # Create Nginx configuration
             self._create_nginx_config(virtual_host)
@@ -117,7 +117,7 @@ class VirtualHostService(BaseService):
         
         config += f""";
 
-    root {virtual_host.root_directory};
+    root {virtual_host.document_root};
     index index.html index.htm index.php;
 
     location / {{
@@ -158,4 +158,8 @@ class VirtualHostService(BaseService):
 
     def _reload_nginx(self) -> None:
         subprocess.run(['nginx', '-t'], check=True)  # Test configuration
-        subprocess.run(['systemctl', 'reload', 'nginx'], check=True) 
+        subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+
+    def get_virtual_hosts_by_user(self, user_id: int) -> List[VirtualHost]:
+        """Get all virtual hosts owned by a specific user"""
+        return VirtualHost.query.filter_by(user_id=user_id).all() 

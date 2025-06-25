@@ -1,10 +1,11 @@
 from datetime import datetime
-from models.database import db
+from .database import db
 
 class VirtualHost(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     domain = db.Column(db.String(255), unique=True, nullable=False)
     document_root = db.Column(db.String(255), nullable=False)
+    linux_username = db.Column(db.String(32), unique=True, nullable=False)
     server_admin = db.Column(db.String(255))
     php_version = db.Column(db.String(10))
     status = db.Column(db.String(50), default='active')
@@ -17,11 +18,12 @@ class VirtualHost(db.Model):
             'id': self.id,
             'domain': self.domain,
             'document_root': self.document_root,
+            'linux_username': self.linux_username,
             'server_admin': self.server_admin,
             'php_version': self.php_version,
             'status': self.status,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'user_id': self.user_id
         }
 

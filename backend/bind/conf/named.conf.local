@@ -1,0 +1,61 @@
+// Local DNS zones
+
+zone "webtest.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.webtest.com";
+    allow-transfer { none; };
+};
+
+zone "test-dns.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.test-dns.com";
+    allow-transfer { none; };
+};
+
+zone "test-dns.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.test-dns.com";
+    allow-transfer { none; };
+};
+
+zone "test-dns.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.test-dns.com";
+    allow-transfer { none; };
+};
+
+zone "test-dns.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.test-dns.com";
+    allow-transfer { none; };
+};
+
+zone "test-dns.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.test-dns.com";
+    allow-transfer { none; };
+};
+
+zone "test1.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.test1.com";
+    allow-transfer { none; };
+};
+
+zone "test.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.test.com";
+    allow-transfer { none; };
+};
+
+zone "test.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.test.com";
+    allow-transfer { none; };
+};
+
+zone "webtest.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.webtest.com";
+    allow-transfer { none; };
+};

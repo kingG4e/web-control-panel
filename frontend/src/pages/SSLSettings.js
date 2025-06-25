@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import PageLayout from '../components/layout/PageLayout';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
-import { useData } from '../contexts/DataContext';
+import { ssl, virtualHosts } from '../services/api';
 import {
   PlusIcon,
   PencilIcon,
@@ -13,30 +14,144 @@ import {
   Cog6ToothIcon,
   ArrowDownTrayIcon,
   DocumentDuplicateIcon,
+  ExclamationTriangleIcon,
+  CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 
 const SSLSettings = () => {
-  const data = useData();
-  const sslCertificates = data?.sslCertificates || [];
+  const [searchParams] = useSearchParams();
+  const [sslCertificates, setSslCertificates] = useState([]);
+  const [virtualHostsList, setVirtualHostsList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editingCert, setEditingCert] = useState(null);
+  const [actionLoading, setActionLoading] = useState({});
   const [formData, setFormData] = useState({
     domain: '',
-    type: 'lets_encrypt',
     auto_renew: true,
   });
 
+  // Check for domain parameter from URL and pre-fill form
+  useEffect(() => {
+    const domainParam = searchParams.get('domain');
+    if (domainParam) {
+      setFormData(prev => ({ ...prev, domain: domainParam }));
+      setShowForm(true);
+    }
+  }, [searchParams]);
+
+  // Fetch data
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [certsData, hostsData] = await Promise.all([
+        ssl.getCertificates(),
+        virtualHosts.getAll().catch(() => []) // Virtual hosts might require auth
+      ]);
+      setSslCertificates(certsData || []);
+      setVirtualHostsList(hostsData || []);
+      setError(null);
+    } catch (err) {
+      setError(err.message || 'Failed to fetch SSL data');
+      console.error('SSL data fetch error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Calculate stats
-  const validCertificates = sslCertificates.filter(cert => cert.status === 'valid').length;
-  const autoRenewEnabled = sslCertificates.filter(cert => cert.auto_renew).length;
+  const validCertificates = sslCertificates.filter(cert => cert.status === 'active').length;
+  const autoRenewEnabled = sslCertificates.filter(cert => cert.auto_renewal).length;
   const totalCertificates = sslCertificates.length;
-  const expiringSoonCerts = sslCertificates.filter(cert => cert.status === 'expiring_soon');
+  
+  // Check for certificates expiring in next 30 days
+  const expiringSoonCerts = sslCertificates.filter(cert => {
+    const expiryDate = new Date(cert.valid_until);
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+    return expiryDate <= thirtyDaysFromNow && cert.status === 'active';
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // TODO: Implement save logic
+    try {
+      setActionLoading(prev => ({ ...prev, form: true }));
+      
+      if (editingCert) {
+        // Update existing certificate (renew)
+        await ssl.renewCertificate(editingCert.id);
+      } else {
+        // Create new certificate
+        await ssl.createCertificate({
+          domain: formData.domain,
+          auto_renewal: formData.auto_renew
+        });
+      }
+      
+      await fetchData(); // Refresh data
     setShowForm(false);
     setEditingCert(null);
+      setFormData({ domain: '', auto_renew: true });
+    } catch (err) {
+      setError(err.message || 'Failed to save certificate');
+    } finally {
+      setActionLoading(prev => ({ ...prev, form: false }));
+    }
+  };
+
+  const handleDeleteCertificate = async (certId) => {
+    if (!window.confirm('Are you sure you want to delete this SSL certificate?')) return;
+    
+    try {
+      setActionLoading(prev => ({ ...prev, [certId]: true }));
+      await ssl.deleteCertificate(certId);
+      await fetchData(); // Refresh data
+    } catch (err) {
+      setError(err.message || 'Failed to delete certificate');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [certId]: false }));
+    }
+  };
+
+  const handleRenewCertificate = async (certId) => {
+    try {
+      setActionLoading(prev => ({ ...prev, [`renew_${certId}`]: true }));
+      await ssl.renewCertificate(certId);
+      await fetchData(); // Refresh data
+    } catch (err) {
+      setError(err.message || 'Failed to renew certificate');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [`renew_${certId}`]: false }));
+    }
+  };
+
+  const formatDate = (dateString) => {
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch {
+      return 'Invalid date';
+    }
+  };
+
+  const getDaysUntilExpiry = (dateString) => {
+    try {
+      const expiryDate = new Date(dateString);
+      const today = new Date();
+      const diffTime = expiryDate - today;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      return diffDays;
+    } catch {
+      return 0;
+    }
   };
 
   const actions = (
@@ -44,13 +159,11 @@ const SSLSettings = () => {
       <Button
         variant="outline"
         size="sm"
-        icon={
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-          </svg>
-        }
+        onClick={fetchData}
+        disabled={loading}
+        icon={<ArrowPathIcon className="w-4 h-4" />}
       >
-        Filter
+        {loading ? 'Refreshing...' : 'Refresh'}
       </Button>
       <Button
         variant="primary"
@@ -59,7 +172,6 @@ const SSLSettings = () => {
           setEditingCert(null);
           setFormData({
             domain: '',
-            type: 'lets_encrypt',
             auto_renew: true,
           });
           setShowForm(true);
@@ -78,6 +190,64 @@ const SSLSettings = () => {
       actions={actions}
     >
       <div className="space-y-6">
+        {/* Error Alert */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mr-2" />
+              <span className="text-red-800">{error}</span>
+              <button
+                onClick={() => setError(null)}
+                className="ml-auto text-red-500 hover:text-red-700"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Stats Overview */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-[var(--secondary-text)]">Total Certificates</p>
+                <p className="text-2xl font-bold text-[var(--primary-text)]">{totalCertificates}</p>
+              </div>
+              <ShieldCheckIcon className="w-8 h-8 text-blue-500" />
+            </div>
+          </div>
+          
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-[var(--secondary-text)]">Active</p>
+                <p className="text-2xl font-bold text-green-600">{validCertificates}</p>
+              </div>
+              <CheckCircleIcon className="w-8 h-8 text-green-500" />
+            </div>
+          </div>
+          
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-[var(--secondary-text)]">Auto-Renewal</p>
+                <p className="text-2xl font-bold text-blue-600">{autoRenewEnabled}</p>
+              </div>
+              <ArrowPathIcon className="w-8 h-8 text-blue-500" />
+            </div>
+          </div>
+          
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-[var(--secondary-text)]">Expiring Soon</p>
+                <p className="text-2xl font-bold text-orange-600">{expiringSoonCerts.length}</p>
+              </div>
+              <ExclamationTriangleIcon className="w-8 h-8 text-orange-500" />
+            </div>
+          </div>
+        </div>
         {/* Top Actions Bar */}
         <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg overflow-hidden">
           <div className="p-4 flex items-center justify-between">
@@ -112,7 +282,6 @@ const SSLSettings = () => {
                 setEditingCert(null);
                 setFormData({
                   domain: '',
-                  type: 'lets_encrypt',
                   auto_renew: true,
                 });
                 setShowForm(true);
@@ -130,80 +299,138 @@ const SSLSettings = () => {
               <thead className="bg-[var(--table-header-bg)] border-y border-[var(--border-color)]">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Domain</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Type</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Issuer</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Expiry</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Expires</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Auto Renew</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-[var(--secondary-text)] uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-[var(--card-bg)] divide-y divide-[var(--border-color)]">
-                {Array.isArray(sslCertificates) && sslCertificates.map((cert) => (
+                {loading ? (
+                  // Loading skeleton
+                  [...Array(3)].map((_, i) => (
+                    <tr key={i}>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center">
+                          <div className="w-5 h-5 bg-[var(--border-color)] rounded mr-3 animate-pulse"></div>
+                          <div className="w-24 h-4 bg-[var(--border-color)] rounded animate-pulse"></div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="w-20 h-6 bg-[var(--border-color)] rounded-full animate-pulse"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="w-16 h-6 bg-[var(--border-color)] rounded-full animate-pulse"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="w-20 h-4 bg-[var(--border-color)] rounded animate-pulse"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="w-16 h-6 bg-[var(--border-color)] rounded-full animate-pulse"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-5 h-5 bg-[var(--border-color)] rounded animate-pulse"></div>
+                          <div className="w-5 h-5 bg-[var(--border-color)] rounded animate-pulse"></div>
+                          <div className="w-5 h-5 bg-[var(--border-color)] rounded animate-pulse"></div>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : Array.isArray(sslCertificates) && sslCertificates.map((cert) => {
+                  const daysUntilExpiry = getDaysUntilExpiry(cert.valid_until);
+                  const isExpiringSoon = daysUntilExpiry <= 30 && daysUntilExpiry > 0;
+                  const isExpired = daysUntilExpiry <= 0;
+                  
+                  return (
                   <tr key={cert.id} className="hover:bg-[var(--hover-bg)] transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex items-center">
-                        <ShieldCheckIcon className="w-5 h-5 text-[var(--accent-color)] mr-3" />
-                        <span className="text-sm text-[var(--primary-text)]">{cert.domain}</span>
+                          {cert.status === 'active' ? (
+                            <CheckCircleIcon className="w-5 h-5 text-green-500 mr-3" />
+                          ) : (
+                            <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mr-3" />
+                          )}
+                          <div>
+                            <div className="text-sm font-medium text-[var(--primary-text)]">{cert.domain}</div>
+                            {isExpiringSoon && (
+                              <div className="text-xs text-orange-500">Expires in {daysUntilExpiry} days</div>
+                            )}
+                            {isExpired && (
+                              <div className="text-xs text-red-500">Expired</div>
+                            )}
+                          </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--accent-color)]/10 text-[var(--accent-color)]">
-                        {cert.type === 'lets_encrypt' ? "Let's Encrypt" : 'Custom'}
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          {cert.issuer || "Let's Encrypt"}
                       </span>
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        cert.status === 'valid'
-                          ? 'bg-[var(--success-color)]/10 text-[var(--success-color)]'
-                          : cert.status === 'expired'
-                          ? 'bg-[var(--danger-color)]/10 text-[var(--danger-color)]'
-                          : 'bg-[var(--warning-color)]/10 text-[var(--warning-color)]'
+                          cert.status === 'active'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
                       }`}>
-                        {cert.status.charAt(0).toUpperCase() + cert.status.slice(1)}
+                          {cert.status === 'active' ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-[var(--primary-text)]">
-                      {cert.expiry}
+                      <td className="px-6 py-4">
+                        <div className="text-sm text-[var(--primary-text)]">
+                          {formatDate(cert.valid_until)}
+                        </div>
+                        <div className={`text-xs ${
+                          isExpired ? 'text-red-500' : 
+                          isExpiringSoon ? 'text-orange-500' : 
+                          'text-[var(--secondary-text)]'
+                        }`}>
+                          {isExpired ? 'Expired' : 
+                           isExpiringSoon ? `${daysUntilExpiry} days left` : 
+                           `${daysUntilExpiry} days left`}
+                        </div>
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        cert.auto_renew
-                          ? 'bg-[var(--success-color)]/10 text-[var(--success-color)]'
-                          : 'bg-[var(--border-color)] text-[var(--secondary-text)]'
+                          cert.auto_renewal
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-gray-100 text-gray-800'
                       }`}>
-                        {cert.auto_renew ? 'Enabled' : 'Disabled'}
+                          {cert.auto_renewal ? 'Enabled' : 'Disabled'}
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex items-center space-x-3">
+                        <div className="flex items-center space-x-2">
                         <button
-                          onClick={() => {
-                            setEditingCert(cert);
-                            setFormData({
-                              ...cert,
-                            });
-                            setShowForm(true);
-                          }}
-                          className="text-[var(--secondary-text)] hover:text-[var(--accent-color)] transition-colors"
-                        >
-                          <PencilIcon className="w-5 h-5" />
+                            onClick={() => handleRenewCertificate(cert.id)}
+                            disabled={actionLoading[`renew_${cert.id}`]}
+                            className="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                            title="Renew Certificate"
+                          >
+                            {actionLoading[`renew_${cert.id}`] ? (
+                              <div className="w-4 h-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"></div>
+                            ) : (
+                              <ArrowPathIcon className="w-4 h-4" />
+                            )}
                         </button>
                         <button
-                          onClick={() => {}}
-                          className="text-[var(--secondary-text)] hover:text-[var(--accent-color)] transition-colors"
+                            onClick={() => handleDeleteCertificate(cert.id)}
+                            disabled={actionLoading[cert.id]}
+                            className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-50"
+                            title="Delete Certificate"
                         >
-                          <ArrowDownTrayIcon className="w-5 h-5" />
-                        </button>
-                        <button
-                          onClick={() => {}}
-                          className="text-[var(--danger-color)] hover:text-[var(--danger-color)]/80 transition-colors"
-                        >
-                          <TrashIcon className="w-5 h-5" />
+                            {actionLoading[cert.id] ? (
+                              <div className="w-4 h-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent"></div>
+                            ) : (
+                              <TrashIcon className="w-4 h-4" />
+                            )}
                         </button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {(!Array.isArray(sslCertificates) || sslCertificates.length === 0) && (
                   <tr>
                     <td colSpan="6" className="px-6 py-4 text-center text-[var(--secondary-text)]">
@@ -326,8 +553,9 @@ const SSLSettings = () => {
 
       {/* Certificate Form Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center backdrop-blur-sm z-50">
-          <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-md">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[120] overflow-y-auto">
+          <div className="min-h-full flex items-center justify-center p-4">
+            <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-md my-8">
             <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">
               {editingCert ? 'Edit Certificate' : 'Add Certificate'}
             </h2>
@@ -345,44 +573,21 @@ const SSLSettings = () => {
                     required
                   />
                 </div>
+                {!editingCert && (
                 <div>
                   <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
                     Certificate Type
                   </label>
-                  <select
-                    value={formData.type}
-                    onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                    className="input-field"
-                  >
-                    <option value="lets_encrypt">Let's Encrypt</option>
-                    <option value="custom">Custom Certificate</option>
-                  </select>
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-center">
+                        <ShieldCheckIcon className="w-5 h-5 text-blue-500 mr-2" />
+                        <span className="text-blue-800">Let's Encrypt (Free SSL Certificate)</span>
                 </div>
-                {formData.type === 'custom' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                        Certificate File
-                      </label>
-                      <input
-                        type="file"
-                        className="input-field"
-                        accept=".crt,.pem"
-                        required
-                      />
+                      <p className="text-sm text-blue-600 mt-1">
+                        Automatically issued and renewed SSL certificate
+                      </p>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                        Private Key File
-                      </label>
-                      <input
-                        type="file"
-                        className="input-field"
-                        accept=".key"
-                        required
-                      />
                     </div>
-                  </>
                 )}
                 <div>
                   <label className="flex items-center space-x-2">
@@ -390,10 +595,13 @@ const SSLSettings = () => {
                       type="checkbox"
                       checked={formData.auto_renew}
                       onChange={(e) => setFormData({ ...formData, auto_renew: e.target.checked })}
-                      className="rounded border-[var(--border-color)] text-[var(--accent-color)] focus:ring-[var(--accent-color)]"
+                      className="rounded border-[var(--border-color)] text-blue-600 focus:ring-blue-500"
                     />
                     <span className="text-sm font-medium text-[var(--secondary-text)]">Enable Auto Renewal</span>
                   </label>
+                  <p className="text-xs text-[var(--secondary-text)] mt-1 ml-6">
+                    Automatically renew certificate before expiration
+                  </p>
                 </div>
               </div>
               <div className="flex justify-end space-x-3 mt-6">
@@ -403,17 +611,27 @@ const SSLSettings = () => {
                     setShowForm(false);
                     setEditingCert(null);
                   }}
+                  disabled={actionLoading.form}
                 >
                   Cancel
                 </Button>
                 <Button
                   variant="primary"
                   type="submit"
+                  disabled={actionLoading.form}
                 >
-                  {editingCert ? 'Save Changes' : 'Add Certificate'}
+                  {actionLoading.form ? (
+                    <div className="flex items-center">
+                      <div className="w-4 h-4 animate-spin rounded-full border-2 border-white border-t-transparent mr-2"></div>
+                      Processing...
+                    </div>
+                  ) : (
+                    editingCert ? 'Renew Certificate' : 'Create Certificate'
+                  )}
                 </Button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}

@@ -1,13 +1,4 @@
 import React, { createContext, useContext, useState } from 'react';
-import {
-  mockDNSZones,
-  mockVirtualHosts,
-  mockEmailAccounts,
-  mockDatabases,
-  mockSSLCertificates,
-  mockFTPAccounts,
-  mockUsers
-} from '../mockData';
 
 const DataContext = createContext();
 
@@ -21,13 +12,13 @@ export const useData = () => {
 
 export const DataProvider = ({ children }) => {
   // State
-  const [dnsZones, setDNSZones] = useState(mockDNSZones);
-  const [virtualHosts, setVirtualHosts] = useState(mockVirtualHosts);
-  const [emailAccounts, setEmailAccounts] = useState(mockEmailAccounts);
-  const [databases, setDatabases] = useState(mockDatabases);
-  const [sslCertificates, setSSLCertificates] = useState(mockSSLCertificates);
-  const [ftpAccounts, setFTPAccounts] = useState(mockFTPAccounts);
-  const [users, setUsers] = useState(mockUsers);
+  const [dnsZones, setDNSZones] = useState([]);
+  const [virtualHosts, setVirtualHosts] = useState([]);
+  const [emailAccounts, setEmailAccounts] = useState([]);
+  const [databases, setDatabases] = useState([]);
+  const [sslCertificates, setSSLCertificates] = useState([]);
+  const [ftpAccounts, setFTPAccounts] = useState([]);
+  const [users, setUsers] = useState([]);
 
   // DNS Zones Functions
   const addDNSZone = (zoneData) => {
@@ -289,6 +280,7 @@ export const DataProvider = ({ children }) => {
     addDatabase,
     updateDatabase,
     deleteDatabase,
+    setDatabases,
 
     // SSL Functions
     addSSLCertificate,

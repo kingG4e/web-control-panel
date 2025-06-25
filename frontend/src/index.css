@@ -33,10 +33,20 @@
   --tooltip-text: #ffffff;
   --modal-overlay: rgba(0, 0, 0, 0.7);
   
+  /* Status Colors Background */
+  --success-bg: rgba(34, 197, 94, 0.1);
+  --warning-bg: rgba(245, 158, 11, 0.1);
+  --danger-bg: rgba(239, 68, 68, 0.1);
+  --error-bg: rgba(239, 68, 68, 0.1);
+  --info-bg: rgba(59, 130, 246, 0.1);
+  
   /* Borders and Dividers */
   --divider-color: #2a3447;
   --hover-border: #3a4557;
   --focus-border: #6366f1;
+  --input-border: #2a3447;
+  --input-text: #ffffff;
+  --input-placeholder: #64748b;
 }
 
 :root[data-theme="light"] {
@@ -70,10 +80,20 @@
   --tooltip-text: #ffffff;
   --modal-overlay: rgba(0, 0, 0, 0.5);
   
+  /* Status Colors Background */
+  --success-bg: rgba(34, 197, 94, 0.1);
+  --warning-bg: rgba(245, 158, 11, 0.1);
+  --danger-bg: rgba(239, 68, 68, 0.1);
+  --error-bg: rgba(239, 68, 68, 0.1);
+  --info-bg: rgba(59, 130, 246, 0.1);
+  
   /* Borders and Dividers */
   --divider-color: #f1f5f9;
   --hover-border: #cbd5e1;
   --focus-border: #4f46e5;
+  --input-border: #e2e8f0;
+  --input-text: #0f172a;
+  --input-placeholder: #64748b;
 }
 
 @layer base {
@@ -119,7 +139,7 @@
   }
 
   .sidebar {
-    @apply bg-[var(--secondary-bg)] border-r border-[var(--border-color)] shadow-lg;
+    @apply bg-[var(--secondary-bg)] border-r border-[var(--border-color)] shadow-lg z-[75];
   }
 
   .sidebar-link {
@@ -135,7 +155,7 @@
 
   .navbar {
     @apply bg-[var(--secondary-bg)] border-b border-[var(--border-color)] 
-    sticky top-0 z-[90] backdrop-blur-sm bg-opacity-90;
+    sticky top-0 z-[80] backdrop-blur-sm bg-opacity-90;
   }
 
   .navbar-content {
@@ -185,23 +205,19 @@
   }
 
   .badge-success {
-    @apply bg-[var(--success-bg)] text-[var(--success-color)];
-    border: 1px solid rgba(var(--success-color-rgb), 0.2);
+    @apply bg-[var(--success-bg)] text-[var(--success-color)] border border-[var(--success-bg)];
   }
   
   .badge-error {
-    @apply bg-[var(--danger-bg)] text-[var(--danger-color)];
-    border: 1px solid rgba(var(--danger-color-rgb), 0.2);
+    @apply bg-[var(--danger-bg)] text-[var(--danger-color)] border border-[var(--danger-bg)];
   }
 
   .badge-warning {
-    @apply bg-[var(--warning-bg)] text-[var(--warning-color)];
-    border: 1px solid rgba(var(--warning-color-rgb), 0.2);
+    @apply bg-[var(--warning-bg)] text-[var(--warning-color)] border border-[var(--warning-bg)];
   }
 
   .badge-info {
-    @apply bg-[var(--info-bg)] text-[var(--info-color)];
-    border: 1px solid rgba(var(--info-color-rgb), 0.2);
+    @apply bg-[var(--info-bg)] text-[var(--info-color)] border border-[var(--info-bg)];
   }
 
   .stat-value {
@@ -217,16 +233,43 @@
   }
 
   .modal {
-    @apply fixed inset-0 z-50 flex items-center justify-center;
+    @apply fixed inset-0 z-50 overflow-y-auto;
   }
 
   .modal-overlay {
-    @apply absolute inset-0 bg-[var(--modal-overlay)] backdrop-blur-sm;
+    @apply fixed inset-0 bg-black/50 backdrop-blur-sm;
+  }
+
+  .modal-container {
+    @apply min-h-full flex items-center justify-center p-4;
   }
 
   .modal-content {
-    @apply bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)] shadow-[var(--card-shadow)]
-    w-full max-w-md p-6 relative z-10;
+    @apply bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)] shadow-2xl
+    w-full relative transform transition-all my-8;
+  }
+
+  /* Modal centering improvements */
+  .modal-centered {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-height: 100vh !important;
+  }
+
+  .modal-dialog {
+    margin: 2rem auto;
+    max-width: 100%;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+  }
+
+  /* Prevent modal content from exceeding viewport */
+  .modal-body-scrollable {
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
   }
 }
 
@@ -234,7 +277,7 @@
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
-  }
+}
 
 ::-webkit-scrollbar-track {
   background: var(--primary-bg);
@@ -247,4 +290,275 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--accent-color);
-} 
+}
+
+/* Custom scrollbar class for specific components */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) var(--primary-bg);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--primary-bg);
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-color);
+}
+
+/* Z-Index Hierarchy Documentation
+ * 
+ * Layer 1: Base Content (z-0 to z-10)
+ * Layer 2: Mobile Overlay (z-[70])
+ * Layer 3: Layout Elements (z-[75] to z-[90])
+ *   - Sidebar: z-[75]
+ *   - Navbar: z-[80] 
+ *   - Profile/Notification Dropdowns: z-[85]
+ *   - Sidebar Tooltips: z-[90]
+ * Layer 4: Modals (z-[100]+)
+ *   - NotificationModal: z-[150] (HIGH PRIORITY - Must be visible)
+ *   - ConfirmationModal: z-[110]
+ *   - SettingsModal: z-[120]
+ *   - Page Modals (DNS, Database, etc.): z-[120]
+ *   - Zone File Modal: z-[125]
+ *   - SuccessModal: z-[130]
+ *   - LoadingOverlay: z-[140] (highest - should never be blocked)
+ */
+
+/* Utility classes for better component consistency */
+@layer utilities {
+  .safe-area-inset {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  
+  .prevent-scroll {
+    overflow: hidden;
+    height: 100vh;
+  }
+  
+  .modal-backdrop {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+  
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Z-index utilities to maintain proper layering */
+  .z-mobile-overlay { z-index: 70; }
+  .z-sidebar { z-index: 75; }
+  .z-navbar { z-index: 80; }
+  .z-dropdown { z-index: 85; }
+  .z-tooltip { z-index: 90; }
+  .z-modal-low { z-index: 100; }
+  .z-modal-mid { z-index: 110; }
+  .z-modal-high { z-index: 120; }
+}
+
+/* Focus visible improvements */
+.focus-visible:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.focus-visible:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+/* Animation improvements */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.3s ease-out;
+}
+
+/* Custom animations for Account Overview */
+@keyframes count-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-count {
+  animation: count-up 0.5s ease-out;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+/* Card hover effects */
+.card-hover-effect {
+  transition: all 0.3s ease;
+}
+
+.card-hover-effect:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .card-hover-effect:hover {
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* Loading skeleton effect */
+@keyframes skeleton-loading {
+  0% {
+    background-position: -200px 0;
+  }
+  100% {
+    background-position: calc(200px + 100%) 0;
+  }
+}
+
+.skeleton {
+  display: inline-block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--border-color) 0px,
+    var(--secondary-bg) 40px,
+    var(--border-color) 80px
+  );
+  background-size: 200px 100%;
+  animation: skeleton-loading 1.2s ease-in-out infinite;
+}
+
+/* ===== MODAL Z-INDEX SYSTEM DOCUMENTATION ===== */
+/* 
+ * ตำแหน่งลำดับชั้น Z-INDEX สำหรับ Modal และ Component ต่างๆ
+ * เพื่อป้องกันการทับซ้อนและสร้างการจัดการที่สม่ำเสมอ
+ *
+ * Z-INDEX HIERARCHY:
+ * ------------------
+ * Layer 1: Base Content (z-0 to z-10)
+ *   - Page content, cards, tables, etc.
+ *
+ * Layer 2: Mobile Overlay (z-[70])
+ *   - Mobile sidebar backdrop
+ *
+ * Layer 3: Layout Elements (z-[75] to z-[90])
+ *   - Sidebar: z-[75]
+ *   - Navbar: z-[80] 
+ *   - Profile/Notification Dropdowns: z-[85]
+ *   - Sidebar Tooltips: z-[90]
+ *
+ * Layer 4: Modals (z-[100]+)
+ *   - NotificationModal: z-[150] (HIGH PRIORITY - Must be visible)
+ *   - ConfirmationModal: z-[110]
+ *   - SettingsModal: z-[120]
+ *   - Page Modals (DNS, Database, etc.): z-[120]
+ *   - Zone File Modal: z-[125]
+ *   - SuccessModal: z-[130]
+ *   - LoadingOverlay: z-[140] (highest - should never be blocked)
+ *
+ * MODAL CENTERING PATTERN:
+ * ------------------------
+ * ปัญหาเดิม: การใช้ flex items-center justify-center บน backdrop container
+ * ทำให้ modal ไม่สามารถ scroll ได้เมื่อ content สูงเกินหน้าจอ
+ *
+ * วิธีแก้ไข: ใช้โครงสร้างแบบนี้
+ * <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[xxx] overflow-y-auto">
+ *   <div className="min-h-full flex items-center justify-center p-4">
+ *     <div className="modal-content my-8">
+ *       // Modal content
+ *     </div>
+ *   </div>
+ * </div>
+ */
+
+/* Z-Index Utility Classes */
+.z-mobile-overlay { z-index: 70; }
+.z-sidebar { z-index: 75; }
+.z-navbar { z-index: 80; }
+.z-dropdown { z-index: 85; }
+.z-tooltip { z-index: 90; }
+.z-modal-low { z-index: 100; }
+.z-modal-mid { z-index: 110; }
+.z-modal-high { z-index: 120; }
+.z-modal-higher { z-index: 130; }
+.z-loading { z-index: 140; }
+
+/* Modal backdrop utilities */
+.modal-backdrop {
+  @apply fixed inset-0 bg-black/50 backdrop-blur-sm overflow-y-auto;
+}
+
+.modal-container {
+  @apply min-h-full flex items-center justify-center p-4;
+}
+
+.modal-content {
+  @apply bg-[var(--card-bg)] rounded-xl shadow-2xl border border-[var(--border-color)] my-8;
+}
+
+/* ===== END MODAL SYSTEM DOCUMENTATION ===== */ 

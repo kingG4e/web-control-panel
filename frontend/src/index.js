@@ -4,18 +4,10 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import axios from 'axios';
 
-// Configure axios defaults
-axios.defaults.baseURL = 'http://localhost:5000';
+// Configure axios defaults - using environment variable or fallback
+const API_URL = process.env.REACT_APP_API_URL || window.REACT_APP_API_URL || 'http://192.168.1.174:5000';
+axios.defaults.baseURL = API_URL;
 axios.defaults.headers.common['Content-Type'] = 'application/json';
-
-// Add token to requests if available
-axios.interceptors.request.use(config => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

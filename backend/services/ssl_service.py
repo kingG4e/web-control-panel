@@ -7,7 +7,7 @@ from cryptography.x509.oid import NameOID
 
 class SSLService:
     def __init__(self):
-        self.certbot_path = 'certbot'
+        self.certbot_path = '/usr/bin/certbot'
         self.certificates_dir = '/etc/letsencrypt/live'
         self.apache_config_dir = '/etc/apache2/sites-available'
 
@@ -102,23 +102,31 @@ class SSLService:
         except Exception as e:
             raise Exception(f'Failed to revoke certificate: {str(e)}')
 
-    def delete_certificate(self, domain):
-        """Delete certificate files"""
+    def delete_certificate(self, cert_id):
+        """Delete certificate by ID"""
         try:
-            # Run certbot to delete certificate
-            command = [
-                self.certbot_path,
-                'delete',
-                '--cert-name', domain,
-                '--non-interactive'
-            ]
-            
-            subprocess.run(command, check=True, capture_output=True, text=True)
-            
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to delete certificate: {e.stderr}')
+            from models.ssl_certificate import SSLCertificate, SSLCertificateLog
+            from models.database import db
+
+            # Get certificate
+            cert = SSLCertificate.query.get(cert_id)
+            if not cert:
+                print(f"Certificate ID {cert_id} not found")
+                return False
+
+            # Delete logs first
+            SSLCertificateLog.query.filter_by(certificate_id=cert_id).delete()
+
+            # Delete certificate record
+            db.session.delete(cert)
+            db.session.commit()
+
+            print(f"Certificate {cert_id} deleted successfully")
+            return True
+
         except Exception as e:
-            raise Exception(f'Failed to delete certificate: {str(e)}')
+            print(f"Error deleting certificate {cert_id}: {str(e)}")
+            return False
 
     def get_certificate_info(self, domain):
         """Get SSL certificate information"""
@@ -198,4 +206,13 @@ class SSLService:
             subject = cert_data.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
             return subject
         except:
-            return None 
+            return None
+
+    def get_certificates_by_user(self, user_id: int) -> list:
+        """Get all SSL certificates owned by a specific user"""
+        try:
+            from models.ssl_certificate import SSLCertificate
+            return SSLCertificate.query.filter_by(user_id=user_id).all()
+        except Exception as e:
+            print(f"Error getting certificates for user {user_id}: {str(e)}")
+            return [] 

@@ -1,24 +1,61 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
+import { virtualHosts } from '../services/api';
+import {
+  PlusIcon,
+  ServerIcon,
+  Cog6ToothIcon,
+  TrashIcon,
+  PlayIcon,
+  PauseIcon,
+  ExclamationTriangleIcon
+} from '@heroicons/react/24/outline';
 
 const HostManagement = () => {
   const { hostId, tab = 'overview' } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Mock data - replace with API call
-  const host = {
+  const [host, setHost] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchHostData = async () => {
+      if (!hostId) {
+        setError('No host ID provided');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        const hostData = await virtualHosts.get(hostId);
+        setHost(hostData);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching host data:', err);
+        setError(err.message || 'Failed to fetch host data');
+        // Set default empty state for better UX
+        setHost({
     id: hostId,
-    domain: 'example.com',
-    status: 'active',
-    type: 'PHP',
-    ssl: true,
-    diskUsage: '2.1 GB',
-    lastBackup: '2024-02-20',
-    phpVersion: '8.2',
-    webServer: 'Nginx',
-    documentRoot: '/var/www/example.com'
-  };
+          domain: 'Unknown',
+          status: 'unknown',
+          type: 'Unknown',
+          ssl: false,
+          diskUsage: '0 GB',
+          lastBackup: 'Never',
+          phpVersion: 'Unknown',
+          webServer: 'Unknown',
+          documentRoot: '/var/www/html'
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHostData();
+  }, [hostId]);
 
   const tabs = [
     { id: 'overview', name: 'Overview', icon: (
@@ -83,6 +120,83 @@ const HostManagement = () => {
     );
   };
 
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'active':
+        return 'text-[var(--success-color)]';
+      case 'maintenance':
+        return 'text-[var(--warning-color)]';
+      case 'suspended':
+        return 'text-[var(--danger-color)]';
+      default:
+        return 'text-[var(--secondary-text)]';
+    }
+  };
+
+  const getStatusBg = (status) => {
+    switch (status) {
+      case 'active':
+        return { backgroundColor: 'var(--success-color)', opacity: 0.1 };
+      case 'maintenance':
+        return { backgroundColor: 'var(--warning-color)', opacity: 0.1 };
+      case 'suspended':
+        return { backgroundColor: 'var(--danger-color)', opacity: 0.1 };
+      default:
+        return { backgroundColor: 'var(--secondary-bg)' };
+    }
+  };
+
+  const handleAction = (action, hostId) => {
+    console.log(`${action} host ${hostId}`);
+    // Implement actual actions here
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[var(--primary-bg)] p-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="animate-pulse space-y-6">
+            <div className="h-8 bg-[var(--hover-bg)] rounded w-1/4"></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)]">
+                  <div className="h-6 bg-[var(--hover-bg)] rounded w-2/3 mb-4"></div>
+                  <div className="space-y-2">
+                    <div className="h-4 bg-[var(--hover-bg)] rounded w-1/2"></div>
+                    <div className="h-4 bg-[var(--hover-bg)] rounded w-3/4"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[var(--primary-bg)] p-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6 text-center" style={{ borderColor: 'var(--danger-color)' }}>
+            <ExclamationTriangleIcon className="w-12 h-12 mx-auto mb-4" style={{ color: 'var(--danger-color)' }} />
+            <h3 className="text-lg font-semibold text-[var(--primary-text)] mb-2">Error Loading Host</h3>
+            <p className="text-[var(--secondary-text)] mb-6">{error}</p>
+            <button
+              onClick={() => {
+                // Implement retry logic here
+              }}
+              className="inline-flex items-center px-6 py-3 text-white rounded-lg transition-colors font-medium"
+              style={{ backgroundColor: 'var(--accent-color)' }}
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[var(--primary-bg)]">
       {/* Top Bar */}
@@ -101,7 +215,13 @@ const HostManagement = () => {
               <div className="ml-4">
                 <h1 className="text-lg font-medium text-[var(--text-primary)]">{host.domain}</h1>
                 <div className="flex items-center mt-1">
-                  <StatusBadge status={host.status} />
+                  <span
+                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusColor(host.status)}`}
+                    style={getStatusBg(host.status)}
+                  >
+                    <div className="w-1.5 h-1.5 rounded-full mr-1.5" style={{ backgroundColor: host.status === 'active' ? 'var(--success-color)' : host.status === 'maintenance' ? 'var(--warning-color)' : 'var(--danger-color)' }}></div>
+                    {host.status.charAt(0).toUpperCase() + host.status.slice(1)}
+                  </span>
                   <span className="ml-2 text-sm text-[var(--text-secondary)]">{host.type}</span>
                 </div>
               </div>
