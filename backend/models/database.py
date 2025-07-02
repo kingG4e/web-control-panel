@@ -8,13 +8,13 @@ def init_db(app):
 
 class Database(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(64), unique=True, nullable=False)
+    name = db.Column(db.String(64), unique=True, nullable=False, index=True)
     charset = db.Column(db.String(32), default='utf8mb4')
     collation = db.Column(db.String(32), default='utf8mb4_unicode_ci')
     size = db.Column(db.Float)  # Size in MB
-    status = db.Column(db.String(50), default='active')
-    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(50), default='active', index=True)
+    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
@@ -37,12 +37,12 @@ class Database(db.Model):
 
 class DatabaseUser(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    database_id = db.Column(db.Integer, db.ForeignKey('database.id'), nullable=False)
-    username = db.Column(db.String(32), unique=True, nullable=False)
+    database_id = db.Column(db.Integer, db.ForeignKey('database.id'), nullable=False, index=True)
+    username = db.Column(db.String(32), unique=True, nullable=False, index=True)
     password = db.Column(db.String(255), nullable=False)
     host = db.Column(db.String(255), default='%')
     privileges = db.Column(db.String(255), default='ALL PRIVILEGES')
-    status = db.Column(db.String(50), default='active')
+    status = db.Column(db.String(50), default='active', index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -60,12 +60,12 @@ class DatabaseUser(db.Model):
 
 class DatabaseBackup(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    database_id = db.Column(db.Integer, db.ForeignKey('database.id'), nullable=False)
-    filename = db.Column(db.String(255), nullable=False)
+    database_id = db.Column(db.Integer, db.ForeignKey('database.id'), nullable=False, index=True)
+    filename = db.Column(db.String(255), nullable=False, index=True)
     size = db.Column(db.Float)  # Size in MB
-    backup_type = db.Column(db.String(50), default='manual')  # manual, scheduled
-    status = db.Column(db.String(50), default='completed')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    backup_type = db.Column(db.String(50), default='manual', index=True)
+    status = db.Column(db.String(50), default='completed', index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     def to_dict(self):
         return {

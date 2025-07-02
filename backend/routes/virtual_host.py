@@ -13,6 +13,7 @@ from services.email_service import EmailService
 from services.mysql_service import MySQLService
 from services.ssl_service import SSLService
 from services.ftp_service import FTPService
+from services.virtual_host_permission_service import VirtualHostPermissionService
 from utils.auth import token_required
 from utils.permissions import (
     check_virtual_host_permission, 
@@ -314,22 +315,44 @@ def _auto_fix_virtual_host(virtual_host):
 @token_required
 def get_virtual_hosts(current_user):
     try:
-        # Admin/root can see all virtual hosts
-        if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
-            virtual_hosts = VirtualHost.query.all()
+        # Get pagination parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 10, type=int), 100)  # Limit max per_page
+        
+        # Use optimized permission service
+        is_admin, username = VirtualHostPermissionService.check_user_permissions(current_user)
+        
+        # Build query based on permissions
+        if is_admin:
+            query = VirtualHost.query
         else:
             # Regular users see virtual hosts where linux_username matches their username
             # OR where they are the creator (user_id matches)
-            virtual_hosts = VirtualHost.query.filter(
-                (VirtualHost.linux_username == current_user.username) | 
+            query = VirtualHost.query.filter(
+                (VirtualHost.linux_username == username) | 
                 (VirtualHost.user_id == current_user.id)
-            ).all()
+            )
         
-        result = [vh.to_dict() for vh in virtual_hosts]
+        # Apply pagination
+        virtual_hosts_paginated = query.paginate(
+            page=page, 
+            per_page=per_page, 
+            error_out=False
+        )
+        
+        result = [vh.to_dict() for vh in virtual_hosts_paginated.items]
         
         return jsonify({
             'success': True,
-            'data': result
+            'data': result,
+            'pagination': {
+                'page': page,
+                'pages': virtual_hosts_paginated.pages,
+                'per_page': per_page,
+                'total': virtual_hosts_paginated.total,
+                'has_next': virtual_hosts_paginated.has_next,
+                'has_prev': virtual_hosts_paginated.has_prev
+            }
         })
     except Exception as e:
         return jsonify({

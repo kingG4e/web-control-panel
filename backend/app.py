@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, send_from_directory, request, session
 from flask_cors import CORS
+# from flask_compress import Compress  # Enable after installing flask-compress
 from datetime import timedelta
 from models.database import db, init_db
 from routes.auth import auth_bp
@@ -86,6 +87,14 @@ os.environ['FILE_MANAGER_ROOT'] = FILE_MANAGER_ROOT
 
 app = Flask(__name__, static_folder='../frontend/build', static_url_path='/')
 
+# Enable response compression for better performance (uncomment after installing flask-compress)
+# compress = Compress(app)
+# app.config['COMPRESS_MIMETYPES'] = [
+#     'text/html', 'text/css', 'text/xml',
+#     'application/json', 'application/javascript',
+#     'text/plain', 'text/csv'
+# ]
+
 # Configure CORS to be more flexible
 CORS(app, supports_credentials=True, origins=[
     "http://localhost:3000", 
@@ -103,9 +112,17 @@ app.config.update(
     SESSION_COOKIE_NAME='control_panel_session'
 )
 
-# Use SQLite database
+# Database configuration with connection pooling
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///controlpanel.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Add connection pooling configuration for better performance
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 20,
+    'pool_recycle': 3600,
+    'pool_pre_ping': True,
+    'echo': False  # Set to True for SQL query debugging
+}
 
 # Initialize extensions
 init_db(app)
