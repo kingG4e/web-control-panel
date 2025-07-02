@@ -1,266 +1,208 @@
 from flask import Blueprint, request, jsonify, session, current_app
 from werkzeug.security import check_password_hash
 from functools import wraps
-from models.user import User
-from models.database import db
-import jwt
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
+import jwt
 import platform
 
-# Import Unix/Linux specific modules
-try:
-    import pwd
-    import spwd
-    import crypt
-    import pam
-    UNIX_AUTH_AVAILABLE = True
-except ImportError:
-    UNIX_AUTH_AVAILABLE = False
-    print("Warning: Unix authentication modules not available (Windows system)")
-    pwd = None
-    spwd = None
-    crypt = None
-    pam = None
+from models.user import User
+from models.database import db
+from utils.logger import setup_logger
+from services.auth_service import AuthService
+from services.user_service import UserService
 
+logger = setup_logger(__name__)
 auth_bp = Blueprint('auth', __name__)
 
+# Initialize services
+auth_service = AuthService()
+user_service = UserService()
+
 def login_required(f):
+    """Decorator to require authentication for routes."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Check JWT token first
-        token = None
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            try:
-                token = auth_header.split(" ")[1]  # Bearer <token>
-            except IndexError:
-                pass
-        
-        if token:
-            try:
-                data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-                current_user = User.query.get(data['user_id'])
-                if current_user:
-                    request.current_user = current_user
-                    request.current_username = current_user.username
+        try:
+            # Check JWT token first
+            token = _extract_token_from_header()
+            if token:
+                user = auth_service.verify_jwt_token(token)
+                if user:
+                    request.current_user = user
+                    request.current_username = user.username
                     return f(*args, **kwargs)
-            except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
-                pass
-        
-        # Fallback to session-based auth
-        if 'username' not in session:
-            return jsonify({'error': 'Unauthorized'}), 401
-        return f(*args, **kwargs)
+            
+            # Fallback to session-based auth
+            if 'username' not in session:
+                return jsonify({'error': 'Unauthorized'}), 401
+            return f(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Authentication error: {e}")
+            return jsonify({'error': 'Authentication failed'}), 401
+    
     return decorated_function
 
-def authenticate_linux_user(username, password):
-    """Authenticate user using Linux PAM or fallback"""
-    if not UNIX_AUTH_AVAILABLE:
-        # Development mode - simple authentication
-        return username == "admin" and password == "admin"
-    
-    try:
-        auth = pam.pam()
-        return auth.authenticate(username, password)
-    except Exception:
-        return False
-
-def get_user_info(username):
-    """Get user information from Linux system or return default data"""
-    if not UNIX_AUTH_AVAILABLE:
-        # Return default user info for development
-        if username == "admin":
-            return type('DefaultUser', (), {
-                'pw_name': username,
-                'pw_uid': 1000,
-                'pw_gid': 1000,
-                'pw_dir': '/home/' + username,
-                'pw_shell': '/bin/bash'
-            })()
+def _extract_token_from_header() -> Optional[str]:
+    """Extract JWT token from Authorization header."""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
         return None
     
     try:
-        return pwd.getpwnam(username)
-    except KeyError:
+        return auth_header.split(" ")[1]  # Bearer <token>
+    except IndexError:
         return None
-
-def format_user_info(user_info):
-    """Format user information for JSON response"""
-    if not user_info:
-        return None
-    return {
-        'username': user_info.pw_name,
-        'uid': user_info.pw_uid,
-        'gid': user_info.pw_gid,
-        'home': user_info.pw_dir,
-        'shell': user_info.pw_shell
-    }
 
 @auth_bp.route('/api/auth/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    
-    if not data or not data.get('username') or not data.get('password'):
-        return jsonify({'error': 'Missing username or password'}), 400
-    
-    username = data['username']
-    password = data['password']
-    
+    """Handle user login."""
     try:
-        # First check database users
-        user = User.query.filter_by(username=username).first()
-        if user and not user.is_system_user and user.verify_password(password):
-            # Database user authentication successful
-            user.last_login = datetime.utcnow()
-            db.session.commit()
-            
-            # Generate JWT token
-            token_payload = {
-                'user_id': user.id,
-                'username': username,
-                'exp': datetime.utcnow() + timedelta(hours=24)
-            }
-            token = jwt.encode(token_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
-            
-            # Also maintain session for backward compatibility
-            session.permanent = True
-            session['username'] = username
-            session['user_id'] = user.id
-            
-            return jsonify({
-                'message': 'Login successful',
-                'token': token,
-                'user': user.to_dict()
-            })
+        data = request.get_json()
+        if not _validate_login_data(data):
+            return jsonify({'error': 'Missing username or password'}), 400
         
-        # Fallback to Linux system authentication
-        if authenticate_linux_user(username, password):
-            user_info = get_user_info(username)
-            if user_info:
-                # Check if user exists in database
-                if not user:
-                    # Create new user in database
-                    user = User(
-                        username=username,
-                        email=f"{username}@localhost",
-                        role='admin' if user_info.pw_uid == 0 else 'user',
-                        is_system_user=True,
-                        system_uid=user_info.pw_uid
-                    )
-                    db.session.add(user)
-                    db.session.commit()
-                
-                # Update last login
-                user.last_login = datetime.utcnow()
-                db.session.commit()
-                
-                # Generate JWT token
-                token_payload = {
-                    'user_id': user.id,
-                    'username': username,
-                    'exp': datetime.utcnow() + timedelta(hours=24)
-                }
-                token = jwt.encode(token_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
-                
-                # Also maintain session for backward compatibility
-                session.permanent = True
-                session['username'] = username
-                session['uid'] = user_info.pw_uid
-                session['user_id'] = user.id
-                
-                return jsonify({
-                    'message': 'Login successful',
-                    'token': token,
-                    'user': user.to_dict()
-                })
-            return jsonify({'error': 'User not found'}), 404
-        return jsonify({'error': 'Invalid credentials'}), 401
+        username = data['username']
+        password = data['password']
+        
+        # Attempt authentication
+        auth_result = auth_service.authenticate_user(username, password)
+        
+        if not auth_result['success']:
+            return jsonify({'error': auth_result['error']}), auth_result['status_code']
+        
+        user = auth_result['user']
+        token = auth_result['token']
+        
+        # Set session data
+        _set_session_data(user)
+        
+        logger.info(f"User {username} logged in successfully")
+        return jsonify({
+            'message': 'Login successful',
+            'token': token,
+            'user': user.to_dict()
+        })
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Login error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+def _validate_login_data(data: Dict[str, Any]) -> bool:
+    """Validate login request data."""
+    return data and data.get('username') and data.get('password')
+
+def _set_session_data(user: User) -> None:
+    """Set session data for authenticated user."""
+    session.permanent = True
+    session['username'] = user.username
+    session['user_id'] = user.id
+    if hasattr(user, 'system_uid'):
+        session['uid'] = user.system_uid
 
 @auth_bp.route('/api/auth/register', methods=['POST'])
 def register():
-    """Register a new user (for development/testing)"""
-    data = request.get_json()
-    
-    if not data or not data.get('username') or not data.get('password'):
-        return jsonify({'error': 'Missing username or password'}), 400
-    
-    username = data['username']
-    password = data['password']
-    
+    """Register a new user (for development/testing)."""
     try:
+        data = request.get_json()
+        if not _validate_register_data(data):
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        username = data['username']
+        password = data['password']
+        email = data.get('email', f"{username}@localhost")
+        
         # Check if user already exists
-        existing_user = User.query.filter_by(username=username).first()
-        if existing_user:
+        if user_service.user_exists(username):
             return jsonify({'error': 'User already exists'}), 409
         
         # Create new user
-        user = User(
-            username=username,
-            email=data.get('email', f"{username}@localhost"),
-            role='user',
-            is_system_user=False
-        )
-        user.set_password(password)
+        user = user_service.create_user(username, password, email)
         
-        db.session.add(user)
-        db.session.commit()
-        
+        logger.info(f"User {username} registered successfully")
         return jsonify({
             'message': 'User registered successfully',
             'user': user.to_dict()
         }), 201
         
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Registration error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+def _validate_register_data(data: Dict[str, Any]) -> bool:
+    """Validate registration request data."""
+    return data and data.get('username') and data.get('password')
 
 @auth_bp.route('/api/auth/logout', methods=['POST'])
 def logout():
-    session.clear()
-    return jsonify({'message': 'Logged out successfully'})
+    """Handle user logout."""
+    try:
+        session.clear()
+        logger.info("User logged out successfully")
+        return jsonify({'message': 'Logout successful'})
+    except Exception as e:
+        logger.error(f"Logout error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @auth_bp.route('/api/auth/user', methods=['GET'])
 @login_required
 def get_current_user():
+    """Get current authenticated user information."""
     try:
-        # Get user from database first
-        username = getattr(request, 'current_username', session.get('username'))
-        user = User.query.filter_by(username=username).first()
+        username = session.get('username') or getattr(request, 'current_username', None)
+        if not username:
+            return jsonify({'error': 'User not found'}), 404
         
-        if user:
-            return jsonify(user.to_dict())
+        user = user_service.get_user_by_username(username)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
         
-        # Fallback to system user info
-        user_info = get_user_info(username)
-        if user_info:
-            return jsonify(format_user_info(user_info))
-            
-        return jsonify({'error': 'User not found'}), 404
+        return jsonify({
+            'user': user.to_dict()
+        })
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Get current user error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @auth_bp.route('/api/auth/system-users', methods=['GET'])
 @login_required
 def get_system_users():
-    """Get list of system users"""
+    """Get list of system users."""
     try:
-        if not UNIX_AUTH_AVAILABLE:
-            # Return default users for development
-            return jsonify([{
-                'username': 'admin',
-                'uid': 1000,
-                'gid': 1000,
-                'home': '/home/admin',
-                'shell': '/bin/bash'
-            }])
-        
-        # Get all users with UID >= 1000 (normal users)
-        users = []
-        for user in pwd.getpwall():
-            if user.pw_uid >= 1000 and user.pw_shell != '/usr/sbin/nologin':
-                users.append(format_user_info(user))
-        return jsonify(users)
+        users = user_service.get_system_users()
+        return jsonify({
+            'users': [user.to_dict() for user in users]
+        })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Get system users error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@auth_bp.route('/api/auth/change-password', methods=['POST'])
+@login_required
+def change_password():
+    """Change user password."""
+    try:
+        data = request.get_json()
+        if not _validate_password_change_data(data):
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        username = session.get('username') or getattr(request, 'current_username', None)
+        current_password = data['current_password']
+        new_password = data['new_password']
+        
+        success = user_service.change_password(username, current_password, new_password)
+        
+        if not success:
+            return jsonify({'error': 'Invalid current password'}), 400
+        
+        logger.info(f"Password changed successfully for user {username}")
+        return jsonify({'message': 'Password changed successfully'})
+        
+    except Exception as e:
+        logger.error(f"Change password error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+def _validate_password_change_data(data: Dict[str, Any]) -> bool:
+    """Validate password change request data."""
+    return data and data.get('current_password') and data.get('new_password')

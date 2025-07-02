@@ -36,4 +36,23 @@ frontend/dist/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Test files
+*_test.py
+*test_*.py
+quick_*_notifications.py
+simple_*.py
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Instance files
+instance/
+backend/instance/
+
+# Temporary files
+*.tmp
+*.temp 

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { auth } from '../services/api';
 
 const ProtectedRoute = ({ children }) => {
     const [isAuthenticated, setIsAuthenticated] = useState(null);
@@ -14,20 +15,8 @@ const ProtectedRoute = ({ children }) => {
                     return;
                 }
 
-                const response = await fetch('http://192.168.1.174:5000/api/auth/user', {
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                });
-                
-                if (response.ok) {
-                    setIsAuthenticated(true);
-                } else {
-                    // Clear invalid token
-                    localStorage.removeItem('token');
-                    setIsAuthenticated(false);
-                }
+                await auth.getCurrentUser();
+                setIsAuthenticated(true);
             } catch (error) {
                 console.error('Auth check error:', error);
                 localStorage.removeItem('token');

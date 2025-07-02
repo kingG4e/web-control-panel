@@ -1,6 +1,7 @@
 import axios from 'axios';
+import { getApiUrl } from '../utils/config';
 
-const API_URL = window.REACT_APP_API_URL || 'http://192.168.1.174:5000';
+const API_URL = getApiUrl();
 
 // Create axios instance with default config
 const api = axios.create({

@@ -9,7 +9,8 @@
     "react-toastify": "^11.0.5"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "REACT_APP_API_URL=http://localhost:5000 react-scripts start",
+    "start:network": "REACT_APP_API_URL=http://0.0.0.0:5000 react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test"
   },

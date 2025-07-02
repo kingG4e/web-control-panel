@@ -1,13 +1,27 @@
 from models.user import User, Role, Permission, DomainPermission, db
 from services.linux_user_service import LinuxUserService
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 import subprocess
 import os
+import platform
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class UserService:
     def __init__(self):
         self.linux_user_service = LinuxUserService()
+        self.unix_auth_available = self._check_unix_auth_availability()
+    
+    def _check_unix_auth_availability(self) -> bool:
+        """Check if Unix authentication modules are available."""
+        try:
+            import pwd
+            return True
+        except ImportError:
+            logger.warning("Unix authentication modules not available (Windows system)")
+            return False
     
     def create_user(self, data: Dict) -> User:
         """Create a new user (both database and optionally Linux user)"""
@@ -533,4 +547,153 @@ class UserService:
             'active_users': active_users,
             'admin_users': admin_users,
             'inactive_users': inactive_users
-        } 
+        }
+
+    def get_system_users(self) -> List[User]:
+        """
+        Get all system users.
+        
+        Returns:
+            List of system User objects
+        """
+        if not self.unix_auth_available:
+            # Return default users for development
+            return self._get_default_system_users()
+        
+        return self._get_actual_system_users()
+    
+    def _get_default_system_users(self) -> List[User]:
+        """Get default system users for development."""
+        users = []
+        
+        # Create default admin user if it doesn't exist
+        admin_user = self.get_user_by_username('admin')
+        if not admin_user:
+            admin_user = self.create_user('admin', 'admin', 'admin@localhost', 'admin')
+            admin_user.is_system_user = True
+            admin_user.system_uid = 1000
+            db.session.commit()
+        
+        users.append(admin_user)
+        return users
+    
+    def _get_actual_system_users(self) -> List[User]:
+        """Get actual system users from Unix system."""
+        try:
+            import pwd
+            users = []
+            
+            for user_info in pwd.getpwall():
+                if user_info.pw_uid >= 1000 and user_info.pw_shell != '/usr/sbin/nologin':
+                    # Check if user exists in database
+                    user = self.get_user_by_username(user_info.pw_name)
+                    if not user:
+                        # Create user in database
+                        user = self._create_system_user_from_info(user_info)
+                    
+                    users.append(user)
+            
+            return users
+            
+        except Exception as e:
+            logger.error(f"Failed to get system users: {e}")
+            return []
+    
+    def _create_system_user_from_info(self, user_info: Any) -> User:
+        """Create a system user from Unix user info."""
+        user = User(
+            username=user_info.pw_name,
+            email=f"{user_info.pw_name}@localhost",
+            role='admin' if user_info.pw_uid == 0 else 'user',
+            is_system_user=True,
+            system_uid=user_info.pw_uid
+        )
+        
+        db.session.add(user)
+        db.session.commit()
+        return user
+
+    def user_exists(self, username: str) -> bool:
+        """
+        Check if user exists in database.
+        
+        Args:
+            username: Username to check
+            
+        Returns:
+            True if user exists, False otherwise
+        """
+        return User.query.filter_by(username=username).first() is not None
+
+    def get_user_by_id(self, user_id: int) -> Optional[User]:
+        """
+        Get user by ID.
+        
+        Args:
+            user_id: User ID to search for
+            
+        Returns:
+            User object if found, None otherwise
+        """
+        return User.query.get(user_id)
+
+    def get_all_users(self) -> List[User]:
+        """
+        Get all users from database.
+        
+        Returns:
+            List of all User objects
+        """
+        return User.query.all()
+
+    def change_password(self, username: str, current_password: str, new_password: str) -> bool:
+        """
+        Change user password.
+        
+        Args:
+            username: Username of user
+            current_password: Current password
+            new_password: New password
+            
+        Returns:
+            True if password change was successful, False otherwise
+        """
+        try:
+            user = self.get_user_by_username(username)
+            if not user:
+                return False
+            
+            if not user.verify_password(current_password):
+                return False
+            
+            user.set_password(new_password)
+            user.updated_at = datetime.utcnow()
+            db.session.commit()
+            
+            logger.info(f"Password changed successfully for user {username}")
+            return True
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Failed to change password for user {username}: {e}")
+            return False
+
+    def search_users(self, query: str) -> List[User]:
+        """
+        Search users by username or email.
+        
+        Args:
+            query: Search query
+            
+        Returns:
+            List of matching User objects
+        """
+        try:
+            return User.query.filter(
+                (User.username.ilike(f'%{query}%')) |
+                (User.email.ilike(f'%{query}%'))
+            ).all()
+            
+        except Exception as e:
+            logger.error(f"Failed to search users: {e}")
+            return [] 
