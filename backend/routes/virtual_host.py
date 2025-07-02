@@ -147,7 +147,7 @@ def _create_email_domain(domain, linux_username):
     # Check if email domain already exists
     existing_domain = EmailDomain.query.filter_by(domain=domain).first()
     if existing_domain:
-        print(f"Email domain for {domain} already exists, skipping creation")
+        print(f"Email domain for {domain} already exists, using existing")
         # Check if admin account exists
         existing_admin = EmailAccount.query.filter_by(
             domain_id=existing_domain.id, 
@@ -155,36 +155,61 @@ def _create_email_domain(domain, linux_username):
         ).first()
         if existing_admin:
             return existing_domain, f'admin@{domain}', '[existing]'
+        else:
+            # Create admin account for existing domain
+            try:
+                default_password = _generate_secure_password()
+                email_account = EmailAccount(
+                    domain_id=existing_domain.id,
+                    username='admin',
+                    password=default_password,
+                    quota=1024,
+                    status='active'
+                )
+                db.session.add(email_account)
+                return existing_domain, f'admin@{domain}', default_password
+            except Exception as e:
+                print(f"Warning: Could not create admin account for existing domain: {e}")
+                return existing_domain, f'admin@{domain}', '[existing]'
     
-    # Create email domain
-    email_domain = EmailDomain(
-        domain=domain,
-        virtual_host_id=None,  # Will be set after VirtualHost is created
-        status='active'
-    )
-    db.session.add(email_domain)
-    db.session.flush()
-    
-    # Create default email account (admin@domain)
-    default_password = _generate_secure_password()
-    email_account = EmailAccount(
-        domain_id=email_domain.id,
-        username='admin',
-        password=default_password,  # Will be hashed in email service
-        quota=1024,
-        status='active'
-    )
-    db.session.add(email_account)
-    
-    # Create email domain in Postfix (external service - handle errors separately)
+    # Create new email domain only if it doesn't exist
     try:
-        email_service.create_domain(domain)
-        email_service.create_account('admin', domain, default_password, 1024)
+        email_domain = EmailDomain(
+            domain=domain,
+            virtual_host_id=None,  # Will be set after VirtualHost is created
+            status='active'
+        )
+        db.session.add(email_domain)
+        db.session.flush()
+        
+        # Create default email account (admin@domain)
+        default_password = _generate_secure_password()
+        email_account = EmailAccount(
+            domain_id=email_domain.id,
+            username='admin',
+            password=default_password,  # Will be hashed in email service
+            quota=1024,
+            status='active'
+        )
+        db.session.add(email_account)
+        
+        # Create email domain in Postfix (external service - handle errors separately)
+        try:
+            email_service.create_domain(domain)
+            email_service.create_account('admin', domain, default_password, 1024)
+        except Exception as e:
+            print(f"Warning: Postfix email configuration failed: {e}")
+            # Continue anyway - database records are more important
+        
+        return email_domain, f'admin@{domain}', default_password
+        
     except Exception as e:
-        print(f"Warning: Postfix email configuration failed: {e}")
-        # Continue anyway - database records are more important
-    
-    return email_domain, f'admin@{domain}', default_password
+        print(f"Error creating email domain: {e}")
+        # If creation fails, check if it was created by another process
+        existing_domain = EmailDomain.query.filter_by(domain=domain).first()
+        if existing_domain:
+            return existing_domain, f'admin@{domain}', '[existing]'
+        raise e
 
 def _create_mysql_database(domain, linux_username):
     """Create MySQL database and user"""
@@ -193,6 +218,14 @@ def _create_mysql_database(domain, linux_username):
         db_name = re.sub(r'[^a-zA-Z0-9]', '', domain.replace('.', '_'))[:20]
         db_user = f"{db_name}_user"
         db_password = _generate_secure_password()
+        
+        # Check if MySQL service is available
+        try:
+            # Quick connection test
+            mysql_service.get_database_size('information_schema')  # Test connection
+        except Exception as conn_test:
+            print(f"MySQL service not available: {conn_test}")
+            return None, None, None
         
         # Check if database already exists (try to connect)
         try:
@@ -334,31 +367,50 @@ def create_virtual_host(current_user):
     try:
         data = request.get_json()
         
+        # Check if data is valid JSON
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No data provided or invalid JSON format',
+                'error_code': 'INVALID_REQUEST_DATA'
+            }), 400
+        
         # Validate required fields
         required_fields = ['domain', 'linux_password']
+        missing_fields = []
         for field in required_fields:
-            if field not in data or not data[field]:
-                return jsonify({
-                    'success': False,
-                    'error': f'Missing required field: {field}'
-                }), 400
+            if field not in data or not data[field] or str(data[field]).strip() == '':
+                missing_fields.append(field)
+        
+        if missing_fields:
+            return jsonify({
+                'success': False,
+                'error': f'Missing required fields: {", ".join(missing_fields)}',
+                'error_code': 'MISSING_REQUIRED_FIELDS',
+                'missing_fields': missing_fields
+            }), 400
+        
+        # Sanitize domain name
+        domain = str(data['domain']).strip().lower()
+        data['domain'] = domain
         
         # Validate domain format
         domain_pattern = r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
-        if not re.match(domain_pattern, data['domain']):
+        if not re.match(domain_pattern, domain):
             return jsonify({
                 'success': False,
                 'error': 'รูปแบบโดเมนไม่ถูกต้อง กรุณาใส่โดเมนในรูปแบบ example.com',
-                'error_code': 'INVALID_DOMAIN_FORMAT'
+                'error_code': 'INVALID_DOMAIN_FORMAT',
+                'provided_domain': domain
             }), 400
         
         # Check for reserved domains
         reserved_domains = ['localhost', 'localhost.localdomain', '127.0.0.1', 'admin', 'www', 'mail', 'ftp', 'root']
-        domain_lower = data['domain'].lower()
+        domain_lower = domain
         if any(reserved in domain_lower for reserved in reserved_domains):
             return jsonify({
                 'success': False,
-                'error': f'โดเมน "{data["domain"]}" เป็นชื่อที่สงวนไว้ กรุณาเลือกชื่อโดเมนอื่น',
+                'error': f'โดเมน "{domain}" เป็นชื่อที่สงวนไว้ กรุณาเลือกชื่อโดเมนอื่น',
                 'error_code': 'RESERVED_DOMAIN'
             }), 400
         
@@ -370,17 +422,17 @@ def create_virtual_host(current_user):
             }), 400
         
         # Check if domain already exists
-        existing_host = VirtualHost.query.filter_by(domain=data['domain']).first()
+        existing_host = VirtualHost.query.filter_by(domain=domain).first()
         if existing_host:
             return jsonify({
                 'success': False,
-                'error': f'โดเมน "{data["domain"]}" มีอยู่ในระบบแล้ว กรุณาเลือกชื่อโดเมนอื่น',
+                'error': f'โดเมน "{domain}" มีอยู่ในระบบแล้ว กรุณาเลือกชื่อโดเมนอื่น',
                 'error_code': 'DOMAIN_EXISTS',
-                'existing_domain': data['domain']
+                'existing_domain': domain
             }), 409
         
         # Generate Linux username from domain
-        linux_username = linux_user_service.generate_username_from_domain(data['domain'])
+        linux_username = linux_user_service.generate_username_from_domain(domain)
         
         # Check if username already exists in database
         existing_user_host = VirtualHost.query.filter_by(linux_username=linux_username).first()
@@ -408,7 +460,7 @@ def create_virtual_host(current_user):
         
         # Initialize response data
         response_data = {
-            'domain': data['domain'],
+            'domain': domain,
             'linux_username': linux_username,
             'linux_password': user_password,
             'document_root': doc_root,
@@ -417,11 +469,11 @@ def create_virtual_host(current_user):
             'steps_completed': []
         }
         
-        print(f"\n=== Starting Virtual Host Creation for {data['domain']} ===")
+        print(f"\n=== Starting Virtual Host Creation for {domain} ===")
         
         # ขั้นตอนที่ 1: สร้าง Linux user + home directory
         print("Step 1: Creating Linux user + home directory...")
-        success, message, password = linux_user_service.create_user(linux_username, data['domain'], user_password)
+        success, message, password = linux_user_service.create_user(linux_username, domain, user_password)
         if not success:
             raise Exception(f'Failed to create Linux user: {message}')
         
@@ -436,7 +488,7 @@ def create_virtual_host(current_user):
         
         # สร้าง virtual host record เพื่อเตรียมไว้ (ยังไม่ commit)
         virtual_host = VirtualHost(
-            domain=data['domain'],
+            domain=domain,
             document_root=doc_root,
             linux_username=linux_username,
             server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
@@ -453,20 +505,20 @@ def create_virtual_host(current_user):
         # สร้าง Apache VirtualHost
         try:
             apache_service.create_virtual_host(virtual_host)
-            created_resources['apache_config'] = data['domain']
+            created_resources['apache_config'] = domain
             response_data['services_created'].append('Apache VirtualHost')
-            print(f"✓ Apache VirtualHost for {data['domain']} created")
+            print(f"✓ Apache VirtualHost for {domain} created")
         except Exception as e:
             raise Exception(f'Failed to create Apache VirtualHost: {str(e)}')
         
         # สร้าง DNS Zone
         try:
-            dns_zone = _create_dns_zone(data['domain'], linux_username)
+            dns_zone = _create_dns_zone(domain, linux_username)
             if dns_zone:
                 created_resources['dns_zone'] = dns_zone.id
                 response_data['services_created'].append('DNS Zone')
                 response_data['dns_zone_id'] = dns_zone.id
-                print(f"✓ DNS zone for {data['domain']} created")
+                print(f"✓ DNS zone for {domain} created")
         except Exception as e:
             print(f"Warning: DNS zone creation failed: {e}")
             response_data['errors'].append(f"DNS zone creation failed: {str(e)}")
@@ -476,7 +528,7 @@ def create_virtual_host(current_user):
         # ขั้นตอนที่ 3: สร้าง maildir + email mapping
         print("Step 3: Creating maildir + email mapping...")
         try:
-            email_domain, email_address, email_password = _create_email_domain(data['domain'], linux_username)
+            email_domain, email_address, email_password = _create_email_domain(domain, linux_username)
             if email_domain:
                 email_domain.virtual_host_id = virtual_host.id
                 created_resources['email_domain'] = email_domain.id
@@ -505,13 +557,27 @@ def create_virtual_host(current_user):
         except Exception as e:
             print(f"Warning: Email domain creation failed: {e}")
             response_data['errors'].append(f"Email domain creation failed: {str(e)}")
+            # Rollback the current transaction and start fresh
+            db.session.rollback()
+            # Re-add the virtual host since rollback removed it
+            virtual_host = VirtualHost(
+                domain=domain,
+                document_root=doc_root,
+                linux_username=linux_username,
+                server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
+                php_version=data.get('php_version', '8.1'),
+                user_id=current_user.id
+            )
+            db.session.add(virtual_host)
+            db.session.flush()
+            created_resources['virtual_host_id'] = virtual_host.id
         
         response_data['steps_completed'].append('3. Maildir + email mapping created')
         
         # ขั้นตอนที่ 4: สร้างฐานข้อมูล + user
         print("Step 4: Creating MySQL database + user...")
         try:
-            db_name, db_user, db_password = _create_mysql_database(data['domain'], linux_username)
+            db_name, db_user, db_password = _create_mysql_database(domain, linux_username)
             if db_name:
                 created_resources['database'] = {'name': db_name, 'user': db_user}
                 response_data['services_created'].append('MySQL Database')
@@ -528,7 +594,11 @@ def create_virtual_host(current_user):
         # ขั้นตอนที่ 5: สร้าง FTP user
         print("Step 5: Creating FTP user...")
         try:
-            ftp_account = _create_ftp_account(data['domain'], linux_username, password, home_directory, current_user.id)
+            # Ensure we have a valid virtual host object
+            if not hasattr(virtual_host, 'id') or virtual_host.id is None:
+                db.session.flush()  # Ensure virtual_host has an ID
+            
+            ftp_account = _create_ftp_account(domain, linux_username, password, home_directory, current_user.id)
             if ftp_account:
                 created_resources['ftp_account'] = ftp_account.id
                 response_data['services_created'].append('FTP/SFTP Account')
@@ -538,6 +608,23 @@ def create_virtual_host(current_user):
         except Exception as e:
             print(f"Warning: FTP account creation failed: {e}")
             response_data['errors'].append(f"FTP account creation failed: {str(e)}")
+            # If this fails due to session issues, try to recover
+            try:
+                db.session.rollback()
+                # Re-add the virtual host
+                virtual_host = VirtualHost(
+                    domain=domain,
+                    document_root=doc_root,
+                    linux_username=linux_username,
+                    server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
+                    php_version=data.get('php_version', '8.1'),
+                    user_id=current_user.id
+                )
+                db.session.add(virtual_host)
+                db.session.flush()
+                created_resources['virtual_host_id'] = virtual_host.id
+            except Exception as recovery_error:
+                print(f"Warning: Session recovery failed: {recovery_error}")
         
         response_data['steps_completed'].append('5. FTP user created')
         
@@ -545,16 +632,16 @@ def create_virtual_host(current_user):
         print("Step 6: Requesting SSL certificate...")
         if data.get('create_ssl', False):
             try:
-                existing_ssl = SSLCertificate.query.filter_by(domain=data['domain']).first()
+                existing_ssl = SSLCertificate.query.filter_by(domain=domain).first()
                 if existing_ssl:
-                    print(f"SSL certificate for {data['domain']} already exists")
+                    print(f"SSL certificate for {domain} already exists")
                     response_data['services_created'].append('SSL Certificate (existing)')
                     response_data['ssl_certificate_id'] = existing_ssl.id
                     response_data['ssl_valid_until'] = existing_ssl.valid_until.isoformat()
                 else:
-                    ssl_cert_info = ssl_service.issue_certificate(data['domain'])
+                    ssl_cert_info = ssl_service.issue_certificate(domain)
                     ssl_certificate = SSLCertificate(
-                        domain=data['domain'],
+                        domain=domain,
                         certificate_path=ssl_cert_info['certificate_path'],
                         private_key_path=ssl_cert_info['private_key_path'],
                         chain_path=ssl_cert_info['chain_path'],
@@ -569,7 +656,7 @@ def create_virtual_host(current_user):
                     response_data['services_created'].append('SSL Certificate')
                     response_data['ssl_certificate_id'] = ssl_certificate.id
                     response_data['ssl_valid_until'] = ssl_cert_info['valid_until'].isoformat()
-                    print(f"✓ SSL certificate for {data['domain']} issued")
+                    print(f"✓ SSL certificate for {domain} issued")
             except Exception as e:
                 print(f"Warning: SSL certificate creation failed: {e}")
                 response_data['ssl_error'] = str(e)
@@ -582,7 +669,7 @@ def create_virtual_host(current_user):
         print("Step 7: Saving everything to database...")
         try:
             db.session.commit()
-            print(f"✓ All database changes committed successfully for {data['domain']}")
+            print(f"✓ All database changes committed successfully for {domain}")
             response_data['steps_completed'].append('7. All data saved to database')
         except Exception as e:
             print(f"Database commit failed: {e}")
@@ -598,7 +685,7 @@ def create_virtual_host(current_user):
         services_count = len(response_data['services_created'])
         message = f'🎉 Virtual host created successfully!\n\n'
         message += f'📋 Summary:\n'
-        message += f'   Domain: {data["domain"]}\n'
+        message += f'   Domain: {domain}\n'
         message += f'   Linux User: {linux_username}\n'
         message += f'   Password: {password}\n'
         message += f'   Document Root: {doc_root}\n\n'
@@ -618,7 +705,7 @@ def create_virtual_host(current_user):
         response_data['message'] = message
         response_data.update(virtual_host.to_dict())
         
-        print(f"=== Virtual Host Creation Completed for {data['domain']} ===\n")
+        print(f"=== Virtual Host Creation Completed for {domain} ===\n")
         
         return jsonify({
             'success': True,
@@ -666,7 +753,7 @@ def create_virtual_host(current_user):
         if created_resources.get('dns_zone'):
             try:
                 # BIND cleanup if needed
-                bind_service.delete_zone(data['domain'])
+                bind_service.delete_zone(domain)
             except Exception as cleanup_e:
                 cleanup_errors.append(f"DNS cleanup: {str(cleanup_e)}")
         

@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { virtualHosts } from '../services/api.js';
 import SuccessModal from '../components/modals/SuccessModal.js';
 import ConfirmationModal from '../components/modals/ConfirmationModal.js';
+import CreateVirtualHostProgress from '../components/modals/CreateVirtualHostProgress.js';
 
 // Inline SVG Icons
 const ArrowLeftIcon = ({ className, style }) => (
@@ -73,17 +74,6 @@ const ExclamationTriangleIcon = ({ className, style }) => (
 
 const CreateVirtualHost = () => {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [successData, setSuccessData] = useState(null);
-  const [domainValidation, setDomainValidation] = useState({
-    isValid: true,
-    message: '',
-    isChecking: false
-  });
-  
   const [formData, setFormData] = useState({
     domain: '',
     linux_password: '',
@@ -91,6 +81,22 @@ const CreateVirtualHost = () => {
     php_version: '8.1',
     create_ssl: false
   });
+  
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [domainValidation, setDomainValidation] = useState({
+    isValid: true,
+    message: '',
+    isChecking: false
+  });
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  const [successData, setSuccessData] = useState(null);
+  const [progressSteps, setProgressSteps] = useState([]);
+  const [currentStep, setCurrentStep] = useState(-1);
+  const [progressError, setProgressError] = useState(null);
+  const [isComplete, setIsComplete] = useState(false);
 
   // Real-time domain validation
   const validateDomainRealTime = async (domain) => {
@@ -188,6 +194,28 @@ const CreateVirtualHost = () => {
   const handleConfirmCreate = async () => {
     try {
       setLoading(true);
+      setShowConfirmModal(false);
+      
+      // Define the steps that will be performed
+      const steps = [
+        { title: "Create Linux user + home directory", description: "Creating user account and home folder" },
+        { title: "Create Apache VirtualHost + DNS zone", description: "Configuring web server and DNS records" },
+        { title: "Create maildir + email mapping", description: "Setting up email account and mail structure" },
+        { title: "Create database + user", description: "Creating MySQL database and user" },
+        { title: "Create FTP user", description: "Setting up FTP/SFTP access" }
+      ];
+      
+      if (formData.create_ssl) {
+        steps.push({ title: "Request SSL certificate", description: "Issuing SSL certificate for HTTPS" });
+      }
+      
+      steps.push({ title: "Save everything to database", description: "Saving all data to database and final setup" });
+      
+      setProgressSteps(steps);
+      setCurrentStep(0);
+      setProgressError(null);
+      setIsComplete(false);
+      setShowProgressModal(true);
       
       const data = {
         domain: formData.domain,
@@ -197,93 +225,115 @@ const CreateVirtualHost = () => {
         create_ssl: formData.create_ssl
       };
       
+      // Simulate step progression (in real implementation, this would be WebSocket or polling)
+      const simulateProgress = async () => {
+        for (let i = 0; i < steps.length; i++) {
+          setCurrentStep(i);
+          await new Promise(resolve => setTimeout(resolve, 800)); // Simulate work
+        }
+      };
+      
+      // Start progress simulation
+      const progressPromise = simulateProgress();
+      
+      // Make actual API call
       const result = await virtualHosts.create(data);
       
-      // The API service already returns response.data.data, so result IS the data
-      const responseData = result || {};
-      let successMessage = responseData.message || 'Virtual Host created successfully!';
+      // Wait for progress simulation to complete
+      await progressPromise;
       
-      // Show detailed step-by-step progress if available
-      if (responseData.steps_completed && responseData.steps_completed.length > 0) {
-        successMessage = `🎉 Virtual Host created successfully!\n\n`;
-        successMessage += `📋 Steps Completed:\n`;
-        responseData.steps_completed.forEach((step, index) => {
-          successMessage += `   ✅ ${step}\n`;
-        });
-        successMessage += `\n`;
-      }
+      // Mark as complete
+      setIsComplete(true);
+      setCurrentStep(steps.length);
       
-      // Show service details
-      if (responseData.services_created && responseData.services_created.length > 0) {
-        successMessage += `📦 Services Created (${responseData.services_created.length}):\n`;
-        responseData.services_created.forEach(service => {
-          successMessage += `   ✓ ${service}\n`;
-        });
-        successMessage += `\n`;
-      }
-      
-      // Show credentials and access information
-      successMessage += `🔐 Access Information:\n`;
-      successMessage += `   Domain: ${responseData.domain || formData.domain}\n`;
-      successMessage += `   Linux User: ${responseData.linux_username}\n`;
-      successMessage += `   Password: ${responseData.linux_password}\n`;
-      successMessage += `   Document Root: ${responseData.document_root}\n\n`;
-      
-      if (responseData.default_email) {
-        successMessage += `📧 Email Account:\n`;
-        successMessage += `   Address: ${responseData.default_email}\n`;
-        successMessage += `   Password: ${responseData.email_password}\n\n`;
-      }
-      
-      if (responseData.database_name) {
-        successMessage += `🗄️ MySQL Database:\n`;
-        successMessage += `   Database: ${responseData.database_name}\n`;
-        successMessage += `   User: ${responseData.database_user}\n`;
-        successMessage += `   Password: ${responseData.database_password}\n\n`;
-      }
-      
-      if (responseData.ftp_username) {
-        successMessage += `📁 FTP/SFTP Access:\n`;
-        successMessage += `   Username: ${responseData.ftp_username}\n`;
-        successMessage += `   Password: ${responseData.ftp_password}\n\n`;
-      }
-      
-      if (responseData.ssl_certificate_id) {
-        successMessage += `🔒 SSL Certificate:\n`;
-        successMessage += `   Status: Issued successfully\n`;
-        if (responseData.ssl_valid_until) {
-          successMessage += `   Valid Until: ${new Date(responseData.ssl_valid_until).toLocaleDateString()}\n`;
+      // Wait a moment then show success
+      setTimeout(() => {
+        setShowProgressModal(false);
+        
+        const responseData = result || {};
+        let successMessage = responseData.message || 'Virtual Host created successfully!';
+        
+        // Show detailed step-by-step progress if available
+        if (responseData.steps_completed && responseData.steps_completed.length > 0) {
+          successMessage = `🎉 Virtual Host created successfully!\n\n`;
+          successMessage += `📋 Steps Completed:\n`;
+          responseData.steps_completed.forEach((step, index) => {
+            successMessage += `   ✅ ${step}\n`;
+          });
+          successMessage += `\n`;
         }
-        successMessage += `\n`;
-      }
-      
-      // Show warnings if any
-      if (responseData.errors && responseData.errors.length > 0) {
-        successMessage += `⚠️ Warnings (${responseData.errors.length}):\n`;
-        responseData.errors.forEach(error => {
-          successMessage += `   • ${error}\n`;
+        
+        // Show service details
+        if (responseData.services_created && responseData.services_created.length > 0) {
+          successMessage += `📦 Services Created (${responseData.services_created.length}):\n`;
+          responseData.services_created.forEach(service => {
+            successMessage += `   ✓ ${service}\n`;
+          });
+          successMessage += `\n`;
+        }
+        
+        // Show credentials and access information
+        successMessage += `🔐 Access Information:\n`;
+        successMessage += `   Domain: ${responseData.domain || formData.domain}\n`;
+        successMessage += `   Linux User: ${responseData.linux_username}\n`;
+        successMessage += `   Password: ${responseData.linux_password}\n`;
+        successMessage += `   Document Root: ${responseData.document_root}\n\n`;
+        
+        if (responseData.default_email) {
+          successMessage += `📧 Email Account:\n`;
+          successMessage += `   Address: ${responseData.default_email}\n`;
+          successMessage += `   Password: ${responseData.email_password}\n\n`;
+        }
+        
+        if (responseData.database_name) {
+          successMessage += `🗄️ MySQL Database:\n`;
+          successMessage += `   Database: ${responseData.database_name}\n`;
+          successMessage += `   User: ${responseData.database_user}\n`;
+          successMessage += `   Password: ${responseData.database_password}\n\n`;
+        }
+        
+        if (responseData.ftp_username) {
+          successMessage += `📁 FTP/SFTP Access:\n`;
+          successMessage += `   Username: ${responseData.ftp_username}\n`;
+          successMessage += `   Password: ${responseData.ftp_password}\n\n`;
+        }
+        
+        if (responseData.ssl_certificate_id) {
+          successMessage += `🔒 SSL Certificate:\n`;
+          successMessage += `   Status: Issued successfully\n`;
+          if (responseData.ssl_valid_until) {
+            successMessage += `   Valid Until: ${new Date(responseData.ssl_valid_until).toLocaleDateString()}\n`;
+          }
+          successMessage += `\n`;
+        }
+        
+        // Show warnings if any
+        if (responseData.errors && responseData.errors.length > 0) {
+          successMessage += `⚠️ Warnings (${responseData.errors.length}):\n`;
+          responseData.errors.forEach(error => {
+            successMessage += `   • ${error}\n`;
+          });
+          successMessage += `\n`;
+        }
+        
+        // Show next steps
+        successMessage += `🚀 Next Steps:\n`;
+        successMessage += `   • Upload your website files to: ${responseData.document_root}\n`;
+        successMessage += `   • Configure your domain DNS to point to this server\n`;
+        if (!responseData.ssl_certificate_id && !formData.create_ssl) {
+          successMessage += `   • Consider getting an SSL certificate for security\n`;
+        }
+        successMessage += `   • Test your website at: http://${formData.domain}\n`;
+        
+        setSuccessData({
+          ...responseData,
+          message: successMessage,
+          title: '🎉 Virtual Host Created Successfully!',
+          domain: formData.domain
         });
-        successMessage += `\n`;
-      }
-      
-      // Show next steps
-      successMessage += `🚀 Next Steps:\n`;
-      successMessage += `   • Upload your website files to: ${responseData.document_root}\n`;
-      successMessage += `   • Configure your domain DNS to point to this server\n`;
-      if (!responseData.ssl_certificate_id && !formData.create_ssl) {
-        successMessage += `   • Consider getting an SSL certificate for security\n`;
-      }
-      successMessage += `   • Test your website at: http://${formData.domain}\n`;
-      
-      setSuccessData({
-        ...responseData,
-        message: successMessage,
-        title: '🎉 Virtual Host Created Successfully!',
-        domain: formData.domain
-      });
-      
-      setShowSuccessModal(true);
-      setShowConfirmModal(false);
+        
+        setShowSuccessModal(true);
+      }, 1000);
       
     } catch (error) {
       console.error('Error creating virtual host:', error);
@@ -294,8 +344,14 @@ const CreateVirtualHost = () => {
         errorMessage = error.message + '\n\n⚠️ System attempted to clean up partially created resources.';
       }
       
+      setProgressError(errorMessage);
       setError(errorMessage);
-      setShowConfirmModal(false);
+      
+      // Show error in progress modal for a moment, then close
+      setTimeout(() => {
+        setShowProgressModal(false);
+      }, 3000);
+      
     } finally {
       setLoading(false);
     }
@@ -802,6 +858,15 @@ const CreateVirtualHost = () => {
         onConfirm={handleConfirmCreate}
         formData={formData}
         isLoading={loading}
+      />
+
+      {/* Progress Modal */}
+      <CreateVirtualHostProgress
+        isOpen={showProgressModal}
+        steps={progressSteps}
+        currentStep={currentStep}
+        error={progressError}
+        isComplete={isComplete}
       />
 
       {/* Success Modal */}

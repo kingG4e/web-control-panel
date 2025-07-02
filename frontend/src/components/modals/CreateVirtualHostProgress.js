@@ -77,26 +77,26 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
   const getStatusColor = (status) => {
     switch (status) {
       case 'completed':
-        return 'border-green-200 bg-green-50';
+        return 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20';
       case 'error':
-        return 'border-red-200 bg-red-50';
+        return 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20';
       case 'active':
-        return 'border-blue-200 bg-blue-50';
+        return 'border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20';
       default:
-        return 'border-gray-200 bg-gray-50';
+        return 'border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50';
     }
   };
 
   const getStatusTextColor = (status) => {
     switch (status) {
       case 'completed':
-        return 'text-green-800';
+        return 'text-green-800 dark:text-green-300';
       case 'error':
-        return 'text-red-800';
+        return 'text-red-800 dark:text-red-300';
       case 'active':
-        return 'text-blue-800';
+        return 'text-blue-800 dark:text-blue-300';
       default:
-        return 'text-gray-600';
+        return 'text-gray-600 dark:text-gray-400';
     }
   };
 
@@ -118,13 +118,13 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
             )}
             <div>
               <h2 className="text-xl font-bold" style={{ color: 'var(--primary-text)' }}>
-                {error ? 'การสร้าง Virtual Host ล้มเหลว' :
-                 isComplete ? 'สร้าง Virtual Host สำเร็จ!' :
-                 'กำลังสร้าง Virtual Host...'}
+                {error ? 'Virtual Host Creation Failed' :
+                 isComplete ? 'Virtual Host Created Successfully!' :
+                 'Creating Virtual Host...'}
               </h2>
               {!error && !isComplete && (
                 <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                  กำลังดำเนินการขั้นตอนที่ {currentStep + 1} จาก {steps.length}
+                  Processing step {currentStep + 1} of {steps.length}
                 </p>
               )}
             </div>
@@ -136,13 +136,16 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
           {/* Progress Bar */}
           <div className="mb-6">
             <div className="flex justify-between text-sm mb-2" style={{ color: 'var(--secondary-text)' }}>
-              <span>ความคืบหน้า</span>
+              <span>Progress</span>
               <span>{Math.round(((currentStep + (isComplete ? 1 : 0)) / steps.length) * 100)}%</span>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full rounded-full h-2" style={{ backgroundColor: 'var(--border-color)' }}>
               <div 
-                className="bg-blue-500 h-2 rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${((currentStep + (isComplete ? 1 : 0)) / steps.length) * 100}%` }}
+                className="h-2 rounded-full transition-all duration-500 ease-out"
+                style={{ 
+                  width: `${((currentStep + (isComplete ? 1 : 0)) / steps.length) * 100}%`,
+                  backgroundColor: 'var(--accent-color)'
+                }}
               />
             </div>
           </div>
@@ -159,9 +162,9 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
                   <div className="flex items-center mr-4">
                     <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold mr-3" 
                          style={{
-                           backgroundColor: status === 'completed' ? '#10b981' :
-                                          status === 'error' ? '#ef4444' :
-                                          status === 'active' ? '#3b82f6' : '#9ca3af',
+                           backgroundColor: status === 'completed' ? 'var(--success-color, #10b981)' :
+                                          status === 'error' ? 'var(--error-color, #ef4444)' :
+                                          status === 'active' ? 'var(--accent-color, #3b82f6)' : 'var(--secondary-text, #9ca3af)',
                            color: 'white'
                          }}>
                       {index + 1}
@@ -175,10 +178,10 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
                         {step.title || step}
                       </h4>
                       <div className="text-xs text-gray-500">
-                        {status === 'completed' && '✓ เสร็จสิ้น'}
-                        {status === 'error' && '✗ ล้มเหลว'}
-                        {status === 'active' && 'กำลังดำเนินการ...'}
-                        {status === 'pending' && 'รอดำเนินการ'}
+                        {status === 'completed' && '✓ Completed'}
+                        {status === 'error' && '✗ Failed'}
+                        {status === 'active' && 'Processing...'}
+                        {status === 'pending' && 'Pending'}
                       </div>
                     </div>
                     
@@ -194,7 +197,7 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
                         <div className="flex items-start">
                           <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mr-2 mt-0.5 flex-shrink-0" />
                           <div>
-                            <p className="text-sm font-medium text-red-800">ข้อผิดพลาด:</p>
+                            <p className="text-sm font-medium text-red-800">Error:</p>
                             <p className="text-sm text-red-700 mt-1">{error}</p>
                           </div>
                         </div>
@@ -212,10 +215,10 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
               <div className="flex items-start">
                 <XCircleIcon className="w-6 h-6 text-red-500 mr-3 mt-0.5 flex-shrink-0" />
                 <div>
-                  <h4 className="font-medium text-red-800 mb-2">การสร้าง Virtual Host ล้มเหลว</h4>
+                  <h4 className="font-medium text-red-800 mb-2">Virtual Host Creation Failed</h4>
                   <p className="text-sm text-red-700">{error}</p>
                   <p className="text-sm text-red-600 mt-2">
-                    ระบบจะพยายามทำความสะอาดทรัพยากรที่สร้างไปแล้วโดยอัตโนมัติ
+                    The system will attempt to clean up the resources created if this continues.
                   </p>
                 </div>
               </div>
@@ -228,9 +231,9 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
               <div className="flex items-start">
                 <CheckCircleIcon className="w-6 h-6 text-green-500 mr-3 mt-0.5 flex-shrink-0" />
                 <div>
-                  <h4 className="font-medium text-green-800 mb-2">สร้าง Virtual Host สำเร็จ!</h4>
+                  <h4 className="font-medium text-green-800 mb-2">Virtual Host Created Successfully!</h4>
                   <p className="text-sm text-green-700">
-                    Virtual Host ของคุณได้ถูกสร้างเรียบร้อยแล้ว ขณะนี้คุณสามารถใช้งานได้ทันที
+                    Your Virtual Host has been created and is ready to use immediately.
                   </p>
                 </div>
               </div>
