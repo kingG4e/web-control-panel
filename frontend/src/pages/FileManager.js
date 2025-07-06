@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FolderIcon,
@@ -32,6 +32,15 @@ import { fileApi } from '../services/api';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { useAuth } from '../contexts/AuthContext';
 
+// Debounce utility function
+const debounce = (func, delay) => {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => func.apply(null, args), delay);
+  };
+};
+
 const FileManager = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -62,163 +71,20 @@ const FileManager = () => {
   const [isConnected, setIsConnected] = useState(true);
   const [editorLoading, setEditorLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredFiles, setFilteredFiles] = useState([]);
   const [viewMode, setViewMode] = useState('list'); // 'list' or 'grid'
   const [sortBy, setSortBy] = useState('name'); // 'name', 'size', 'modified', 'type'
-  const [sortOrder, setSortOrder] = useState('asc'); // 'asc' or 'desc'
+  const [sortOrder, setSortOrder] = useState('asc');
   const [clipboardItem, setClipboardItem] = useState(null);
   const [clipboardAction, setClipboardAction] = useState(null); // 'copy' or 'cut'
   const dropZoneRef = useRef(null);
 
-  // Load user domains on mount
-  useEffect(() => {
-    const loadDomains = async () => {
-      try {
-        const domainList = await fileApi.getUserDomains();
-        setDomains(domainList);
-        
-        // Auto-select first domain **after** auth & domains loaded, for non-admins
-        if (!authLoading && !isAdminUser() && !currentDomain && domainList.length > 0) {
-          setCurrentDomain(domainList[0].domain);
-        }
-      } catch (err) {
-        console.error('Error loading domains:', err);
-        setError('Failed to load domains');
-      }
-    };
-    
-    if (!authLoading) {
-      loadDomains();
-    }
-  }, [user, authLoading]);
+  // Memoize admin check
+  const isAdminUser = useMemo(() => {
+    return user?.role === 'admin' || user?.is_admin;
+  }, [user]);
 
-  // Load domain structure when domain changes
-  useEffect(() => {
-    const loadDomainStructure = async () => {
-      if (!currentDomain) {
-        setDomainStructure(null);
-        return;
-      }
-      
-      try {
-        const structure = await fileApi.getDomainStructure(currentDomain);
-        setDomainStructure(structure);
-      } catch (err) {
-        console.error('Error loading domain structure:', err);
-        setError(`Failed to load structure for domain: ${currentDomain}`);
-      }
-    };
-    
-    loadDomainStructure();
-  }, [currentDomain]);
-
-  // Update URL when domain changes, and validate domain selection for non-admin users
-  useEffect(() => {
-    // Prevent non-admin users from accessing system files via URL
-    if (!authLoading && !isAdminUser() && currentDomain === '' && user) {
-      // If user is not admin and trying to access system files, redirect to first available domain
-      if (domains.length > 0) {
-        setCurrentDomain(domains[0].domain);
-        return;
-      }
-    }
-    
-    if (currentDomain) {
-      setSearchParams({ domain: currentDomain });
-    } else {
-      setSearchParams({});
-    }
-  }, [currentDomain, setSearchParams, user, domains, authLoading]);
-
-  // Check connection on mount
-  useEffect(() => {
-    const checkConnection = async () => {
-      try {
-        await fileApi.listDirectory('/', currentDomain);
-        setIsConnected(true);
-        setError(null);
-      } catch (err) {
-        setIsConnected(false);
-        setError('Could not connect to the file server. Please check your connection.');
-      }
-    };
-
-    checkConnection();
-  }, [currentDomain]);
-
-  // Load directory contents
-  const loadDirectory = async (path) => {
-    if (!isConnected) return;
-    
-    const normalizedPath = path ? normalizePath(path) : '';
-    
-    try {
-      setLoading(true);
-      setError(null);
-      setSelectedFiles(new Set());
-      
-      const response = await fileApi.listDirectory(normalizedPath || '/', currentDomain);
-      
-      // Handle both direct array response and wrapped response
-      let fileList = [];
-      if (Array.isArray(response)) {
-        fileList = response;
-      } else if (response?.data && Array.isArray(response.data)) {
-        fileList = response.data;
-      } else {
-        console.error('Invalid response:', response);
-        setFiles([]);
-        setError('Invalid response from server');
-        return;
-      }
-      
-      setFiles(fileList);
-      setError(null);
-    } catch (err) {
-      console.error('Error loading directory:', err);
-      const errorMessage = err.response?.data?.error || err.message || 'Failed to load directory';
-      setError(errorMessage);
-      setFiles([]);
-      
-      // If directory doesn't exist, go back to parent or root
-      if (errorMessage.includes('not found') || errorMessage.includes('Directory not found')) {
-        const pathParts = normalizedPath.split('/').filter(Boolean);
-        if (pathParts.length > 0) {
-          // Go back to parent directory
-          const parentPath = pathParts.slice(0, -1).join('/');
-          setCurrentPath(parentPath);
-        } else {
-          // Go back to root
-          setCurrentPath('');
-        }
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Initialize file manager
-  useEffect(() => {
-    const initializeFileManager = async () => {
-      try {
-        await loadDirectory(currentPath);
-      } catch (err) {
-        console.error('Error initializing file manager:', err);
-      }
-    };
-    
-    initializeFileManager();
-  }, []);
-
-  // Reload directory when path or domain changes
-  useEffect(() => {
-    if (isConnected) {
-      loadDirectory(currentPath);
-    }
-  }, [currentPath, currentDomain, isConnected]);
-
-  // Filter and sort files
-  useEffect(() => {
+  // Memoize filtered and sorted files
+  const filteredFiles = useMemo(() => {
     let filtered = files.filter(file => 
       file.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
@@ -256,12 +122,159 @@ const FileManager = () => {
       return sortOrder === 'desc' ? -result : result;
     });
 
-    setFilteredFiles(filtered);
+    return filtered;
   }, [files, searchQuery, sortBy, sortOrder]);
+
+  // Debounced search
+  const debouncedSearch = useCallback(
+    debounce((query) => {
+      setSearchQuery(query);
+    }, 300),
+    []
+  );
+
+  // Load user domains on mount with caching
+  const loadDomains = useCallback(async () => {
+    try {
+      const domainList = await fileApi.getUserDomains();
+      setDomains(domainList);
+      
+      // Auto-select first domain for non-admins
+      if (!isAdminUser && !currentDomain && domainList.length > 0) {
+        setCurrentDomain(domainList[0].domain);
+      }
+    } catch (err) {
+      console.error('Error loading domains:', err);
+      setError('Failed to load domains');
+    }
+  }, [isAdminUser, currentDomain]);
+
+  useEffect(() => {
+    if (!authLoading) {
+      loadDomains();
+    }
+  }, [authLoading, loadDomains]);
+
+  // Load domain structure with caching
+  const loadDomainStructure = useCallback(async () => {
+    if (!currentDomain) {
+      setDomainStructure(null);
+      return;
+    }
+    
+    try {
+      const structure = await fileApi.getDomainStructure(currentDomain);
+      setDomainStructure(structure);
+    } catch (err) {
+      console.error('Error loading domain structure:', err);
+      setError(`Failed to load structure for domain: ${currentDomain}`);
+    }
+  }, [currentDomain]);
+
+  useEffect(() => {
+    loadDomainStructure();
+  }, [loadDomainStructure]);
+
+  // Update URL when domain changes
+  useEffect(() => {
+    if (!authLoading && !isAdminUser && currentDomain === '' && user) {
+      if (domains.length > 0) {
+        setCurrentDomain(domains[0].domain);
+        return;
+      }
+    }
+    
+    if (currentDomain) {
+      setSearchParams({ domain: currentDomain });
+    } else {
+      setSearchParams({});
+    }
+  }, [currentDomain, setSearchParams, user, domains, authLoading, isAdminUser]);
+
+  // Optimized directory loading with caching
+  const loadDirectory = useCallback(async (path) => {
+    if (!isConnected) return;
+
+    // Prevent non-admin users from querying system root before a domain is selected
+    if (!isAdminUser && !currentDomain) {
+      return;
+    }
+    
+    const normalizedPath = path ? normalizePath(path) : '';
+    
+    try {
+      setLoading(true);
+      setError(null);
+      setSelectedFiles(new Set());
+      
+      const response = await fileApi.listDirectory(normalizedPath || '/', currentDomain);
+      
+      // Handle response format
+      let fileList = [];
+      if (Array.isArray(response)) {
+        fileList = response;
+      } else if (response?.data && Array.isArray(response.data)) {
+        fileList = response.data;
+      } else {
+        console.error('Invalid response:', response);
+        setFiles([]);
+        setError('Invalid response from server');
+        return;
+      }
+      
+      setFiles(fileList);
+      setError(null);
+    } catch (err) {
+      console.error('Error loading directory:', err);
+      const errorMessage = err.response?.data?.error || err.message || 'Failed to load directory';
+      setError(errorMessage);
+      setFiles([]);
+      
+      // Handle directory not found
+      if (errorMessage.includes('not found') || errorMessage.includes('Directory not found')) {
+        const pathParts = normalizedPath.split('/').filter(Boolean);
+        if (pathParts.length > 0) {
+          const parentPath = pathParts.slice(0, -1).join('/');
+          setCurrentPath(parentPath);
+        } else {
+          setCurrentPath('');
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [isConnected, currentDomain, isAdminUser]);
+
+  // Initial load
+  useEffect(() => {
+    if (isConnected) {
+      loadDirectory(currentPath);
+    }
+  }, [currentPath, currentDomain, isConnected, loadDirectory]);
+
+  // Check connection once
+  useEffect(() => {
+    const checkConnection = async () => {
+      // Skip the check for non-admin users until a domain has been resolved
+      if (!isAdminUser && !currentDomain) {
+        return;
+      }
+      try {
+        await fileApi.listDirectory('/', currentDomain);
+        setIsConnected(true);
+        setError(null);
+      } catch (err) {
+        setIsConnected(false);
+        setError('Could not connect to the file server. Please check your connection.');
+      }
+    };
+
+    checkConnection();
+  }, [currentDomain, isAdminUser]);
 
   const handleDomainChange = (domain) => {
     // Prevent non-admin users from selecting system files
-    if (!isAdminUser() && domain === '') {
+    if (!isAdminUser && domain === '') {
       return; // Do nothing, don't allow system file access
     }
     
@@ -269,12 +282,6 @@ const FileManager = () => {
     setCurrentPath(''); // Reset to root when switching domains
     setSelectedFile(null);
     setSelectedFiles(new Set());
-  };
-
-  // Check if user is admin/root
-  const isAdminUser = () => {
-    if (!user) return false;
-    return user.is_admin || user.role === 'admin' || user.username === 'root';
   };
 
   // Domain Selector Component
@@ -297,10 +304,10 @@ const FileManager = () => {
         }}
       >
         {/* Show "All Files (System)" option only for admin users */}
-        {isAdminUser() && <option value="">All Files (System)</option>}
+        {isAdminUser && <option value="">All Files (System)</option>}
         
         {/* Show message if no admin and no domains */}
-        {!isAdminUser() && domains.length === 0 && (
+        {!isAdminUser && domains.length === 0 && (
           <option value="" disabled>No domains available</option>
         )}
         
@@ -493,7 +500,7 @@ const FileManager = () => {
     if (!showFileProperties || !selectedFile) return null;
 
     return (
-      <div className="fixed inset-0 z-50 overflow-y-auto">
+              <div className="fixed inset-0 z-[100] overflow-y-auto">
         <div className="min-h-screen flex items-center justify-center p-4">
           <div 
             className="fixed inset-0 transition-opacity"
@@ -993,7 +1000,7 @@ const FileManager = () => {
     }, [handleKeyDown]);
     
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
         <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl">
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
@@ -1055,7 +1062,7 @@ const FileManager = () => {
     if (!showFilePreview || !selectedFile) return null;
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+      <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[100]">
         <div className="bg-white dark:bg-gray-900 rounded-xl max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
@@ -1316,7 +1323,7 @@ const FileManager = () => {
   };
 
   const NewFolderModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
       <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Create New Folder</h3>
         <input
@@ -1355,7 +1362,7 @@ const FileManager = () => {
   );
 
   const RenameModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
       <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
           Rename {selectedFile?.type}
@@ -1396,7 +1403,7 @@ const FileManager = () => {
   );
 
   const DeleteConfirmModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
       <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
           Delete {selectedFiles.size > 1 ? `${selectedFiles.size} items` : selectedFile?.type}
@@ -1464,7 +1471,7 @@ const FileManager = () => {
               <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
                 {currentDomain 
                   ? `Managing files for ${currentDomain}` 
-                  : isAdminUser() 
+                  : isAdminUser
                     ? 'System file management'
                     : 'Select a domain to manage files'
                 }
@@ -1593,7 +1600,7 @@ const FileManager = () => {
             )}
 
             {/* Show message for non-admin users with no domains */}
-            {!isAdminUser() && domains.length === 0 && !loading && (
+            {!isAdminUser && domains.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full text-center px-6">
                 <GlobeAltIcon className="w-16 h-16 mb-4" style={{ color: 'var(--secondary-text)' }} />
                 <h3 className="text-lg font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
@@ -1605,27 +1612,21 @@ const FileManager = () => {
               </div>
             )}
 
-            {/* Show message for non-admin users with no domain selected */}
-            {!isAdminUser() && domains.length > 0 && !currentDomain && !loading && (
+            {/* Show message for non-admin users without selected domain */}
+            {!isAdminUser && domains.length > 0 && !currentDomain && !loading && (
               <div className="flex flex-col items-center justify-center h-full text-center px-6">
-                <ServerIcon className="w-16 h-16 mb-4" style={{ color: 'var(--secondary-text)' }} />
+                <GlobeAltIcon className="w-16 h-16 mb-4" style={{ color: 'var(--secondary-text)' }} />
                 <h3 className="text-lg font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
                   Select a Domain
                 </h3>
                 <p className="text-sm mb-4" style={{ color: 'var(--secondary-text)' }}>
-                  Choose a domain from the dropdown above to manage your files.
+                  Choose a domain from the dropdown above to manage its files.
                 </p>
               </div>
             )}
 
-            {loading ? (
-              <div className="flex items-center justify-center h-full">
-                <LoadingSpinner />
-              </div>
-            ) : (
-              /* Only show FileListPanel if user has domain selected or is admin */
-              (currentDomain || isAdminUser()) && <FileListPanel />
-            )}
+            {/* Show file list only when domain is selected or for admin users */}
+            {(currentDomain || isAdminUser) && <FileListPanel />}
           </div>
         </div>
       </div>

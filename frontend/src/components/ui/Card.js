@@ -1,12 +1,38 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 
-const Card = ({ children, className = '' }) => {
-    return (
-        <div className={`bg-[var(--card-bg)] rounded-lg border border-[var(--border-color)] shadow-[var(--card-shadow)] p-6 ${className}`}>
-            {children}
-        </div>
-    );
-};
+const Card = memo(({ 
+  children, 
+  className = '', 
+  padding = 'md',
+  shadow = true,
+  border = true,
+  ...props 
+}) => {
+  const cardClasses = useMemo(() => {
+    const baseClasses = 'bg-[var(--card-bg)] rounded-lg';
+    
+    const paddingClasses = {
+      none: '',
+      sm: 'p-3',
+      md: 'p-4',
+      lg: 'p-6',
+      xl: 'p-8'
+    };
+    
+    const shadowClass = shadow ? 'shadow-sm' : '';
+    const borderClass = border ? 'border border-[var(--border-color)]' : '';
+    
+    return `${baseClasses} ${paddingClasses[padding]} ${shadowClass} ${borderClass} ${className}`.trim();
+  }, [padding, shadow, border, className]);
+
+  return (
+    <div className={cardClasses} {...props}>
+      {children}
+    </div>
+  );
+});
+
+Card.displayName = 'Card';
 
 export const CardHeader = ({ children, className = '' }) => {
     return (

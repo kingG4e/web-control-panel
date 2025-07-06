@@ -1,5 +1,6 @@
 from datetime import datetime
 from .base import db
+from utils.notification_queue import push_notification
 
 class Notification(db.Model):
     __tablename__ = 'notifications'
@@ -64,6 +65,13 @@ class Notification(db.Model):
                           is_global=False, priority='normal', action_url=None, action_text=None, 
                           extra_data=None, expires_at=None):
         """Helper method to create notifications"""
+        print(f"\nCreating notification:")
+        print(f"- Title: {title}")
+        print(f"- User ID: {user_id}")
+        print(f"- Type: {type}")
+        print(f"- Category: {category}")
+        print(f"- Is Global: {is_global}")
+        
         notification = Notification(
             title=title,
             message=message,
@@ -77,8 +85,24 @@ class Notification(db.Model):
             extra_data=extra_data,
             expires_at=expires_at
         )
-        db.session.add(notification)
-        db.session.commit()
+        
+        try:
+            db.session.add(notification)
+            db.session.commit()
+            print("✓ Notification saved to database")
+        except Exception as e:
+            print(f"✗ Error saving notification: {e}")
+            db.session.rollback()
+            raise
+
+        # Push to SSE queues
+        try:
+            push_notification(notification)
+            print("✓ Notification pushed to queues")
+        except Exception as e:
+            print(f"✗ Error pushing notification: {e}")
+            raise
+
         return notification
     
     @staticmethod

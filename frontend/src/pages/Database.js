@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import PageLayout from '../components/layout/PageLayout';
 import Button from '../components/ui/Button';
@@ -23,8 +23,18 @@ import {
   ExclamationCircleIcon,
   EyeIcon,
   ShieldCheckIcon,
-  LockClosedIcon
+  LockClosedIcon,
+  MagnifyingGlassIcon
 } from '@heroicons/react/24/outline';
+
+// Debounce utility function
+const debounce = (func, delay) => {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => func.apply(null, args), delay);
+  };
+};
 
 const Database = () => {
   const { user } = useAuth();
@@ -42,6 +52,7 @@ const Database = () => {
   const [userDatabases, setUserDatabases] = useState([]);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [filterDomain, setFilterDomain] = useState('all');
   const [selectedDatabases, setSelectedDatabases] = useState([]);
@@ -56,6 +67,46 @@ const Database = () => {
     password: '',
     domain: '',
   });
+
+  // Debounced search function
+  const debouncedSearch = useCallback(
+    debounce((term) => {
+      setDebouncedSearchTerm(term);
+    }, 300),
+    []
+  );
+
+  // Update debounced search term when search term changes
+  useEffect(() => {
+    debouncedSearch(searchTerm);
+  }, [searchTerm, debouncedSearch]);
+
+  // Memoize filtered databases for better performance
+  const filteredDatabases = useMemo(() => {
+    return userDatabases.filter(db => {
+      const matchesSearch = db.name.toLowerCase().includes(debouncedSearchTerm.toLowerCase());
+      const matchesType = filterType === 'all' || db.type?.toLowerCase() === filterType.toLowerCase();
+      const matchesDomain = filterDomain === 'all' || 
+        (db.associated_domain === filterDomain) ||
+        (db.name.includes(filterDomain.replace(/\./g, '_')));
+      return matchesSearch && matchesType && matchesDomain;
+    });
+  }, [userDatabases, debouncedSearchTerm, filterType, filterDomain]);
+
+  // Memoize user permission functions
+  const getUserPermissionLevel = useCallback((database) => {
+    if (user?.role === 'admin') return 'admin';
+    if (database.owner_id === user?.id) return 'owner';
+    return 'viewer';
+  }, [user]);
+
+  const canEditDatabase = useCallback((database) => {
+    return user?.role === 'admin' || database.owner_id === user?.id;
+  }, [user]);
+
+  const canDeleteDatabase = useCallback((database) => {
+    return user?.role === 'admin' || database.owner_id === user?.id;
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -77,16 +128,24 @@ const Database = () => {
       // Fetch all databases and filter for user's databases
       const allDatabases = await dbApi.getDatabases();
       
+      // Handle response format
+      let databaseList = [];
+      if (allDatabases.success && Array.isArray(allDatabases.data)) {
+        databaseList = allDatabases.data;
+      } else if (Array.isArray(allDatabases)) {
+        databaseList = allDatabases;
+      }
+      
       // Filter databases based on user ownership or domain association
       let filteredDatabases = [];
       
       if (user.role === 'admin') {
         // Admins can see all databases
-        filteredDatabases = allDatabases;
+        filteredDatabases = databaseList;
       } else {
         // Regular users can only see databases associated with their domains
         const userDomainNames = userVirtualHosts.map(vh => vh.domain);
-        filteredDatabases = allDatabases.filter(db => {
+        filteredDatabases = databaseList.filter(db => {
           // Check if database belongs to user's domains
           return userDomainNames.some(domain => 
             db.name.includes(domain.replace(/\./g, '_')) || 
@@ -105,15 +164,6 @@ const Database = () => {
       setLoading(false);
     }
   };
-
-  const filteredDatabases = userDatabases.filter(db => {
-    const matchesSearch = db.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = filterType === 'all' || db.type.toLowerCase() === filterType.toLowerCase();
-    const matchesDomain = filterDomain === 'all' || 
-      (db.associated_domain === filterDomain) ||
-      (db.name.includes(filterDomain.replace(/\./g, '_')));
-    return matchesSearch && matchesType && matchesDomain;
-  });
 
   const handleSelectAll = (e) => {
     if (e.target.checked) {
@@ -166,7 +216,7 @@ const Database = () => {
 
   const handleEdit = (db) => {
     // Check if user has permission to edit this database
-    if (user.role !== 'admin' && db.owner_id !== user.id) {
+    if (!canEditDatabase(db)) {
       setError('You do not have permission to edit this database.');
       return;
     }
@@ -188,7 +238,7 @@ const Database = () => {
     const database = userDatabases.find(db => db.id === dbId);
     
     // Check if user has permission to delete this database
-    if (user.role !== 'admin' && database?.owner_id !== user.id) {
+    if (!canDeleteDatabase(database)) {
       setError('You do not have permission to delete this database.');
       return;
     }
@@ -229,20 +279,6 @@ const Database = () => {
       </button>
     </div>
   );
-
-  const getUserPermissionLevel = (database) => {
-    if (user.role === 'admin') return 'admin';
-    if (database.owner_id === user.id) return 'owner';
-    return 'viewer';
-  };
-
-  const canEditDatabase = (database) => {
-    return user.role === 'admin' || database.owner_id === user.id;
-  };
-
-  const canDeleteDatabase = (database) => {
-    return user.role === 'admin' || database.owner_id === user.id;
-  };
 
   return (
     <PageLayout

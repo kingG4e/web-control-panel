@@ -1,10 +1,24 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Response, stream_with_context
 from utils.auth import token_required
 from models.notification import Notification
 from models.base import db
 from datetime import datetime, timedelta
+import json
+import queue
+import threading
+from utils.notification_queue import get_user_queue, remove_user_queue
 
 notifications_bp = Blueprint('notifications', __name__)
+
+# Global notification queues for each user
+notification_queues = {}
+notification_lock = threading.Lock()
+
+def get_user_queue(user_id):
+    with notification_lock:
+        if user_id not in notification_queues:
+            notification_queues[user_id] = queue.Queue()
+        return notification_queues[user_id]
 
 @notifications_bp.route('/api/notifications', methods=['GET'])
 @token_required
@@ -138,12 +152,59 @@ def create_notification(current_user):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-# Helper function to create system notifications
+@notifications_bp.route('/api/notifications/stream')
+@token_required
+def stream_notifications(current_user):
+    """SSE endpoint for real-time notifications"""
+    print(f"SSE connection started for user {current_user.id}")
+    
+    def generate():
+        user_queue = get_user_queue(current_user.id)
+        print(f"Created queue for user {current_user.id}")
+        
+        # Send initial heartbeat
+        print(f"Sending initial heartbeat to user {current_user.id}")
+        yield 'event: heartbeat\ndata: connected\n\n'
+        
+        while True:
+            try:
+                # Wait for new notification (timeout after 30 seconds for heartbeat)
+                try:
+                    notification = user_queue.get(timeout=30)
+                    if notification:
+                        print(f"Sending notification to user {current_user.id}: {notification.title}")
+                        data = json.dumps(notification.to_dict())
+                        yield f'data: {data}\n\n'
+                except queue.Empty:
+                    # Send heartbeat every 30 seconds to keep connection alive
+                    print(f"Sending heartbeat to user {current_user.id}")
+                    yield 'event: heartbeat\ndata: ping\n\n'
+                    
+            except GeneratorExit:
+                # Client disconnected
+                print(f"Client disconnected for user {current_user.id}")
+                remove_user_queue(current_user.id)
+                break
+            except Exception as e:
+                print(f"Error in notification stream for user {current_user.id}: {e}")
+                break
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'  # Disable nginx buffering
+        }
+    )
+
+# Modify create_notification to push to SSE
 def create_system_notification(title, message, type='info', category='system', user_id=None, 
-                             priority='normal', action_url=None, action_text=None):
+                          priority='normal', action_url=None, action_text=None):
     """Helper function to create system notifications from other parts of the app"""
     try:
-        return Notification.create_notification(
+        notification = Notification.create_notification(
             title=title,
             message=message,
             type=type,
@@ -154,6 +215,17 @@ def create_system_notification(title, message, type='info', category='system', u
             action_url=action_url,
             action_text=action_text
         )
+        
+        # Push to SSE queue if user_id specified
+        if user_id and user_id in notification_queues:
+            notification_queues[user_id].put(notification)
+        # For global notifications, push to all queues
+        elif user_id is None:
+            with notification_lock:
+                for queue in notification_queues.values():
+                    queue.put(notification)
+                    
+        return notification
     except Exception as e:
         print(f"Failed to create notification: {e}")
         return None
@@ -257,7 +329,7 @@ def get_unread_count_public():
         cursor = conn.cursor()
         
         # Get first user
-        cursor.execute("SELECT id FROM user LIMIT 1")
+        cursor.execute("SELECT id FROM users LIMIT 1")
         user_result = cursor.fetchone()
         
         if not user_result:
@@ -316,7 +388,7 @@ def get_notifications_public():
         cursor = conn.cursor()
         
         # Get first user
-        cursor.execute("SELECT id FROM user LIMIT 1")
+        cursor.execute("SELECT id FROM users LIMIT 1")
         user_result = cursor.fetchone()
         
         if not user_result:
@@ -516,7 +588,7 @@ def mark_all_notifications_read_public():
         cursor = conn.cursor()
         
         # Get first user
-        cursor.execute("SELECT id FROM user LIMIT 1")
+        cursor.execute("SELECT id FROM users LIMIT 1")
         user_result = cursor.fetchone()
         
         if not user_result:
@@ -581,6 +653,28 @@ def delete_notification_public(notification_id):
         else:
             conn.close()
             return jsonify({'success': False, 'error': 'Notification not found'}), 404
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@notifications_bp.route('/api/notifications/test', methods=['POST'])
+@token_required
+def create_test_notification(current_user):
+    """Create a test notification for the current user"""
+    try:
+        notification = Notification.create_notification(
+            title="Test Notification",
+            message="This is a test notification to verify real-time delivery.",
+            type="info",
+            category="test",
+            user_id=current_user.id
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Test notification created',
+            'data': notification.to_dict()
+        })
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500 

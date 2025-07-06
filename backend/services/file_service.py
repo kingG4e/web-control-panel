@@ -14,7 +14,7 @@ try:
     UNIX_MODULES_AVAILABLE = True
 except ImportError:
     UNIX_MODULES_AVAILABLE = False
-    print("Warning: Unix modules (pwd, grp) not available (Windows system)")
+    # print("Warning: Unix modules (pwd, grp) not available (Windows system)")  # Hidden
     pwd = None
     grp = None
 
@@ -38,9 +38,9 @@ class FileService:
         
         # Normalize path for Linux
         self.root_dir = os.path.normpath(root_dir)
-        print(f"FileService initialized:")
-        print(f"- User: {current_user}")
-        print(f"- Root directory: {self.root_dir}")
+        # print(f"FileService initialized:")  # Hidden
+        # print(f"- User: {current_user}")  # Hidden
+        # print(f"- Root directory: {self.root_dir}")  # Hidden
         
         # Create root directory if it doesn't exist
         os.makedirs(self.root_dir, exist_ok=True)

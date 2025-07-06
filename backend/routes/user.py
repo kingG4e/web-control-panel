@@ -6,12 +6,22 @@ from services.ftp_service import FTPService
 from services.ssl_service import SSLService
 from services.email_service import EmailService
 from services.bind_service import BindService
-from services.linux_user_service import LinuxUserService
+from services.linux_user_service import LinuxUserService, UNIX_MODULES_AVAILABLE
 from models.user import User, Role, Permission
 from utils.auth import token_required
 from functools import wraps
 import os
 import shutil
+from models.virtual_host import VirtualHost
+from models.dns import DNSZone, DNSRecord
+from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias
+from models.ftp import FTPAccount
+from models.ssl_certificate import SSLCertificate
+from services.apache_service import ApacheService
+from services.mysql_service import MySQLService
+from services.ssl_service import SSLService
+from services.ftp_service import FTPService
+from models.database import db
 
 user_bp = Blueprint('user', __name__)
 user_service = UserService()
@@ -66,8 +76,33 @@ def user_or_admin_required(f):
 @user_bp.route('/api/users', methods=['GET'])
 @admin_required
 def get_users(current_user):
-    users = User.query.all()
-    return jsonify([user.to_dict() for user in users])
+    """Return only Linux system users (no database users)."""
+    # Collect system users (Linux) only
+    if UNIX_MODULES_AVAILABLE:
+        try:
+            import pwd
+            system_users = []
+            for p in pwd.getpwall():
+                # Include regular users (UID >= 1000) and root; skip non-login shells
+                if (p.pw_uid >= 1000 or p.pw_name == 'root') and p.pw_shell not in ('/usr/sbin/nologin', '/bin/false'):
+                    system_users.append({
+                        'username': p.pw_name,
+                        'system_uid': p.pw_uid,
+                        'is_system_user': True,
+                        'role': 'admin' if p.pw_name == 'root' else 'system_user',
+                        'email': f"{p.pw_name}@localhost",
+                        'status': 'active',
+                        'created_at': None,
+                        'last_login': None,
+                        'updated_at': None
+                    })
+            return jsonify(system_users)
+        except ImportError:
+            # Should not happen when UNIX_MODULES_AVAILABLE is True, but handle gracefully
+            return jsonify([])
+    else:
+        # Non-Unix environment – no system users available
+        return jsonify([])
 
 @user_bp.route('/api/users/<int:id>', methods=['GET'])
 @admin_required
@@ -81,14 +116,21 @@ def create_user(current_user):
     data = request.get_json()
     
     # Validate required fields
-    required_fields = ['username', 'email', 'password']
+    required_fields = ['username', 'password']
     for field in required_fields:
-        if field not in data:
+        if field not in data or not data[field]:
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
+    # Optional domain for comment; default to username
+    domain_for_comment = data.get('domain', data['username'])
+
     try:
-        user = user_service.create_user(data)
-        return jsonify(user.to_dict()), 201
+        # Create Linux user directly
+        success, message, _ = linux_service.create_user(data['username'], domain_for_comment, data['password'])
+        if success:
+            return jsonify({'message': message}), 201
+        else:
+            return jsonify({'error': message}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -653,3 +695,97 @@ def get_account_details(current_user):
             'error': 'Failed to fetch account details',
             'details': str(e)
         }), 500
+
+# New route: Delete Linux system user directly by username (no DB interaction)
+@user_bp.route('/api/system-users/<string:username>', methods=['DELETE'])
+@admin_required
+def delete_system_user(current_user, username):
+    """Fully delete a Linux system user **and** all related resources (vhosts, dns, mail, db, ftp, ssl)."""
+    try:
+        # 1. Gather all virtual hosts owned by this linux_username
+        from models.virtual_host import VirtualHost
+        from models.dns import DNSZone, DNSRecord
+        from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias
+        from models.ftp import FTPAccount
+        from models.ssl_certificate import SSLCertificate
+        from services.apache_service import ApacheService
+        from services.bind_service import BindService
+        from services.email_service import EmailService
+        from services.mysql_service import MySQLService
+        from services.ssl_service import SSLService
+        from services.ftp_service import FTPService
+        
+        apache_service = ApacheService()
+        bind_service = BindService()
+        email_service = EmailService()
+        mysql_service = MySQLService()
+        ssl_service = SSLService()
+        ftp_service = FTPService()
+
+        # --- Virtual Hosts & related domain cleanup ---
+        vhosts = VirtualHost.query.filter_by(linux_username=username).all()
+        for vh in vhosts:
+            domain = vh.domain
+            try:
+                apache_service.delete_virtual_host(vh)
+            except Exception as e:
+                print(f"[SystemUserDelete] Apache cleanup failed for {domain}: {e}")
+
+            # DNS
+            try:
+                bind_service.delete_zone(domain)
+            except Exception as e:
+                print(f"[SystemUserDelete] DNS cleanup failed for {domain}: {e}")
+            DNSRecord.query.filter(DNSRecord.zone.has(domain_name=domain)).delete(synchronize_session=False)
+            DNSZone.query.filter_by(domain_name=domain).delete(synchronize_session=False)
+
+            # Email
+            email_domains = EmailDomain.query.filter_by(domain=domain).all()
+            for ed in email_domains:
+                EmailAccount.query.filter_by(domain_id=ed.id).delete(synchronize_session=False)
+                EmailForwarder.query.filter_by(domain_id=ed.id).delete(synchronize_session=False)
+                # Safe deletion of aliases via sub-select (join delete not allowed)
+                account_subq = db.session.query(EmailAccount.id).filter(EmailAccount.domain_id == ed.id).subquery()
+                db.session.query(EmailAlias).filter(EmailAlias.account_id.in_(account_subq)).delete(synchronize_session=False)
+                db.session.delete(ed)
+            try:
+                email_service.delete_domain(domain)
+            except Exception as e:
+                print(f"[SystemUserDelete] Email domain cleanup failed for {domain}: {e}")
+
+            # SSL
+            SSLCertificate.query.filter_by(domain=domain).delete(synchronize_session=False)
+            try:
+                ssl_service.delete_certificate(domain)
+            except Exception as e:
+                print(f"[SystemUserDelete] SSL cleanup failed for {domain}: {e}")
+
+            # FTP accounts for domain
+            FTPAccount.query.filter_by(domain=domain).delete(synchronize_session=False)
+
+            # Database – attempt by derived name
+            try:
+                derived_db_name = domain.replace('.', '_')[:20]
+                mysql_service.delete_database(derived_db_name)
+                mysql_service.delete_user(f"{derived_db_name}_user")
+            except Exception:
+                pass
+
+            # Finally delete VirtualHost row
+            db.session.delete(vh)
+
+        # 2. Delete standalone FTP accounts for username
+        FTPAccount.query.filter_by(username=username).delete(synchronize_session=False)
+
+        db.session.commit()
+
+        # 3. Delete Linux user account itself (home dir, maildir, etc.)
+        success, message = linux_service.delete_user(username)
+        if not success:
+            return jsonify({'success': False, 'error': message}), 400
+
+        return jsonify({'success': True, 'message': message}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500

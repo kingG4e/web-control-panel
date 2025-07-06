@@ -110,7 +110,7 @@ const CreateVirtualHost = () => {
     if (!domainPattern.test(domain)) {
       setDomainValidation({
         isValid: false,
-        message: 'รูปแบบโดเมนไม่ถูกต้อง (เช่น example.com)',
+        message: 'Invalid domain format (e.g., example.com)',
         isChecking: false
       });
       return;
@@ -121,14 +121,14 @@ const CreateVirtualHost = () => {
     if (reserved.some(r => domain.toLowerCase().includes(r))) {
       setDomainValidation({
         isValid: false,
-        message: 'โดเมนนี้เป็นชื่อที่สงวนไว้',
+        message: 'This domain name is reserved',
         isChecking: false
       });
       return;
     }
 
     // Check if domain exists (debounced)
-    setDomainValidation({ isValid: true, message: 'กำลังตรวจสอบ...', isChecking: true });
+    setDomainValidation({ isValid: true, message: 'Checking...', isChecking: true });
     
     try {
       // This would be a lightweight check endpoint
@@ -136,14 +136,14 @@ const CreateVirtualHost = () => {
       setTimeout(() => {
         setDomainValidation({
           isValid: true,
-          message: 'โดเมนพร้อมใช้งาน',
+          message: 'Domain is available',
           isChecking: false
         });
       }, 500);
     } catch (err) {
       setDomainValidation({
         isValid: false,
-        message: 'ไม่สามารถตรวจสอบโดเมนได้',
+        message: 'Unable to verify domain',
         isChecking: false
       });
     }

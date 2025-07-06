@@ -1,7 +1,6 @@
 import axios from 'axios';
-import { getApiUrl } from '../utils/config';
 
-const API_URL = getApiUrl();
+const API_URL = '/api';
 
 // Create axios instance with default config
 const api = axios.create({
@@ -51,7 +50,7 @@ export const auth = {
     },
     
     getCurrentUser: async () => {
-        const response = await api.get('/users/me');
+        const response = await api.get('/auth/user');
         return response.data;
     }
 };
@@ -59,53 +58,59 @@ export const auth = {
 // Users API
 export const users = {
     getAll: async () => {
-        const response = await api.get('/api/users');
+        const response = await api.get('/users');
         return response.data;
     },
     
     get: async (id) => {
-        const response = await api.get(`/api/users/${id}`);
+        const response = await api.get(`/users/${id}`);
         return response.data;
     },
     
     create: async (data) => {
-        const response = await api.post('/api/users', data);
+        const response = await api.post('/users', data);
         return response.data;
     },
     
     update: async (id, data) => {
-        const response = await api.put(`/api/users/${id}`, data);
+        const response = await api.put(`/users/${id}`, data);
         return response.data;
     },
     
     delete: async (id) => {
-        const response = await api.delete(`/api/users/${id}`);
+        const response = await api.delete(`/users/${id}`);
         // Return true for 204 No Content
         return response.status === 204 ? true : response.data;
     },
     
     getStats: async () => {
-        const response = await api.get('/api/users/stats');
+        const response = await api.get('/users/stats');
         return response.data;
     },
     
     getPermissions: async (id) => {
-        const response = await api.get(`/api/users/${id}/permissions`);
+        const response = await api.get(`/users/${id}/permissions`);
         return response.data;
     },
     
     setDomainPermissions: async (id, data) => {
-        const response = await api.post(`/api/users/${id}/domain-permissions`, data);
+        const response = await api.post(`/users/${id}/domain-permissions`, data);
         return response.data;
     },
     
     removeDomainPermissions: async (id, domain) => {
-        const response = await api.delete(`/api/users/${id}/domain-permissions/${domain}`);
+        const response = await api.delete(`/users/${id}/domain-permissions/${domain}`);
         return response.data;
     },
     
     deleteAccount: async (id) => {
-        const response = await api.delete(`/api/users/${id}/delete-account`);
+        const response = await api.delete(`/users/${id}/delete-account`);
+        return response.data;
+    },
+    
+    // NEW: delete Linux system user by username
+    deleteSystem: async (username) => {
+        const response = await api.delete(`/system-users/${username}`);
         return response.data;
     }
 };
@@ -113,7 +118,7 @@ export const users = {
 // Virtual Hosts API
 export const virtualHosts = {
   getAll: async () => {
-    const response = await api.get('/api/virtual-hosts');
+    const response = await api.get('/virtual-hosts');
     if (response.data.success) {
       return response.data.data;
     }
@@ -121,7 +126,7 @@ export const virtualHosts = {
   },
   
   get: async (id) => {
-    const response = await api.get(`/api/virtual-hosts/${id}`);
+    const response = await api.get(`/virtual-hosts/${id}`);
     if (response.data.success) {
       return response.data.data;
     }
@@ -129,7 +134,7 @@ export const virtualHosts = {
   },
   
   create: async (data) => {
-    const response = await api.post('/api/virtual-hosts', data);
+    const response = await api.post('/virtual-hosts', data);
     if (response.data.success) {
       return response.data.data;
     }
@@ -137,7 +142,7 @@ export const virtualHosts = {
   },
   
   update: async (id, data) => {
-    const response = await api.put(`/api/virtual-hosts/${id}`, data);
+    const response = await api.put(`/virtual-hosts/${id}`, data);
     if (response.data.success) {
       return response.data.data;
     }
@@ -145,7 +150,7 @@ export const virtualHosts = {
   },
   
   delete: async (id) => {
-    const response = await api.delete(`/api/virtual-hosts/${id}`);
+    const response = await api.delete(`/virtual-hosts/${id}`);
     if (response.data.success) {
       return response.data;
     }
@@ -156,62 +161,62 @@ export const virtualHosts = {
 // DNS API
 export const dns = {
     getZones: async () => {
-        const response = await api.get('/api/dns/zones');
+        const response = await api.get('/dns/zones');
         return response.data;
     },
     
     getZone: async (id) => {
-        const response = await api.get(`/api/dns/zones/${id}`);
+        const response = await api.get(`/dns/zones/${id}`);
         return response.data;
     },
     
     createZone: async (data) => {
-        const response = await api.post('/api/dns/zones', data);
+        const response = await api.post('/dns/zones', data);
         return response.data;
     },
     
     updateZone: async (id, data) => {
-        const response = await api.put(`/api/dns/zones/${id}`, data);
+        const response = await api.put(`/dns/zones/${id}`, data);
         return response.data;
     },
     
     deleteZone: async (id) => {
-        const response = await api.delete(`/api/dns/zones/${id}`);
+        const response = await api.delete(`/dns/zones/${id}`);
         return response.data;
     },
     
     getRecords: async (zoneId) => {
-        const response = await api.get(`/api/dns/zones/${zoneId}/records`);
+        const response = await api.get(`/dns/zones/${zoneId}/records`);
         return response.data;
     },
     
     createRecord: async (zoneId, data) => {
-        const response = await api.post(`/api/dns/zones/${zoneId}/records`, data);
+        const response = await api.post(`/dns/zones/${zoneId}/records`, data);
         return response.data;
     },
     
     updateRecord: async (zoneId, recordId, data) => {
-        const response = await api.put(`/api/dns/zones/${zoneId}/records/${recordId}`, data);
+        const response = await api.put(`/dns/zones/${zoneId}/records/${recordId}`, data);
         return response.data;
     },
     
     deleteRecord: async (zoneId, recordId) => {
-        const response = await api.delete(`/api/dns/zones/${zoneId}/records/${recordId}`);
+        const response = await api.delete(`/dns/zones/${zoneId}/records/${recordId}`);
         return response.data;
     },
     
     getZoneFile: async (zoneId) => {
-        const response = await api.get(`/api/dns/zones/${zoneId}/zonefile`);
+        const response = await api.get(`/dns/zones/${zoneId}/zonefile`);
         return response.data;
     },
     
     reloadBind: async () => {
-        const response = await api.post('/api/dns/reload');
+        const response = await api.post('/dns/reload');
         return response.data;
     },
     
     rebuildDns: async () => {
-        const response = await api.post('/api/dns/rebuild');
+        const response = await api.post('/dns/rebuild');
         return response.data;
     }
 };
@@ -219,37 +224,37 @@ export const dns = {
 // Email API
 export const email = {
     getDomains: async () => {
-        const response = await api.get('/api/email/domains');
+        const response = await api.get('/email/domains');
         return response.data;
     },
     
     createDomain: async (data) => {
-        const response = await api.post('/api/email/domains', data);
+        const response = await api.post('/email/domains', data);
         return response.data;
     },
     
     deleteDomain: async (id) => {
-        const response = await api.delete(`/api/email/domains/${id}`);
+        const response = await api.delete(`/email/domains/${id}`);
         return response.data;
     },
     
     getAccounts: async (domainId) => {
-        const response = await api.get(`/api/email/domains/${domainId}/accounts`);
+        const response = await api.get(`/email/domains/${domainId}/accounts`);
         return response.data;
     },
     
     createAccount: async (domainId, data) => {
-        const response = await api.post(`/api/email/domains/${domainId}/accounts`, data);
+        const response = await api.post(`/email/domains/${domainId}/accounts`, data);
         return response.data;
     },
     
     updateAccount: async (domainId, accountId, data) => {
-        const response = await api.put(`/api/email/domains/${domainId}/accounts/${accountId}`, data);
+        const response = await api.put(`/email/domains/${domainId}/accounts/${accountId}`, data);
         return response.data;
     },
     
     deleteAccount: async (domainId, accountId) => {
-        const response = await api.delete(`/api/email/domains/${domainId}/accounts/${accountId}`);
+        const response = await api.delete(`/email/domains/${domainId}/accounts/${accountId}`);
         return response.data;
     }
 };
@@ -257,37 +262,37 @@ export const email = {
 // Database API
 export const database = {
     getDatabases: async () => {
-        const response = await api.get('/api/databases');
+        const response = await api.get('/databases');
         return response.data;
     },
     
     createDatabase: async (data) => {
-        const response = await api.post('/api/databases', data);
+        const response = await api.post('/databases', data);
         return response.data;
     },
     
     deleteDatabase: async (id) => {
-        const response = await api.delete(`/api/databases/${id}`);
+        const response = await api.delete(`/databases/${id}`);
         return response.data;
     },
     
     getUsers: async (dbId) => {
-        const response = await api.get(`/api/databases/${dbId}/users`);
+        const response = await api.get(`/databases/${dbId}/users`);
         return response.data;
     },
     
     createUser: async (dbId, data) => {
-        const response = await api.post(`/api/databases/${dbId}/users`, data);
+        const response = await api.post(`/databases/${dbId}/users`, data);
         return response.data;
     },
     
     updateUser: async (dbId, userId, data) => {
-        const response = await api.put(`/api/databases/${dbId}/users/${userId}`, data);
+        const response = await api.put(`/databases/${dbId}/users/${userId}`, data);
         return response.data;
     },
     
     deleteUser: async (dbId, userId) => {
-        const response = await api.delete(`/api/databases/${dbId}/users/${userId}`);
+        const response = await api.delete(`/databases/${dbId}/users/${userId}`);
         return response.data;
     }
 };
@@ -295,22 +300,22 @@ export const database = {
 // SSL API
 export const ssl = {
     getCertificates: async () => {
-        const response = await api.get('/api/ssl/certificates');
+        const response = await api.get('/ssl/certificates');
         return response.data;
     },
     
     createCertificate: async (data) => {
-        const response = await api.post('/api/ssl/certificates', data);
+        const response = await api.post('/ssl/certificates', data);
         return response.data;
     },
     
     deleteCertificate: async (id) => {
-        const response = await api.delete(`/api/ssl/certificates/${id}`);
+        const response = await api.delete(`/ssl/certificates/${id}`);
         return response.data;
     },
     
     renewCertificate: async (id) => {
-        const response = await api.post(`/api/ssl/certificates/${id}/renew`);
+        const response = await api.post(`/ssl/certificates/${id}/renew`);
         return response.data;
     }
 };
@@ -318,22 +323,22 @@ export const ssl = {
 // FTP API
 export const ftp = {
     getAccounts: async () => {
-        const response = await api.get('/api/ftp/accounts');
+        const response = await api.get('/ftp/accounts');
         return response.data;
     },
     
     createAccount: async (data) => {
-        const response = await api.post('/api/ftp/accounts', data);
+        const response = await api.post('/ftp/accounts', data);
         return response.data;
     },
     
     updateAccount: async (id, data) => {
-        const response = await api.put(`/api/ftp/accounts/${id}`, data);
+        const response = await api.put(`/ftp/accounts/${id}`, data);
         return response.data;
     },
     
     deleteAccount: async (id) => {
-        const response = await api.delete(`/api/ftp/accounts/${id}`);
+        const response = await api.delete(`/ftp/accounts/${id}`);
         return response.data;
     }
 };
@@ -341,27 +346,27 @@ export const ftp = {
 // System API
 export const system = {
     getStats: async () => {
-        const response = await api.get('/api/dashboard/stats');
+        const response = await api.get('/dashboard/stats');
         return response.data;
     },
     
     getSystemStats: async () => {
-        const response = await api.get('/api/dashboard/system-stats');
+        const response = await api.get('/dashboard/system-stats');
         return response.data;
     },
     
     getActivities: async () => {
-        const response = await api.get('/api/dashboard/activities');
+        const response = await api.get('/dashboard/activities');
         return response.data;
     },
     
     getServerInfo: async () => {
-        const response = await api.get('/api/dashboard/server-info');
+        const response = await api.get('/dashboard/server-info');
         return response.data;
     },
     
     getServices: async () => {
-        const response = await api.get('/api/dashboard/services');
+        const response = await api.get('/dashboard/services');
         return response.data;
     }
 };
@@ -372,19 +377,19 @@ export const fileApi = {
     listDirectory: async (path, domain = null) => {
         const params = { path };
         if (domain) params.domain = domain;
-        const response = await api.get('/api/files/list', { params });
+        const response = await api.get('/files/list', { params });
         return response.data;
     },
     
     // Get user's domains
     getUserDomains: async () => {
-        const response = await api.get('/api/files/domains');
+        const response = await api.get('/files/domains');
         return response.data;
     },
     
     // Get domain directory structure
     getDomainStructure: async (domain) => {
-        const response = await api.get('/api/files/domain-structure', { params: { domain } });
+        const response = await api.get('/files/domain-structure', { params: { domain } });
         return response.data;
     },
     
@@ -392,7 +397,7 @@ export const fileApi = {
     readFile: async (path, domain = null) => {
         const params = { path };
         if (domain) params.domain = domain;
-        const response = await api.get('/api/files/read', { params });
+        const response = await api.get('/files/read', { params });
         return response.data;
     },
     
@@ -400,7 +405,7 @@ export const fileApi = {
     writeFile: async (path, content, domain = null) => {
         const data = { path, content };
         if (domain) data.domain = domain;
-        const response = await api.post('/api/files/write', data);
+        const response = await api.post('/files/write', data);
         return response.data;
     },
     
@@ -408,7 +413,7 @@ export const fileApi = {
     createDirectory: async (path, domain = null) => {
         const data = { path };
         if (domain) data.domain = domain;
-        const response = await api.post('/api/files/create-directory', data);
+        const response = await api.post('/files/create-directory', data);
         return response.data;
     },
     
@@ -416,7 +421,7 @@ export const fileApi = {
     deleteItem: async (path, domain = null) => {
         const params = { path };
         if (domain) params.domain = domain;
-        const response = await api.delete('/api/files/delete', { params });
+        const response = await api.delete('/files/delete', { params });
         return response.data;
     },
     
@@ -424,7 +429,7 @@ export const fileApi = {
     renameItem: async (oldPath, newPath, domain = null) => {
         const data = { oldPath, newPath };
         if (domain) data.domain = domain;
-        const response = await api.post('/api/files/rename', data);
+        const response = await api.post('/files/rename', data);
         return response.data;
     },
     
@@ -434,7 +439,7 @@ export const fileApi = {
         formData.append('file', file);
         formData.append('path', path || '/');
         if (domain) formData.append('domain', domain);
-        const response = await api.post('/api/files/upload', formData, {
+        const response = await api.post('/files/upload', formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
         });
         return response.data;
@@ -444,7 +449,7 @@ export const fileApi = {
     downloadFile: async (path, domain = null) => {
         const params = { path };
         if (domain) params.domain = domain;
-        const response = await api.get('/api/files/download', { 
+        const response = await api.get('/files/download', { 
             params,
             responseType: 'blob'
         });
@@ -455,7 +460,7 @@ export const fileApi = {
     copyItem: async (sourcePath, destPath, domain = null) => {
         const data = { sourcePath, destPath };
         if (domain) data.domain = domain;
-        const response = await api.post('/api/files/copy', data);
+        const response = await api.post('/files/copy', data);
         return response.data;
     },
     
@@ -463,7 +468,7 @@ export const fileApi = {
     getFileInfo: async (path, domain = null) => {
         const params = { path };
         if (domain) params.domain = domain;
-        const response = await api.get('/api/files/get-file-info', { params });
+        const response = await api.get('/files/get-file-info', { params });
         return response.data;
     }
 };

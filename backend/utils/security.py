@@ -51,6 +51,33 @@ def setup_security_headers(response):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     response.headers['Content-Security-Policy'] = "default-src 'self'"
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    return response
+
+def setup_csp_headers(response, app):
+    """Setup Content Security Policy headers"""
+    default_src = app.config.get('CSP_DEFAULT_SRC', "'self'")
+    script_src = app.config.get('CSP_SCRIPT_SRC', "'self' 'unsafe-inline'")
+    style_src = app.config.get('CSP_STYLE_SRC', "'self' 'unsafe-inline'")
+    img_src = app.config.get('CSP_IMG_SRC', "'self' data: https:")
+    connect_src = app.config.get('CSP_CONNECT_SRC', "'self'")
+    
+    csp_parts = [
+        f"default-src {default_src}",
+        f"script-src {script_src}",
+        f"style-src {style_src}",
+        f"img-src {img_src}",
+        f"connect-src {connect_src}",
+        "font-src 'self' data:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'"
+    ]
+    response.headers['Content-Security-Policy'] = '; '.join(csp_parts)
     return response
 
 def require_role(role):
@@ -205,3 +232,111 @@ def authenticate_user(username, password):
             user.last_login = datetime.utcnow()
         db.session.commit()
         raise AuthenticationError("Invalid username or password")
+
+def validate_session_timeout(user):
+    """Validate if user session has expired"""
+    from datetime import datetime, timedelta
+    from flask import current_app
+    
+    if not user.last_login:
+        return False
+    
+    timeout_seconds = current_app.config.get('SESSION_TIMEOUT', 3600)
+    timeout_threshold = datetime.utcnow() - timedelta(seconds=timeout_seconds)
+    
+    return user.last_login > timeout_threshold
+
+def check_password_expiry(user):
+    """Check if user password has expired"""
+    from datetime import datetime, timedelta
+    from flask import current_app
+    
+    if not user.password_updated_at:
+        return False
+    
+    expiry_days = current_app.config.get('PASSWORD_EXPIRY_DAYS', 90)
+    expiry_threshold = datetime.utcnow() - timedelta(days=expiry_days)
+    
+    return user.password_updated_at > expiry_threshold
+
+def generate_secure_token(length=32):
+    """Generate a cryptographically secure token"""
+    import secrets
+    return secrets.token_urlsafe(length)
+
+def validate_api_key(api_key):
+    """Validate API key format and existence"""
+    from flask import current_app
+    from models.user import User
+    
+    if not api_key:
+        return None
+    
+    # Check if API key exists in database
+    user = User.query.filter_by(api_key=api_key, is_active=True).first()
+    return user
+
+def sanitize_html(html_content):
+    """Sanitize HTML content to prevent XSS"""
+    import bleach
+    
+    allowed_tags = ['p', 'br', 'strong', 'em', 'u', 'ol', 'ul', 'li', 'a']
+    allowed_attributes = {'a': ['href', 'title']}
+    
+    return bleach.clean(
+        html_content,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        strip=True
+    )
+
+def validate_file_upload(file, allowed_extensions=None, max_size=None):
+    """Validate file upload with enhanced security"""
+    from flask import current_app
+    
+    if not file or not file.filename:
+        return False, "No file provided"
+    
+    # Check file size
+    max_size = max_size or current_app.config.get('MAX_FILE_SIZE', 16 * 1024 * 1024)
+    if file.content_length and file.content_length > max_size:
+        return False, f"File size exceeds maximum allowed size of {max_size} bytes"
+    
+    # Check file extension
+    allowed_extensions = allowed_extensions or current_app.config.get('ALLOWED_FILE_EXTENSIONS', [])
+    if '.' not in file.filename:
+        return False, "Invalid file type"
+    
+    file_extension = file.filename.rsplit('.', 1)[1].lower()
+    if file_extension not in allowed_extensions:
+        return False, f"File type .{file_extension} is not allowed"
+    
+    # Check for malicious file signatures
+    if not _is_safe_file_signature(file):
+        return False, "File appears to be malicious"
+    
+    return True, "File is valid"
+
+def _is_safe_file_signature(file):
+    """Check if file has safe signature"""
+    import magic
+    
+    try:
+        # Read first few bytes to check signature
+        file.seek(0)
+        header = file.read(1024)
+        file.seek(0)  # Reset file pointer
+        
+        mime_type = magic.from_buffer(header, mime=True)
+        
+        # Define safe MIME types
+        safe_mime_types = [
+            'text/plain', 'text/html', 'text/css', 'text/javascript',
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+            'application/pdf', 'application/zip', 'application/x-tar',
+            'application/gzip', 'application/x-gzip'
+        ]
+        
+        return mime_type in safe_mime_types
+    except Exception:
+        return False

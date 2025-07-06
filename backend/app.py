@@ -116,12 +116,8 @@ def create_app(config_class=Config) -> Flask:
          origins=app.config.get('CORS_ORIGINS', [
              "http://localhost:3000", 
              "http://127.0.0.1:3000",
-             "http://192.168.1.174:3000",
              "http://0.0.0.0:3000",
-             # Allow any IP in local network
-             "http://192.168.0.0/16",
-             "http://10.0.0.0/8", 
-             "http://172.16.0.0/12"
+             "http://192.168.1.174:3000"
          ]))
     
     # Initialize extensions
@@ -198,10 +194,61 @@ def register_routes(app: Flask) -> None:
     
     @app.route('/api/health')
     def health_check():
+        """Basic health check endpoint."""
         return jsonify({
-            "status": "healthy",
-            "version": "1.0.0",
-            "timestamp": os.environ.get('STARTUP_TIME', 'unknown')
+            'status': 'healthy',
+            'timestamp': datetime.utcnow().isoformat(),
+            'version': '2.0.0'
+        })
+    
+    @app.route('/api/docs')
+    def api_documentation():
+        """API Documentation endpoint."""
+        return jsonify({
+            'title': 'Web Control Panel API',
+            'version': '2.0.0',
+            'description': 'Complete API documentation for Web Control Panel',
+            'endpoints': {
+                'authentication': {
+                    'POST /api/auth/login': 'User login',
+                    'POST /api/auth/logout': 'User logout',
+                    'GET /api/auth/user': 'Get current user',
+                    'POST /api/auth/register': 'Register new user',
+                    'POST /api/auth/change-password': 'Change password'
+                },
+                'virtual_hosts': {
+                    'GET /api/virtual-hosts': 'List all virtual hosts',
+                    'POST /api/virtual-hosts': 'Create new virtual host',
+                    'GET /api/virtual-hosts/{id}': 'Get virtual host details',
+                    'PUT /api/virtual-hosts/{id}': 'Update virtual host',
+                    'DELETE /api/virtual-hosts/{id}': 'Delete virtual host'
+                },
+                'dns': {
+                    'GET /api/dns/zones': 'List DNS zones',
+                    'POST /api/dns/zones': 'Create DNS zone',
+                    'GET /api/dns/zones/{id}/records': 'Get DNS records',
+                    'POST /api/dns/zones/{id}/records': 'Create DNS record'
+                },
+                'system': {
+                    'GET /api/system/health': 'System health check',
+                    'GET /api/system/metrics': 'System metrics',
+                    'GET /api/system/logs': 'System logs',
+                    'GET /api/system/info': 'System information'
+                },
+                'files': {
+                    'GET /api/files': 'List files',
+                    'POST /api/files/upload': 'Upload file',
+                    'DELETE /api/files/{path}': 'Delete file'
+                }
+            },
+            'authentication': {
+                'type': 'Bearer Token',
+                'header': 'Authorization: Bearer <token>'
+            },
+            'rate_limiting': {
+                'default': '100 requests per minute',
+                'login': '5 attempts per 15 minutes'
+            }
         })
 
 def register_error_handlers(app: Flask) -> None:

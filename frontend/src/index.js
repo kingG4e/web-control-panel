@@ -4,9 +4,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import axios from 'axios';
 
-import { getApiUrl } from './utils/config';
-
-const API_URL = getApiUrl();
+const API_URL = '/api';
 axios.defaults.baseURL = API_URL;
 axios.defaults.headers.common['Content-Type'] = 'application/json';
 

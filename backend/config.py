@@ -31,7 +31,7 @@ class Config:
     CORS_ORIGINS = [
         "http://localhost:3000",
         "http://127.0.0.1:3000", 
-        "http://192.168.1.174:3000",
+        "http://localhost:3000",
         "http://0.0.0.0:3000",
         # Allow any IP in local network (192.168.x.x)
         "http://192.168.0.0/16",
@@ -90,6 +90,31 @@ class Config:
     PASSWORD_REQUIRE_LOWERCASE = os.environ.get('PASSWORD_REQUIRE_LOWERCASE', 'True').lower() == 'true'
     PASSWORD_REQUIRE_DIGITS = os.environ.get('PASSWORD_REQUIRE_DIGITS', 'True').lower() == 'true'
     PASSWORD_REQUIRE_SPECIAL = os.environ.get('PASSWORD_REQUIRE_SPECIAL', 'False').lower() == 'true'
+    
+    # Enhanced Security Configuration
+    SESSION_TIMEOUT = int(os.environ.get('SESSION_TIMEOUT') or 3600)  # 1 hour
+    MAX_LOGIN_ATTEMPTS = int(os.environ.get('MAX_LOGIN_ATTEMPTS') or 5)
+    LOCKOUT_DURATION = int(os.environ.get('LOCKOUT_DURATION') or 1800)  # 30 minutes
+    PASSWORD_EXPIRY_DAYS = int(os.environ.get('PASSWORD_EXPIRY_DAYS') or 90)
+    REQUIRE_2FA = os.environ.get('REQUIRE_2FA', 'False').lower() == 'true'
+    ALLOWED_FILE_EXTENSIONS = os.environ.get('ALLOWED_FILE_EXTENSIONS', 'txt,pdf,png,jpg,jpeg,gif,zip,tar,gz').split(',')
+    MAX_FILE_SIZE = int(os.environ.get('MAX_FILE_SIZE') or 16 * 1024 * 1024)  # 16MB
+    
+    # CSRF Protection
+    WTF_CSRF_ENABLED = os.environ.get('WTF_CSRF_ENABLED', 'True').lower() == 'true'
+    WTF_CSRF_TIME_LIMIT = int(os.environ.get('WTF_CSRF_TIME_LIMIT') or 3600)
+    
+    # Content Security Policy
+    CSP_DEFAULT_SRC = os.environ.get('CSP_DEFAULT_SRC', "'self'")
+    CSP_SCRIPT_SRC = os.environ.get('CSP_SCRIPT_SRC', "'self' 'unsafe-inline'")
+    CSP_STYLE_SRC = os.environ.get('CSP_STYLE_SRC', "'self' 'unsafe-inline'")
+    CSP_IMG_SRC = os.environ.get('CSP_IMG_SRC', "'self' data: https:")
+    CSP_CONNECT_SRC = os.environ.get('CSP_CONNECT_SRC', "'self'")
+    
+    # API Security
+    API_RATE_LIMIT = os.environ.get('API_RATE_LIMIT') or '100 per minute'
+    API_RATE_LIMIT_STORAGE = os.environ.get('API_RATE_LIMIT_STORAGE') or 'memory://'
+    API_KEY_REQUIRED = os.environ.get('API_KEY_REQUIRED', 'False').lower() == 'true'
     
     # Rate Limiting
     RATELIMIT_ENABLED = os.environ.get('RATELIMIT_ENABLED', 'True').lower() == 'true'

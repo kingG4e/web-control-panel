@@ -829,7 +829,7 @@ const EmailSettings = () => {
 
       {/* Account Modal */}
       {showAccountModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
           <div 
             className="fixed inset-0 transition-opacity"
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
@@ -941,7 +941,7 @@ const EmailSettings = () => {
 
       {/* Forwarder Modal */}
       {showForwarderModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
           <div 
             className="fixed inset-0 transition-opacity"
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
@@ -1033,7 +1033,7 @@ const EmailSettings = () => {
 
       {/* Password Reset Modal */}
       {showPasswordResetModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
           <div 
             className="fixed inset-0 transition-opacity"
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
@@ -1118,7 +1118,7 @@ const EmailSettings = () => {
 
       {/* Quota Management Modal */}
       {showQuotaModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
           <div 
             className="fixed inset-0 transition-opacity"
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}

@@ -81,7 +81,7 @@ const EmailManager: React.FC = () => {
       }
       setLoading(false);
     } catch (err) {
-      setError('ไม่สามารถโหลดรายการโดเมนได้');
+      setError('Unable to load domain list.');
       setLoading(false);
     }
   };
@@ -98,7 +98,7 @@ const EmailManager: React.FC = () => {
         setEmailAccounts([]);
       }
     } catch (err) {
-      setError('ไม่สามารถโหลดรายการอีเมลได้');
+      setError('Unable to load email list.');
     }
   };
 
@@ -119,10 +119,10 @@ const EmailManager: React.FC = () => {
       setNewUsername('');
       setNewPassword('');
       setNewQuota(1024);
-      setSuccess('สร้างบัญชีอีเมลสำเร็จ');
+      setSuccess('Email account created successfully.');
       fetchEmailAccounts();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'ไม่สามารถสร้างบัญชีอีเมลได้');
+      setError(err.response?.data?.error || 'Unable to create email account.');
     }
   };
 
@@ -137,9 +137,9 @@ const EmailManager: React.FC = () => {
       setShowResetPasswordModal(false);
       setResetPassword('');
       setSelectedAccount(null);
-      setSuccess('เปลี่ยนรหัสผ่านสำเร็จ');
+      setSuccess('Password changed successfully.');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'ไม่สามารถเปลี่ยนรหัสผ่านได้');
+      setError(err.response?.data?.error || 'Unable to change password.');
     }
   };
 
@@ -154,22 +154,22 @@ const EmailManager: React.FC = () => {
       setShowQuotaModal(false);
       setQuotaValue(1024);
       setSelectedAccount(null);
-      setSuccess('อัพเดต Quota สำเร็จ');
+      setSuccess('Quota updated successfully.');
       fetchEmailAccounts();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'ไม่สามารถอัพเดต Quota ได้');
+      setError(err.response?.data?.error || 'Unable to update quota.');
     }
   };
 
   const deleteAccount = async (accountId: number) => {
-    if (!window.confirm('คุณต้องการลบบัญชีอีเมลนี้หรือไม่?')) return;
+    if (!window.confirm('Are you sure you want to delete this email account?')) return;
 
     try {
       await axios.delete(`/api/email/accounts/${accountId}`);
-      setSuccess('ลบบัญชีอีเมลสำเร็จ');
+      setSuccess('Email account deleted successfully.');
       fetchEmailAccounts();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'ไม่สามารถลบบัญชีอีเมลได้');
+      setError(err.response?.data?.error || 'Unable to delete email account.');
     }
   };
 
@@ -223,13 +223,13 @@ const EmailManager: React.FC = () => {
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">จัดการอีเมล</h1>
+        <h1 className="text-3xl font-bold text-gray-900">Manage Email</h1>
         <button
           onClick={openRoundcube}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center transition-colors"
         >
           <ExternalLinkIcon className="w-5 h-5 mr-2" />
-          เข้าสู่ Roundcube Webmail
+          Open Roundcube Webmail
         </button>
       </div>
 
@@ -257,14 +257,14 @@ const EmailManager: React.FC = () => {
       {/* Domain Selection */}
       <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          เลือกโดเมน
+          Select Domain
         </label>
         <select
           value={selectedDomain}
           onChange={(e) => setSelectedDomain(e.target.value)}
           className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         >
-          <option value="">-- เลือกโดเมน --</option>
+          <option value="">-- Select Domain --</option>
           {virtualHosts.map((vh) => (
             <option key={vh.id} value={vh.domain}>
               {vh.domain}
@@ -281,7 +281,7 @@ const EmailManager: React.FC = () => {
               <div>
                 <h2 className="text-xl font-semibold text-gray-900">{selectedDomain}</h2>
                 <p className="text-sm text-gray-500">
-                  รายชื่ออีเมลทั้งหมดภายใต้โดเมน {selectedDomain}
+                  All email accounts under domain {selectedDomain}
                 </p>
               </div>
               <button
@@ -289,7 +289,7 @@ const EmailManager: React.FC = () => {
                 className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center transition-colors"
               >
                 <PlusIcon className="w-5 h-5 mr-2" />
-                เพิ่มบัญชีอีเมล
+                Add Email Account
               </button>
             </div>
           </div>
@@ -299,14 +299,14 @@ const EmailManager: React.FC = () => {
             {emailAccounts.length === 0 ? (
               <div className="text-center py-12">
                 <MailIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">ไม่มีบัญชีอีเมล</h3>
-                <p className="text-gray-500 mb-4">เริ่มต้นด้วยการสร้างบัญชีอีเมลแรกของคุณ</p>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No Email Accounts</h3>
+                <p className="text-gray-500 mb-4">Start by creating your first email account</p>
                 <button
                   onClick={() => setShowAddAccountModal(true)}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center mx-auto transition-colors"
                 >
                   <PlusIcon className="w-5 h-5 mr-2" />
-                  เพิ่มบัญชีอีเมล
+                  Add Email Account
                 </button>
               </div>
             ) : (
@@ -323,7 +323,7 @@ const EmailManager: React.FC = () => {
                               ? 'bg-green-100 text-green-800' 
                               : 'bg-red-100 text-red-800'
                           }`}>
-                            {account.status === 'active' ? 'ใช้งาน' : 'ไม่ใช้งาน'}
+                            {account.status === 'active' ? 'Active' : 'Inactive'}
                           </span>
                         </div>
                         <div className="flex items-center text-sm text-gray-500 mb-2">
@@ -333,7 +333,7 @@ const EmailManager: React.FC = () => {
                           </span>
                         </div>
                         <div className="text-sm text-gray-500">
-                          สร้างเมื่อ: {new Date(account.created_at).toLocaleDateString('th-TH')}
+                          Created: {new Date(account.created_at).toLocaleDateString('en-US')}
                         </div>
                       </div>
                       <div className="flex space-x-2 ml-4">
@@ -344,10 +344,10 @@ const EmailManager: React.FC = () => {
                             setShowResetPasswordModal(true);
                           }}
                           className="bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-3 py-2 rounded-lg flex items-center transition-colors"
-                          title="รีเซ็ตรหัสผ่าน"
+                          title="Reset Password"
                         >
                           <KeyIcon className="w-4 h-4 mr-1" />
-                          รีเซ็ตรหัสผ่าน
+                          Reset Password
                         </button>
                         <button
                           onClick={() => {
@@ -356,15 +356,15 @@ const EmailManager: React.FC = () => {
                             setShowQuotaModal(true);
                           }}
                           className="bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-2 rounded-lg flex items-center transition-colors"
-                          title="ตั้งค่า Quota"
+                          title="Set Quota"
                         >
                           <CogIcon className="w-4 h-4 mr-1" />
-                          ตั้งค่า Quota
+                          Set Quota
                         </button>
                         <button
                           onClick={() => openRoundcube(account.email)}
                           className="bg-green-100 hover:bg-green-200 text-green-800 px-3 py-2 rounded-lg flex items-center transition-colors"
-                          title="เปิด Webmail"
+                          title="Open Webmail"
                         >
                           <ExternalLinkIcon className="w-4 h-4 mr-1" />
                           Webmail
@@ -372,10 +372,10 @@ const EmailManager: React.FC = () => {
                         <button
                           onClick={() => deleteAccount(account.id)}
                           className="bg-red-100 hover:bg-red-200 text-red-800 px-3 py-2 rounded-lg flex items-center transition-colors"
-                          title="ลบบัญชี"
+                          title="Delete Account"
                         >
                           <TrashIcon className="w-4 h-4 mr-1" />
-                          ลบ
+                          Delete
                         </button>
                       </div>
                     </div>
@@ -389,13 +389,13 @@ const EmailManager: React.FC = () => {
 
       {/* Add Account Modal */}
       {showAddAccountModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
           <div className="bg-white p-6 rounded-lg w-96 max-w-md mx-4">
-            <h2 className="text-xl font-bold mb-4">เพิ่มบัญชีอีเมล</h2>
+            <h2 className="text-xl font-bold mb-4">Add Email Account</h2>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  ชื่อผู้ใช้
+                  Username
                 </label>
                 <div className="flex items-center">
                   <input
@@ -412,13 +412,13 @@ const EmailManager: React.FC = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  รหัสผ่าน
+                  Password
                 </label>
                 <input
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="รหัสผ่าน"
+                  placeholder="Password"
                   className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -446,14 +446,14 @@ const EmailManager: React.FC = () => {
                 }}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
-                ยกเลิก
+                Cancel
               </button>
               <button
                 onClick={createEmailAccount}
                 disabled={!newUsername || !newPassword}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                สร้างบัญชี
+                Create Account
               </button>
             </div>
           </div>
@@ -462,21 +462,21 @@ const EmailManager: React.FC = () => {
 
       {/* Reset Password Modal */}
       {showResetPasswordModal && selectedAccount && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
           <div className="bg-white p-6 rounded-lg w-96 max-w-md mx-4">
-            <h2 className="text-xl font-bold mb-4">รีเซ็ตรหัสผ่าน</h2>
+            <h2 className="text-xl font-bold mb-4">Reset Password</h2>
             <p className="text-gray-600 mb-4">
-              รีเซ็ตรหัสผ่านสำหรับ: <strong>{selectedAccount.email}</strong>
+              Reset password for: <strong>{selectedAccount.email}</strong>
             </p>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                รหัสผ่านใหม่
+                New Password
               </label>
               <input
                 type="password"
                 value={resetPassword}
                 onChange={(e) => setResetPassword(e.target.value)}
-                placeholder="รหัสผ่านใหม่"
+                placeholder="New Password"
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -489,14 +489,14 @@ const EmailManager: React.FC = () => {
                 }}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
-                ยกเลิก
+                Cancel
               </button>
               <button
                 onClick={updatePassword}
                 disabled={!resetPassword}
                 className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                รีเซ็ตรหัสผ่าน
+                Reset Password
               </button>
             </div>
           </div>
@@ -505,11 +505,11 @@ const EmailManager: React.FC = () => {
 
       {/* Quota Modal */}
       {showQuotaModal && selectedAccount && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
           <div className="bg-white p-6 rounded-lg w-96 max-w-md mx-4">
-            <h2 className="text-xl font-bold mb-4">ตั้งค่า Quota</h2>
+            <h2 className="text-xl font-bold mb-4">Set Quota</h2>
             <p className="text-gray-600 mb-4">
-              ตั้งค่า Quota สำหรับ: <strong>{selectedAccount.email}</strong>
+              Set quota for: <strong>{selectedAccount.email}</strong>
             </p>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -524,7 +524,7 @@ const EmailManager: React.FC = () => {
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
               <p className="text-sm text-gray-500 mt-2">
-                ปัจจุบันใช้งาน: {formatQuota(selectedAccount.used_quota, selectedAccount.quota)}
+                Currently using: {formatQuota(selectedAccount.used_quota, selectedAccount.quota)}
               </p>
             </div>
             <div className="flex justify-end space-x-3 mt-6">
@@ -536,13 +536,13 @@ const EmailManager: React.FC = () => {
                 }}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
-                ยกเลิก
+                Cancel
               </button>
               <button
                 onClick={updateQuota}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
-                อัพเดต Quota
+                Update Quota
               </button>
             </div>
           </div>

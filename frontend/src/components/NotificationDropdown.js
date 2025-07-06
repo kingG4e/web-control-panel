@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../services/api'; 
 
 const NotificationDropdown = () => {
   const { user } = useAuth();
@@ -8,178 +9,157 @@ const NotificationDropdown = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef(null);
+  const eventSourceRef = useRef(null);
+  
 
-  // Fetch notifications
+  // Connect to SSE stream
+  useEffect(() => {
+    const connectSSE = () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+
+      console.log('Connecting to SSE stream...');
+      const token = localStorage.getItem('token');
+      const streamUrl = token ? `/api/notifications/stream?token=${encodeURIComponent(token)}` : '/api/notifications/stream';
+      const eventSource = new EventSource(streamUrl);
+      eventSourceRef.current = eventSource;
+
+      eventSource.onopen = () => {
+        console.log('SSE connection opened');
+      };
+
+      eventSource.onmessage = (event) => {
+        console.log('Received SSE message:', event.data);
+        const notification = JSON.parse(event.data);
+        // Add new notification to state
+        setNotifications(prev => [notification, ...prev]);
+        // Update unread count
+        if (!notification.is_read) {
+          setUnreadCount(prev => prev + 1);
+        }
+        // Show toast notification
+        if (window.showToast) {
+          window.showToast(
+            notification.type,
+            notification.title,
+            notification.message,
+            5000
+          );
+        }
+      };
+
+      eventSource.addEventListener('heartbeat', (event) => {
+        console.log('SSE heartbeat received:', event.data);
+      });
+
+      eventSource.onerror = (error) => {
+        console.error('SSE connection error:', error);
+        eventSource.close();
+        // Try to reconnect after 5 seconds
+        setTimeout(connectSSE, 5000);
+      };
+    };
+
+    if (user) {
+      connectSSE();
+      return () => {
+        if (eventSourceRef.current) {
+          console.log('Closing SSE connection');
+          eventSourceRef.current.close();
+        }
+      };
+    }
+  }, [user]);
+  
+  // Fetch initial notifications
   const fetchNotifications = async () => {
     try {
       setLoading(true);
-      
-      // Try authenticated endpoint first
-      let response = await fetch('/api/notifications?limit=10', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      // If authentication fails, try public endpoint
-      if (!response.ok) {
-        response = await fetch('/api/notifications-public?limit=10');
+      let response;
+      try {
+        response = await api.get('/notifications', { params: { limit: 10 } });
+      } catch (err) {
+        // Fallback to public endpoint if auth fails
+        response = await api.get('/notifications-public', { params: { limit: 10 } });
       }
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          setNotifications(data.data);
-        }
+
+      if (response?.data?.success) {
+        setNotifications(response.data.data || []);
       }
     } catch (error) {
       console.error('Failed to fetch notifications:', error);
-      // Try public endpoint as fallback
-      try {
-        const response = await fetch('/api/notifications-public?limit=10');
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success) {
-            setNotifications(data.data || []);
-          }
-        }
-      } catch (fallbackError) {
-        console.error('Fallback also failed:', fallbackError);
-      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Fetch unread count
-  const fetchUnreadCount = async () => {
-    try {
-      // Try authenticated endpoint first
-      let response = await fetch('/api/notifications/unread-count', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
+  // Fetch initial unread count
+  useEffect(() => {
+    const fetchInitialUnreadCount = async () => {
+      try {
+        let response;
+        try {
+          response = await api.get('/notifications/unread-count');
+        } catch (err) {
+          response = await api.get('/notifications/unread-count-public');
         }
-      });
-      
-      // If authentication fails, try public endpoint
-      if (!response.ok) {
-        response = await fetch('/api/notifications/unread-count-public');
-      }
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          // Handle both response formats
-          const count = data.data?.count || data.count || 0;
+
+        if (response?.data?.success) {
+          const count = response.data.data?.count || response.data.count || 0;
           setUnreadCount(count);
         }
+      } catch (error) {
+        console.error('Failed to fetch unread count:', error);
       }
-    } catch (error) {
-      console.error('Failed to fetch unread count:', error);
-      // Try public endpoint as fallback
-      try {
-        const response = await fetch('/api/notifications/unread-count-public');
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success) {
-            setUnreadCount(data.count || 0);
-          }
-        }
-      } catch (fallbackError) {
-        console.error('Fallback also failed:', fallbackError);
-      }
-    }
-  };
+    };
+
+    fetchInitialUnreadCount();
+  }, []);
 
   // Mark notification as read
   const markAsRead = async (notificationId) => {
-    console.log('🔔 markAsRead called with ID:', notificationId);
     try {
-      // Try authenticated endpoint first
-      let response = await fetch(`/api/notifications/${notificationId}/read`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      // If authentication fails, try public endpoint
-      if (!response.ok) {
-        console.log('Auth failed, trying public endpoint...');
-        response = await fetch(`/api/notifications/${notificationId}/read-public`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
+      let response;
+      try {
+        response = await api.post(`/notifications/${notificationId}/read`);
+      } catch (err) {
+        // Fallback to public endpoint
+        response = await api.post(`/notifications/${notificationId}/read-public`);
       }
-      
-      if (response.ok) {
-        console.log('✅ Successfully marked as read');
-        setNotifications(prev => 
-          prev.map(notif => 
+
+      if (response?.data?.success) {
+        setNotifications(prev =>
+          prev.map(notif =>
             notif.id === notificationId ? { ...notif, is_read: true } : notif
           )
         );
-        fetchUnreadCount();
       } else {
-        console.log('❌ Failed to mark as read:', response.status);
+        console.error('Failed to mark as read');
       }
     } catch (error) {
-      console.error('Failed to mark notification as read:', error);
-      // Fallback: update UI only
-      setNotifications(prev => 
-        prev.map(notif => 
-          notif.id === notificationId ? { ...notif, is_read: true } : notif
-        )
-      );
-      fetchUnreadCount();
+      console.error('Error marking notification as read:', error);
     }
   };
 
   // Mark all as read
   const markAllAsRead = async () => {
-    console.log('🔔 markAllAsRead called');
     try {
-      // Try authenticated endpoint first
-      let response = await fetch('/api/notifications/mark-all-read', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      // If authentication fails, try public endpoint
-      if (!response.ok) {
-        console.log('Auth failed, trying public endpoint...');
-        response = await fetch('/api/notifications/mark-all-read-public', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
+      let response;
+      try {
+        response = await api.post('/notifications/mark-all-read');
+      } catch (err) {
+        response = await api.post('/notifications/mark-all-read-public');
       }
-      
-      if (response.ok) {
-        console.log('✅ Successfully marked all as read');
-        setNotifications(prev => 
-          prev.map(notif => ({ ...notif, is_read: true }))
-        );
+
+      if (response?.data?.success) {
+        setNotifications(prev => prev.map(notif => ({ ...notif, is_read: true })));
         setUnreadCount(0);
       } else {
-        console.log('❌ Failed to mark all as read:', response.status);
+        console.error('Failed to mark all as read');
       }
     } catch (error) {
-      console.error('Failed to mark all notifications as read:', error);
-      // Fallback: update UI only
-      setNotifications(prev => 
-        prev.map(notif => ({ ...notif, is_read: true }))
-      );
-      setUnreadCount(0);
+      console.error('Error marking all notifications as read:', error);
     }
   };
 
@@ -195,13 +175,6 @@ const NotificationDropdown = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch unread count on mount
-  useEffect(() => {
-    fetchUnreadCount();
-    const interval = setInterval(fetchUnreadCount, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
   // Fetch notifications when dropdown opens
   useEffect(() => {
     if (isOpen && notifications.length === 0) {
@@ -215,45 +188,25 @@ const NotificationDropdown = () => {
 
   // Delete notification function
   const deleteNotification = async (notificationId) => {
-    console.log('🗑️ deleteNotification called with ID:', notificationId);
     try {
-      // Try authenticated endpoint first
-      let response = await fetch(`/api/notifications/${notificationId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      // If authentication fails, try public endpoint
-      if (!response.ok) {
-        console.log('Auth failed, trying public endpoint...');
-        response = await fetch(`/api/notifications/${notificationId}/delete-public`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
+      let response;
+      try {
+        response = await api.delete(`/notifications/${notificationId}`);
+      } catch (err) {
+        response = await api.post(`/notifications/${notificationId}/delete-public`);
       }
-      
-      // If any endpoint works
-      if (response.ok) {
-        console.log('✅ Successfully deleted notification');
+
+      if (response?.data?.success || response.status === 204) {
         setNotifications(prev => prev.filter(notif => notif.id !== notificationId));
-        fetchUnreadCount();
+        fetchNotifications();
       } else {
-        console.log('❌ Failed to delete:', response.status);
-        // Fallback: remove from UI
-        setNotifications(prev => prev.filter(notif => notif.id !== notificationId));
-        fetchUnreadCount();
+        console.error('Failed to delete notification');
       }
-      
     } catch (error) {
       console.error('Failed to delete notification:', error);
-      // Fallback: remove from UI
+      // Optimistically update UI even if request fails
       setNotifications(prev => prev.filter(notif => notif.id !== notificationId));
-      fetchUnreadCount();
+      fetchNotifications();
     }
   };
 

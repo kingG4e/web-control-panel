@@ -142,6 +142,10 @@ def token_required(f):
             except IndexError:
                 return jsonify({'success': False, 'error': 'Invalid token format'}), 401
         
+        # Fallback: allow token to be passed via query parameter (useful for SSE/EventSource)
+        if not token:
+            token = request.args.get('token')
+        
         if not token:
             return jsonify({'success': False, 'error': 'Token is missing'}), 401
         

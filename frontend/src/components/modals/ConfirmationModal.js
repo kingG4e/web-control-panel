@@ -1,207 +1,169 @@
 import React from 'react';
 import {
   ExclamationTriangleIcon,
-  XMarkIcon,
   ServerIcon,
   GlobeAltIcon,
   EnvelopeIcon,
   CircleStackIcon,
   FolderIcon,
-  LockClosedIcon
+  LockClosedIcon,
+  CheckIcon
 } from '@heroicons/react/24/outline';
+import BaseModal, { ModalSection, ModalSectionTitle, ModalInfoBox, ModalButton } from './BaseModal';
 
 const ConfirmationModal = ({ isOpen, onClose, onConfirm, formData, isLoading }) => {
-  if (!isOpen) return null;
+  // Ensure formData exists with default values
+  const safeFormData = formData || {
+    domain: '',
+    php_version: '',
+    server_admin: '',
+    create_ssl: false
+  };
 
-  const generatedUsername = formData.domain ? 
-    formData.domain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '') : 
+  const generatedUsername = safeFormData.domain ? 
+    safeFormData.domain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '') : 
     'example';
 
   const steps = [
     {
       icon: <ServerIcon className="w-5 h-5" />,
-      title: "Create Linux user + home directory",
-      description: `Creating user ${generatedUsername} with home directory and public_html`
+      title: "Create Linux user",
+      description: `User: ${generatedUsername}`,
+      color: 'text-blue-600 dark:text-blue-400'
     },
     {
       icon: <GlobeAltIcon className="w-5 h-5" />,
-      title: "Create Apache VirtualHost + DNS zone", 
-      description: `Configure Apache for ${formData.domain} and create DNS records`
+      title: "Configure Apache & DNS", 
+      description: safeFormData.domain || 'example.com',
+      color: 'text-purple-600 dark:text-purple-400'
     },
     {
       icon: <EnvelopeIcon className="w-5 h-5" />,
-      title: "Create maildir + email mapping",
-      description: `Create email account admin@${formData.domain} with maildir structure`
+      title: "Setup Email",
+      description: `admin@${safeFormData.domain || 'example.com'}`,
+      color: 'text-green-600 dark:text-green-400'
     },
-         {
-       icon: <CircleStackIcon className="w-5 h-5" />,
-       title: "Create database + user",
-       description: "Create MySQL database and user for the website"
-     },
+    {
+      icon: <CircleStackIcon className="w-5 h-5" />,
+      title: "Create Database",
+      description: "MySQL database",
+      color: 'text-orange-600 dark:text-orange-400'
+    },
     {
       icon: <FolderIcon className="w-5 h-5" />,
-      title: "Create FTP user",
-      description: "Create FTP/SFTP account for file uploads"
+      title: "Setup FTP Access",
+      description: "FTP/SFTP account",
+      color: 'text-cyan-600 dark:text-cyan-400'
     }
   ];
 
-  if (formData.create_ssl) {
+  if (safeFormData.create_ssl) {
     steps.push({
       icon: <LockClosedIcon className="w-5 h-5" />,
-      title: "Request SSL certificate",
-      description: "Issue SSL certificate for HTTPS encryption"
+      title: "Request SSL Certificate",
+      description: "Let's Encrypt SSL",
+      color: 'text-emerald-600 dark:text-emerald-400'
     });
   }
 
-  steps.push({
-    icon: <ServerIcon className="w-5 h-5" />,
-    title: "Save everything to database",
-    description: "Save all data to database and perform final setup"
-  });
+  const footer = (
+    <div className="flex justify-end gap-3">
+      <ModalButton 
+        variant="ghost" 
+        onClick={onClose}
+        disabled={isLoading}
+      >
+        Cancel
+      </ModalButton>
+      <ModalButton 
+        variant="primary" 
+        onClick={onConfirm}
+        disabled={isLoading}
+        className="min-w-[150px]"
+      >
+        {isLoading ? (
+          <div className="flex items-center justify-center">
+            <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+            Creating...
+          </div>
+        ) : (
+          <div className="flex items-center justify-center">
+            <CheckIcon className="w-4 h-4 mr-2" />
+            Confirm & Create
+          </div>
+        )}
+      </ModalButton>
+    </div>
+  );
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto" 
-           style={{ backgroundColor: 'var(--primary-bg)', borderColor: 'var(--border-color)' }}>
-        
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b" 
-             style={{ borderColor: 'var(--border-color)' }}>
-          <div className="flex items-center">
-            <ExclamationTriangleIcon className="w-8 h-8 text-orange-500 mr-3" />
-            <h2 className="text-xl font-bold" style={{ color: 'var(--primary-text)' }}>
-              Confirm Virtual Host Creation
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            disabled={isLoading}
-            className="p-2 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-50"
-          >
-            <XMarkIcon className="w-6 h-6" style={{ color: 'var(--secondary-text)' }} />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-6">
-          
-          {/* Summary */}
-          <div className="p-4 rounded-lg border" style={{ 
-            backgroundColor: 'var(--info-bg, rgba(59, 130, 246, 0.1))',
-            borderColor: 'var(--info-border, rgba(59, 130, 246, 0.3))'
-          }}>
-            <h3 className="font-semibold mb-3" style={{ color: 'var(--info-text, #1e40af)' }}>📋 Configuration Summary</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm" style={{ color: 'var(--info-text-light, #1e3a8a)' }}>
-              <div><strong>Domain:</strong> {formData.domain}</div>
-              <div><strong>Linux User:</strong> {generatedUsername}</div>
-              <div><strong>Server Admin:</strong> {formData.server_admin || `admin@${formData.domain}`}</div>
-              <div><strong>PHP Version:</strong> {formData.php_version}</div>
-              <div><strong>SSL Certificate:</strong> {formData.create_ssl ? 'Will be issued' : 'Not requested'}</div>
+    <BaseModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Confirm Virtual Host Creation"
+      titleIcon={<ExclamationTriangleIcon className="w-6 h-6 text-amber-500" />}
+      footer={footer}
+      disableOverlayClick={isLoading}
+      disableEscapeKey={isLoading}
+    >
+      <ModalSection>
+        {/* Summary Card */}
+        <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 mb-6">
+          <h3 className="font-medium text-gray-900 dark:text-white mb-3">Configuration Summary</h3>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <span className="text-gray-500 dark:text-gray-400">Domain:</span>
+              <p className="font-medium text-gray-900 dark:text-white">{safeFormData.domain || '-'}</p>
+            </div>
+            <div>
+              <span className="text-gray-500 dark:text-gray-400">PHP Version:</span>
+              <p className="font-medium text-gray-900 dark:text-white">{safeFormData.php_version || '-'}</p>
+            </div>
+            <div>
+              <span className="text-gray-500 dark:text-gray-400">Server Admin:</span>
+              <p className="font-medium text-gray-900 dark:text-white">{safeFormData.server_admin || `admin@${safeFormData.domain}` || '-'}</p>
+            </div>
+            <div>
+              <span className="text-gray-500 dark:text-gray-400">SSL Certificate:</span>
+              <p className="font-medium text-gray-900 dark:text-white">{safeFormData.create_ssl ? 'Yes' : 'No'}</p>
             </div>
           </div>
+        </div>
 
-          {/* Steps Process */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--primary-text)' }}>
-              🔄 Steps to Perform ({steps.length} steps)
-            </h3>
-            <div className="space-y-3">
-              {steps.map((step, index) => (
-                <div key={index} 
-                     className="flex items-start p-3 rounded-lg border"
-                     style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold mr-3 mt-0.5"
-                       style={{ 
-                         backgroundColor: 'var(--accent-color, #3b82f6)',
-                         color: 'white'
-                       }}>
-                    {index + 1}
-                  </div>
-                  <div className="mr-3 mt-1" style={{ color: 'var(--accent-color, #3b82f6)' }}>
-                    {step.icon}
-                  </div>
-                  <div className="flex-1">
-                    <div className="font-medium" style={{ color: 'var(--primary-text)' }}>
-                      {step.title}
-                    </div>
-                    <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                      {step.description}
-                    </div>
-                  </div>
-                </div>
-              ))}
+        {/* Steps */}
+        <ModalSectionTitle icon="🚀">What will happen</ModalSectionTitle>
+        <div className="space-y-2 mb-6">
+          {steps.map((step, index) => (
+            <div key={index} className="flex items-center p-3 rounded-lg bg-gray-50 dark:bg-gray-900/30 hover:bg-gray-100 dark:hover:bg-gray-900/50 transition-colors">
+              <div className={`${step.color} mr-3`}>
+                {step.icon}
+              </div>
+              <div className="flex-1">
+                <p className="font-medium text-gray-900 dark:text-white text-sm">{step.title}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{step.description}</p>
+              </div>
+              <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-xs font-medium text-gray-600 dark:text-gray-300">
+                {index + 1}
+              </div>
             </div>
-          </div>
-
-          {/* Warning */}
-          <div className="p-4 rounded-lg border" style={{ 
-            backgroundColor: 'var(--warning-bg, rgba(245, 158, 11, 0.1))',
-            borderColor: 'var(--warning-border, rgba(245, 158, 11, 0.3))'
-          }}>
-            <h4 className="font-semibold mb-2" style={{ color: 'var(--warning-text, #92400e)' }}>⚠️ Warning</h4>
-            <ul className="text-sm space-y-1" style={{ color: 'var(--warning-text-light, #a16207)' }}>
-              <li>• Creating Virtual Host may take a few minutes, please wait until it's complete</li>
-              <li>• If there's an error, the system will delete the data automatically</li>
-              <li>• Please check the information carefully before proceeding</li>
-              {!formData.create_ssl && (
-                <li>• You can request SSL certificate later in SSL Management</li>
-              )}
-            </ul>
-          </div>
-
-          {/* Expected Results */}
-          <div className="p-4 rounded-lg border" style={{ 
-            backgroundColor: 'var(--success-bg, rgba(16, 185, 129, 0.1))',
-            borderColor: 'var(--success-border, rgba(16, 185, 129, 0.3))'
-          }}>
-            <h4 className="font-semibold mb-2" style={{ color: 'var(--success-text, #065f46)' }}>✅ Expected Results</h4>
-            <ul className="text-sm space-y-1" style={{ color: 'var(--success-text-light, #047857)' }}>
-              <li>• Website {formData.domain} is ready to use</li>
-              <li>• Linux user account for file management</li>
-              <li>• Email account admin@{formData.domain}</li>
-              <li>• MySQL database for storing data</li>
-              <li>• FTP/SFTP access for uploading files</li>
-              {formData.create_ssl && <li>• SSL certificate for HTTPS</li>}
-            </ul>
-          </div>
-
+          ))}
         </div>
 
-        {/* Footer */}
-        <div className="flex justify-end items-center p-6 border-t space-x-3" 
-             style={{ borderColor: 'var(--border-color)' }}>
-          <button
-            onClick={onClose}
-            disabled={isLoading}
-            className="px-4 py-2 border rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-            style={{ borderColor: 'var(--border-color)', color: 'var(--secondary-text)' }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={isLoading}
-            className="px-6 py-2 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center"
-            style={{ 
-              backgroundColor: 'var(--accent-color, #3b82f6)',
-              '&:hover': { backgroundColor: 'var(--accent-color-hover, #2563eb)' }
-            }}
-          >
-            {isLoading ? (
-              <div className="flex items-center">
-                <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-                Creating...
-              </div>
-            ) : (
-              <div className="flex items-center">
-                <ServerIcon className="w-4 h-4 mr-2" />
-                Confirm and Create Virtual Host
-              </div>
-            )}
-          </button>
-        </div>
+        {/* Info Boxes */}
+        <div className="space-y-3">
+          <ModalInfoBox variant="warning">
+            <p className="text-sm font-medium mb-1">⏱️ Processing Time</p>
+            <p className="text-sm">This process may take 2-3 minutes to complete. Please don't close this window.</p>
+          </ModalInfoBox>
 
-      </div>
-    </div>
+          {!safeFormData.create_ssl && (
+            <ModalInfoBox variant="info">
+              <p className="text-sm">💡 You can add an SSL certificate later from the SSL Management page.</p>
+            </ModalInfoBox>
+          )}
+        </div>
+      </ModalSection>
+    </BaseModal>
   );
 };
 

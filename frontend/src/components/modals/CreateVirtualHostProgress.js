@@ -11,6 +11,7 @@ import {
   FolderIcon,
   LockClosedIcon
 } from '@heroicons/react/24/outline';
+import BaseModal, { ModalSection, ModalSectionTitle, ModalInfoBox } from './BaseModal';
 
 const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComplete }) => {
   const [animatedStep, setAnimatedStep] = useState(-1);
@@ -24,8 +25,6 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
     }
   }, [currentStep, animatedStep]);
 
-  if (!isOpen) return null;
-
   const getStepIcon = (stepIndex, stepTitle) => {
     const icons = {
       'Linux user': <ServerIcon className="w-5 h-5" />,
@@ -37,7 +36,7 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
       'MySQL': <CircleStackIcon className="w-5 h-5" />,
       'FTP': <FolderIcon className="w-5 h-5" />,
       'SSL': <LockClosedIcon className="w-5 h-5" />,
-      'บันทึก': <ServerIcon className="w-5 h-5" />
+      'Save': <ServerIcon className="w-5 h-5" />
     };
 
     const iconKey = Object.keys(icons).find(key => 
@@ -100,150 +99,153 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
     }
   };
 
+  const getTitleIcon = () => {
+    if (error) {
+      return <XCircleIcon className="w-6 h-6 text-red-500" />;
+    } else if (isComplete) {
+      return <CheckCircleIcon className="w-6 h-6 text-green-500" />;
+    } else {
+      return <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />;
+    }
+  };
+
+  const getTitle = () => {
+    if (error) {
+      return 'Virtual Host Creation Failed';
+    } else if (isComplete) {
+      return 'Virtual Host Created Successfully!';
+    } else {
+      return 'Creating Virtual Host...';
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto" 
-           style={{ backgroundColor: 'var(--primary-bg)', borderColor: 'var(--border-color)' }}>
-        
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b" 
-             style={{ borderColor: 'var(--border-color)' }}>
-          <div className="flex items-center">
-            {error ? (
-              <XCircleIcon className="w-8 h-8 text-red-500 mr-3" />
-            ) : isComplete ? (
-              <CheckCircleIcon className="w-8 h-8 text-green-500 mr-3" />
-            ) : (
-              <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-3" />
-            )}
-            <div>
-              <h2 className="text-xl font-bold" style={{ color: 'var(--primary-text)' }}>
-                {error ? 'Virtual Host Creation Failed' :
-                 isComplete ? 'Virtual Host Created Successfully!' :
-                 'Creating Virtual Host...'}
-              </h2>
-              {!error && !isComplete && (
-                <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                  Processing step {currentStep + 1} of {steps.length}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="p-6">
-          
-          {/* Progress Bar */}
+    <BaseModal
+      isOpen={isOpen}
+      onClose={null} // Disable close during creation
+      title={getTitle()}
+      titleIcon={getTitleIcon()}
+      disableOverlayClick={true}
+      disableEscapeKey={true}
+      maxWidth="max-w-2xl"
+    >
+      <ModalSection>
+        {/* Progress Info */}
+        {!error && !isComplete && (
           <div className="mb-6">
-            <div className="flex justify-between text-sm mb-2" style={{ color: 'var(--secondary-text)' }}>
-              <span>Progress</span>
-              <span>{Math.round(((currentStep + (isComplete ? 1 : 0)) / steps.length) * 100)}%</span>
-            </div>
-            <div className="w-full rounded-full h-2" style={{ backgroundColor: 'var(--border-color)' }}>
-              <div 
-                className="h-2 rounded-full transition-all duration-500 ease-out"
-                style={{ 
-                  width: `${((currentStep + (isComplete ? 1 : 0)) / steps.length) * 100}%`,
-                  backgroundColor: 'var(--accent-color)'
-                }}
-              />
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Processing step {currentStep + 1} of {steps.length}
+            </p>
+            
+            {/* Progress Bar */}
+            <div className="mb-4">
+              <div className="flex justify-between text-sm mb-2 text-gray-600 dark:text-gray-400">
+                <span>Progress</span>
+                <span>{Math.round(((currentStep + (isComplete ? 1 : 0)) / steps.length) * 100)}%</span>
+              </div>
+              <div className="w-full rounded-full h-2 bg-gray-200 dark:bg-gray-700">
+                <div 
+                  className="h-2 rounded-full transition-all duration-500 ease-out bg-blue-600"
+                  style={{ 
+                    width: `${((currentStep + (isComplete ? 1 : 0)) / steps.length) * 100}%`
+                  }}
+                />
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Steps */}
-          <div className="space-y-3">
-            {steps.map((step, index) => {
-              const status = getStepStatus(index);
-              return (
-                <div 
-                  key={index}
-                  className={`flex items-start p-4 rounded-lg border transition-all duration-300 ${getStatusColor(status)}`}
-                >
-                  <div className="flex items-center mr-4">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold mr-3" 
-                         style={{
-                           backgroundColor: status === 'completed' ? 'var(--success-color, #10b981)' :
-                                          status === 'error' ? 'var(--error-color, #ef4444)' :
-                                          status === 'active' ? 'var(--accent-color, #3b82f6)' : 'var(--secondary-text, #9ca3af)',
-                           color: 'white'
-                         }}>
-                      {index + 1}
+        {/* Steps */}
+        <ModalSectionTitle>Processing Steps</ModalSectionTitle>
+        <div className="space-y-3 mb-6">
+          {steps.map((step, index) => {
+            const status = getStepStatus(index);
+            return (
+              <div 
+                key={index}
+                className={`flex items-start p-4 rounded-lg border transition-all duration-300 ${getStatusColor(status)}`}
+              >
+                <div className="flex items-center mr-4">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold mr-3 text-white"
+                       style={{
+                         backgroundColor: status === 'completed' ? '#10b981' :
+                                        status === 'error' ? '#ef4444' :
+                                        status === 'active' ? '#3b82f6' : '#9ca3af'
+                       }}>
+                    {index + 1}
+                  </div>
+                  {getStatusIcon(status, index, step.title || step)}
+                </div>
+                
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <h4 className={`font-medium ${getStatusTextColor(status)}`}>
+                      {step.title || step}
+                    </h4>
+                    <div className="text-xs text-gray-500">
+                      {status === 'completed' && '✓ Completed'}
+                      {status === 'error' && '✗ Failed'}
+                      {status === 'active' && 'Processing...'}
+                      {status === 'pending' && 'Pending'}
                     </div>
-                    {getStatusIcon(status, index, step.title || step)}
                   </div>
                   
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <h4 className={`font-medium ${getStatusTextColor(status)}`}>
-                        {step.title || step}
-                      </h4>
-                      <div className="text-xs text-gray-500">
-                        {status === 'completed' && '✓ Completed'}
-                        {status === 'error' && '✗ Failed'}
-                        {status === 'active' && 'Processing...'}
-                        {status === 'pending' && 'Pending'}
-                      </div>
-                    </div>
-                    
-                    {step.description && (
-                      <p className="text-sm text-gray-600 mt-1">
-                        {step.description}
-                      </p>
-                    )}
-                    
-                    {/* Show error details if this step failed */}
-                    {status === 'error' && error && (
-                      <div className="mt-2 p-3 bg-red-100 border border-red-200 rounded-lg">
-                        <div className="flex items-start">
-                          <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mr-2 mt-0.5 flex-shrink-0" />
-                          <div>
-                            <p className="text-sm font-medium text-red-800">Error:</p>
-                            <p className="text-sm text-red-700 mt-1">{error}</p>
-                          </div>
+                  {step.description && (
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                      {step.description}
+                    </p>
+                  )}
+                  
+                  {/* Show error details if this step failed */}
+                  {status === 'error' && error && (
+                    <div className="mt-2 p-3 bg-red-100 border border-red-200 rounded-lg dark:bg-red-900/20 dark:border-red-800">
+                      <div className="flex items-start">
+                        <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mr-2 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <p className="text-sm font-medium text-red-800 dark:text-red-200">Error:</p>
+                          <p className="text-sm text-red-700 dark:text-red-300 mt-1">{error}</p>
                         </div>
                       </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Error Summary */}
-          {error && (
-            <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <div className="flex items-start">
-                <XCircleIcon className="w-6 h-6 text-red-500 mr-3 mt-0.5 flex-shrink-0" />
-                <div>
-                  <h4 className="font-medium text-red-800 mb-2">Virtual Host Creation Failed</h4>
-                  <p className="text-sm text-red-700">{error}</p>
-                  <p className="text-sm text-red-600 mt-2">
-                    The system will attempt to clean up the resources created if this continues.
-                  </p>
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-          )}
-
-          {/* Success Summary */}
-          {isComplete && !error && (
-            <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-              <div className="flex items-start">
-                <CheckCircleIcon className="w-6 h-6 text-green-500 mr-3 mt-0.5 flex-shrink-0" />
-                <div>
-                  <h4 className="font-medium text-green-800 mb-2">Virtual Host Created Successfully!</h4>
-                  <p className="text-sm text-green-700">
-                    Your Virtual Host has been created and is ready to use immediately.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
+            );
+          })}
         </div>
 
-      </div>
-    </div>
+        {/* Error Summary */}
+        {error && (
+          <ModalInfoBox variant="error">
+            <div className="flex items-start">
+              <XCircleIcon className="w-6 h-6 text-red-500 mr-3 mt-0.5 flex-shrink-0" />
+              <div>
+                <h4 className="font-medium mb-2">Virtual Host Creation Failed</h4>
+                <p className="text-sm mb-2">{error}</p>
+                <p className="text-sm opacity-80">
+                  The system will attempt to clean up the resources created if this continues.
+                </p>
+              </div>
+            </div>
+          </ModalInfoBox>
+        )}
+
+        {/* Success Summary */}
+        {isComplete && !error && (
+          <ModalInfoBox variant="success">
+            <div className="flex items-start">
+              <CheckCircleIcon className="w-6 h-6 text-green-500 mr-3 mt-0.5 flex-shrink-0" />
+              <div>
+                <h4 className="font-medium mb-2">Virtual Host Created Successfully!</h4>
+                <p className="text-sm">
+                  Your Virtual Host has been created and is ready to use immediately.
+                </p>
+              </div>
+            </div>
+          </ModalInfoBox>
+        )}
+      </ModalSection>
+    </BaseModal>
   );
 };
 

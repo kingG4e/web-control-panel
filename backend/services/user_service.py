@@ -183,9 +183,9 @@ class UserService:
                 # Delete Email domains & accounts/aliases/forwarders
                 email_domains = EmailDomain.query.filter_by(domain=domain).all()
                 for ed in email_domains:
-                    EmailAccount.query.filter_by(domain_id=ed.id).delete()
-                    EmailForwarder.query.filter_by(domain_id=ed.id).delete()
-                    EmailAlias.query.filter_by(domain_id=ed.id).delete()
+                    EmailAccount.query.filter_by(domain_id=ed.id).delete(synchronize_session=False)
+                    EmailForwarder.query.filter_by(domain_id=ed.id).delete(synchronize_session=False)
+                    EmailAlias.query.join(EmailAccount).filter(EmailAccount.domain_id == ed.id).delete(synchronize_session=False)
                     db.session.delete(ed)
 
                 # Delete SSL certificates

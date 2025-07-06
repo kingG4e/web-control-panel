@@ -18,7 +18,7 @@ import SSLSettings from './pages/SSLSettings';
 
 import Breadcrumb from './components/layout/Breadcrumb';
 import FileManager from './pages/FileManager';
-import ProtectedRoute from './components/ProtectedRoute';
+import ToastContainer from './components/common/ToastContainer';
 
 const AppContent = () => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -37,53 +37,51 @@ const AppContent = () => {
 
   if (!isAuthenticated) {
     return (
-          <div className="min-h-screen bg-[var(--primary-bg)] flex items-center justify-center">
-            <Routes>
+      <div className="min-h-screen bg-[var(--primary-bg)] flex items-center justify-center">
+        <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="*" element={<Navigate to="/login" />} />
-            </Routes>
-          </div>
+        </Routes>
+      </div>
     );
   }
 
   return (
-        <DataProvider>
-          <div className="flex flex-col h-screen bg-[var(--primary-bg)] overflow-hidden">
-            {/* Top Header */}
-            <Navbar onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)} />
-            
-            <div className="flex flex-1 overflow-hidden">
-              {/* Left Sidebar */}
-              <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
-              
-              {/* Main Content Area */}
-              <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                <div className="flex-1 overflow-auto">
-                  {/* Breadcrumb */}
-                  <Breadcrumb />
-                  
-                  {/* Content Container */}
-                  <div className="container mx-auto px-4 py-4 max-w-7xl">
-                    <Routes>
-                      <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                      <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                      <Route path="/virtual-hosts" element={<ProtectedRoute><VirtualHosts /></ProtectedRoute>} />
-                      <Route path="/virtual-hosts/new" element={<ProtectedRoute><CreateVirtualHost /></ProtectedRoute>} />
-                      <Route path="/virtual-hosts/:id/edit" element={<ProtectedRoute><EditVirtualHost /></ProtectedRoute>} />
-                      <Route path="/dns" element={<ProtectedRoute><DNSManagement /></ProtectedRoute>} />
-                      <Route path="/email" element={<ProtectedRoute><EmailSettings /></ProtectedRoute>} />
-                      <Route path="/database" element={<ProtectedRoute><Database /></ProtectedRoute>} />
-                      <Route path="/users" element={<ProtectedRoute><UserSettings /></ProtectedRoute>} />
-                      <Route path="/ssl" element={<ProtectedRoute><SSLSettings /></ProtectedRoute>} />
-                      
-                      <Route path="/file-manager" element={<ProtectedRoute><FileManager /></ProtectedRoute>} />
-                    </Routes>
-                  </div>
-                </div>
+    <DataProvider>
+      <div className="flex flex-col h-screen bg-[var(--primary-bg)] overflow-hidden">
+        {/* Top Header */}
+        <Navbar onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)} />
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left Sidebar */}
+          <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
+          {/* Main Content Area */}
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+            <div className="flex-1 overflow-auto">
+              {/* Breadcrumb */}
+              <Breadcrumb />
+              {/* Content Container */}
+              <div className="container mx-auto px-4 py-4 max-w-7xl">
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/virtual-hosts" element={<VirtualHosts />} />
+                  <Route path="/virtual-hosts/new" element={<CreateVirtualHost />} />
+                  <Route path="/virtual-hosts/:id/edit" element={<EditVirtualHost />} />
+                  <Route path="/dns" element={<DNSManagement />} />
+                  <Route path="/email" element={<EmailSettings />} />
+                  <Route path="/database" element={<Database />} />
+                  <Route path="/users" element={<UserSettings />} />
+                  <Route path="/ssl" element={<SSLSettings />} />
+                  <Route path="/file-manager" element={<FileManager />} />
+                  {/* fallback */}
+                  <Route path="*" element={<Navigate to="/dashboard" />} />
+                </Routes>
               </div>
             </div>
           </div>
-        </DataProvider>
+        </div>
+      </div>
+    </DataProvider>
   );
 };
 
@@ -91,9 +89,14 @@ const App = () => {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <Router>
-          <AppContent />
-      </Router>
+        <DataProvider>
+          <Router>
+            <div className="App">
+              <ToastContainer />
+              <AppContent />
+            </div>
+          </Router>
+        </DataProvider>
       </AuthProvider>
     </ThemeProvider>
   );

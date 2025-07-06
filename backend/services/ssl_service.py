@@ -4,6 +4,7 @@ from datetime import datetime
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import NameOID
+from models.notification import Notification
 
 class SSLService:
     def __init__(self):
@@ -11,7 +12,7 @@ class SSLService:
         self.certificates_dir = '/etc/letsencrypt/live'
         self.apache_config_dir = '/etc/apache2/sites-available'
 
-    def issue_certificate(self, domain):
+    def issue_certificate(self, domain, user_id=None):
         """Issue a new SSL certificate using Let's Encrypt"""
         try:
             # Run certbot to obtain certificate
@@ -37,6 +38,16 @@ class SSLService:
             with open(cert_path, 'rb') as f:
                 cert_data = x509.load_pem_x509_certificate(f.read(), default_backend())
             
+            # Create success notification
+            if user_id:
+                Notification.create_notification(
+                    title="SSL Certificate Issued",
+                    message=f"SSL certificate for {domain} has been issued successfully. Valid until {cert_data.not_valid_after.strftime('%Y-%m-%d')}",
+                    type="success",
+                    category="ssl",
+                    user_id=user_id
+                )
+            
             return {
                 'certificate_path': cert_path,
                 'private_key_path': key_path,
@@ -46,12 +57,18 @@ class SSLService:
                 'valid_until': cert_data.not_valid_after
             }
             
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to issue certificate: {e.stderr}')
         except Exception as e:
+            if user_id:
+                Notification.create_notification(
+                    title="SSL Certificate Issue Failed",
+                    message=f"Failed to issue SSL certificate for {domain}: {str(e)}",
+                    type="error",
+                    category="ssl",
+                    user_id=user_id
+                )
             raise Exception(f'Failed to issue certificate: {str(e)}')
 
-    def renew_certificate(self, domain):
+    def renew_certificate(self, domain, user_id=None):
         """Renew an SSL certificate"""
         try:
             # Run certbot to renew certificate
@@ -71,14 +88,30 @@ class SSLService:
             with open(cert_path, 'rb') as f:
                 cert_data = x509.load_pem_x509_certificate(f.read(), default_backend())
             
+            # Create success notification
+            if user_id:
+                Notification.create_notification(
+                    title="SSL Certificate Renewed",
+                    message=f"SSL certificate for {domain} has been renewed successfully. Valid until {cert_data.not_valid_after.strftime('%Y-%m-%d')}",
+                    type="success",
+                    category="ssl",
+                    user_id=user_id
+                )
+            
             return {
                 'valid_from': cert_data.not_valid_before,
                 'valid_until': cert_data.not_valid_after
             }
             
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to renew certificate: {e.stderr}')
         except Exception as e:
+            if user_id:
+                Notification.create_notification(
+                    title="SSL Certificate Renewal Failed",
+                    message=f"Failed to renew SSL certificate for {domain}: {str(e)}",
+                    type="error",
+                    category="ssl",
+                    user_id=user_id
+                )
             raise Exception(f'Failed to renew certificate: {str(e)}')
 
     def revoke_certificate(self, domain):

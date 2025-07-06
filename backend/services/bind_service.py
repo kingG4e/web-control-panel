@@ -3,6 +3,7 @@ import subprocess
 import platform
 from datetime import datetime
 from jinja2 import Template
+from models.notification import Notification
 
 class BindService:
     def __init__(self):
@@ -36,7 +37,7 @@ ns2     IN      A       {{ nameserver_ip }}
 {% endfor %}
 '''
 
-    def create_zone(self, zone, nameserver_ip):
+    def create_zone(self, zone, nameserver_ip, user_id=None):
         """Create a new DNS zone"""
         try:
             # Ensure directories exist
@@ -60,11 +61,29 @@ ns2     IN      A       {{ nameserver_ip }}
             
             # Reload BIND (will be skipped in Windows/development)
             self._reload_bind()
+
+            # Create success notification
+            if user_id:
+                Notification.create_notification(
+                    title="DNS Zone Created",
+                    message=f"DNS zone for {zone.domain_name} has been created successfully.",
+                    type="success",
+                    category="dns",
+                    user_id=user_id
+                )
             
         except Exception as e:
+            if user_id:
+                Notification.create_notification(
+                    title="DNS Zone Creation Failed",
+                    message=f"Failed to create DNS zone for {zone.domain_name}: {str(e)}",
+                    type="error",
+                    category="dns",
+                    user_id=user_id
+                )
             raise Exception(f'Failed to create DNS zone: {str(e)}')
 
-    def update_zone(self, zone, nameserver_ip):
+    def update_zone(self, zone, nameserver_ip, user_id=None):
         """Update an existing DNS zone"""
         try:
             # Update serial number
@@ -72,11 +91,29 @@ ns2     IN      A       {{ nameserver_ip }}
             
             # Generate and write new zone file
             self.create_zone(zone, nameserver_ip)
+
+            # Create success notification
+            if user_id:
+                Notification.create_notification(
+                    title="DNS Zone Updated",
+                    message=f"DNS zone for {zone.domain_name} has been updated successfully.",
+                    type="success",
+                    category="dns",
+                    user_id=user_id
+                )
             
         except Exception as e:
+            if user_id:
+                Notification.create_notification(
+                    title="DNS Zone Update Failed",
+                    message=f"Failed to update DNS zone for {zone.domain_name}: {str(e)}",
+                    type="error",
+                    category="dns",
+                    user_id=user_id
+                )
             raise Exception(f'Failed to update DNS zone: {str(e)}')
 
-    def delete_zone(self, domain_name):
+    def delete_zone(self, domain_name, user_id=None):
         """Delete a DNS zone"""
         try:
             # Remove zone file
@@ -89,8 +126,26 @@ ns2     IN      A       {{ nameserver_ip }}
             
             # Reload BIND (will be skipped in Windows/development)
             self._reload_bind()
+
+            # Create success notification
+            if user_id:
+                Notification.create_notification(
+                    title="DNS Zone Deleted",
+                    message=f"DNS zone for {domain_name} has been deleted successfully.",
+                    type="success",
+                    category="dns",
+                    user_id=user_id
+                )
             
         except Exception as e:
+            if user_id:
+                Notification.create_notification(
+                    title="DNS Zone Deletion Failed",
+                    message=f"Failed to delete DNS zone for {domain_name}: {str(e)}",
+                    type="error",
+                    category="dns",
+                    user_id=user_id
+                )
             raise Exception(f'Failed to delete DNS zone: {str(e)}')
 
     def _update_named_conf_local(self, domain_name):

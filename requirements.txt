@@ -1,27 +1,62 @@
-flask==3.0.2
-flask-cors==4.0.0
-flask-jwt-extended==4.6.0
-flask-sqlalchemy==3.1.1
-bcrypt==4.1.2
-redis==5.0.1
-python-dotenv==1.0.1
-gunicorn==21.2.0
+# Flask and extensions
+Flask==3.0.2
+Flask-SQLAlchemy==3.1.1
+Flask-CORS==4.0.0
+Flask-Login==0.6.3
+Flask-WTF==1.1.1
+Flask-JWT-Extended==4.6.0
+WTForms==3.0.1
+
+# Database
 SQLAlchemy==2.0.28
-Werkzeug==3.0.1
-mariadb==1.1.7
 alembic==1.12.1
+mariadb==1.1.7
+pymysql==1.1.0
+
+# Authentication and security
+PyJWT==2.8.0
+bcrypt==4.1.2
+python-pam==2.0.2
+bleach==6.0.0
+cryptography>=41.0.0,<42.0.0
+pyotp==2.9.0
+pyOpenSSL>=23.2.0
+
+# System and file operations
 psutil==5.9.5
+python-magic==0.4.27
 python-crontab==3.0.0
 paramiko>=3.3.1
-pyOpenSSL>=23.2.0
-dnspython==2.4.2
+
+# Email and notifications
 requests==2.31.0
-python-pam==2.0.2
-pymysql==1.1.0
-cryptography>=41.0.0,<42.0.0
+
+# DNS and networking
+dnspython==2.4.2
+
+# Utilities
+python-dotenv==1.0.1
 click==8.1.7
 itsdangerous==2.1.2
 Jinja2==3.1.3
 MarkupSafe==2.1.5
 packaging==24.0
-typing_extensions==4.10.0 
+typing_extensions==4.10.0
+
+# Monitoring and logging
+prometheus-client==0.17.1
+structlog==23.1.0
+
+# Production server
+gunicorn==21.2.0
+Werkzeug==3.0.1
+
+# Development and testing
+pytest==7.4.2
+pytest-flask==1.2.0
+black==23.7.0
+flake8==6.0.0
+mypy==1.5.1
+
+# Redis
+redis==5.0.1 

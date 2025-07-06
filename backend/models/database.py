@@ -1,5 +1,6 @@
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
+from models.base import db
 
 db = SQLAlchemy()
 
@@ -17,23 +18,42 @@ class Database(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationships
-    users = db.relationship('DatabaseUser', backref='database', lazy=True, cascade='all, delete-orphan')
-    backups = db.relationship('DatabaseBackup', backref='database', lazy=True, cascade='all, delete-orphan')
+    # Relationships with eager loading
+    users = db.relationship('DatabaseUser', backref='database', lazy='select', cascade='all, delete-orphan')
+    backups = db.relationship('DatabaseBackup', backref='database', lazy='select', cascade='all, delete-orphan')
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_relations=True):
+        result = {
             'id': self.id,
             'name': self.name,
             'charset': self.charset,
             'collation': self.collation,
             'size': self.size,
             'status': self.status,
+            'owner_id': self.owner_id,
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'users': [user.to_dict() for user in self.users],
-            'backups': [backup.to_dict() for backup in self.backups]
+            'updated_at': self.updated_at.isoformat()
         }
+        
+        if include_relations:
+            result['users'] = [user.to_dict(include_relations=False) for user in self.users]
+            result['backups'] = [backup.to_dict(include_relations=False) for backup in self.backups]
+        
+        return result
+
+    @classmethod
+    def get_with_relations(cls, database_id=None):
+        """Get databases with eager loaded relationships"""
+        from sqlalchemy.orm import joinedload
+        
+        query = cls.query.options(
+            joinedload(cls.users),
+            joinedload(cls.backups)
+        )
+        
+        if database_id:
+            return query.filter_by(id=database_id).first()
+        return query.all()
 
 class DatabaseUser(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -46,7 +66,7 @@ class DatabaseUser(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    def to_dict(self):
+    def to_dict(self, include_relations=True):
         return {
             'id': self.id,
             'database_id': self.database_id,
@@ -67,7 +87,7 @@ class DatabaseBackup(db.Model):
     status = db.Column(db.String(50), default='completed')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    def to_dict(self):
+    def to_dict(self, include_relations=True):
         return {
             'id': self.id,
             'database_id': self.database_id,
