@@ -57,15 +57,16 @@ class Config:
     SSL_KEY_PATH = os.environ.get('SSL_KEY_PATH') or '/etc/ssl/private'
     SSL_AUTO_RENEWAL = os.environ.get('SSL_AUTO_RENEWAL', 'True').lower() == 'true'
     
-    # Apache Configuration
-    APACHE_CONFIG_DIR = os.environ.get('APACHE_CONFIG_DIR') or '/etc/apache2/sites-available'
-    APACHE_SITES_ENABLED = os.environ.get('APACHE_SITES_ENABLED') or '/etc/apache2/sites-enabled'
-    APACHE_RELOAD_COMMAND = os.environ.get('APACHE_RELOAD_COMMAND') or 'systemctl reload apache2'
+    # Nginx Configuration
+    NGINX_CONFIG_DIR = os.environ.get('NGINX_CONFIG_DIR') or '/etc/nginx/sites-available'
+    NGINX_SITES_ENABLED = os.environ.get('NGINX_SITES_ENABLED') or '/etc/nginx/sites-enabled'
+    NGINX_RELOAD_COMMAND = os.environ.get('NGINX_RELOAD_COMMAND') or 'systemctl reload nginx'
     
     # DNS Configuration
     BIND_CONFIG_DIR = os.environ.get('BIND_CONFIG_DIR') or '/etc/bind'
-    BIND_ZONES_DIR = os.environ.get('BIND_ZONES_DIR') or '/etc/bind/zones'
+    BIND_ZONES_DIR = os.environ.get('BIND_ZONES_DIR') or '/var/lib/bind'
     BIND_RELOAD_COMMAND = os.environ.get('BIND_RELOAD_COMMAND') or 'systemctl reload bind9'
+    BIND_DEV_MODE = os.environ.get('BIND9_DEV_MODE', 'False').lower() == 'true'
     
     # MySQL Configuration
     MYSQL_HOST = os.environ.get('MYSQL_HOST') or 'localhost'
@@ -74,9 +75,7 @@ class Config:
     MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD') or ''
     MYSQL_ROOT_PASSWORD = os.environ.get('MYSQL_ROOT_PASSWORD') or ''
     
-    # FTP Configuration
-    FTP_CONFIG_DIR = os.environ.get('FTP_CONFIG_DIR') or '/etc/vsftpd'
-    FTP_USER_DIR = os.environ.get('FTP_USER_DIR') or '/home'
+
     
     # Logging Configuration
     LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'

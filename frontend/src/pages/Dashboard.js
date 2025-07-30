@@ -134,7 +134,7 @@ const Dashboard = () => {
       emailAccounts: 0,
       dnsRecords: 0,
       sslCertificates: 0,
-      ftpAccounts: 0,
+      
       isAdmin: false
     },
     systemStatus: {
@@ -374,12 +374,12 @@ const Dashboard = () => {
   }
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: 'var(--primary-bg)', padding: '24px' }}>
-      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: 'var(--primary-bg)' }}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
         {/* Header */}
         <div style={{ marginBottom: '32px' }}>
           <h1 style={{ 
-            fontSize: '32px', 
+            fontSize: '28px', 
             fontWeight: 'bold', 
             color: 'var(--primary-text)', 
             marginBottom: '8px' 
@@ -392,7 +392,7 @@ const Dashboard = () => {
               : `Welcome back, ${user?.username || 'User'}. Manage your resources below.`
             }
           </p>
-      </div>
+        </div>
 
         {/* Admin Notice */}
         {stats.isAdmin && (

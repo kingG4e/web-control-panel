@@ -192,7 +192,7 @@ const Database = () => {
       };
 
       if (editingDb) {
-        console.log("Updating (not implemented yet)");
+        // console.log("Updating (not implemented yet)");
       } else {
         await dbApi.createDatabase(submitData);
       }
@@ -284,37 +284,17 @@ const Database = () => {
     <PageLayout
       title="Database Management"
       description="Manage your databases securely"
+      actions={
+        <button
+          onClick={() => setShowForm(true)}
+          className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
+        >
+          <PlusIcon className="w-4 h-4 mr-2" />
+          Create Database
+        </button>
+      }
     >
       <div className="space-y-6">
-        {/* Page Header with User Context */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-[var(--text-primary)]">My Databases</h1>
-            <p className="mt-1 text-[var(--text-secondary)]">
-              {user?.role === 'admin' ? 
-                'Manage all system databases' : 
-                `Manage databases for your ${userDomains.length} domain(s)`
-              }
-            </p>
-          </div>
-          <div className="flex items-center space-x-3">
-            {/* User Permission Badge */}
-            <div className="flex items-center px-3 py-1 bg-blue-50 border border-blue-200 rounded-lg">
-              <ShieldCheckIcon className="w-4 h-4 text-blue-500 mr-2" />
-              <span className="text-sm text-blue-700 font-medium">
-                {user?.role === 'admin' ? 'Administrator' : 'Domain Owner'}
-              </span>
-            </div>
-            <button
-              onClick={() => setShowForm(true)}
-              className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
-            >
-              <PlusIcon className="w-4 h-4 mr-2" />
-              Create Database
-            </button>
-          </div>
-        </div>
-
         {/* Error Display */}
         {error && (
           <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start">

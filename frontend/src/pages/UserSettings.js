@@ -68,7 +68,7 @@ const UserSettings = () => {
     can_manage_ssl: false,
     can_manage_email: false,
     can_manage_database: false,
-    can_manage_ftp: false,
+    
   };
   const [permData, setPermData] = useState(initialPerm);
 
@@ -189,7 +189,7 @@ const UserSettings = () => {
         ssl: permData.can_manage_ssl,
         email: permData.can_manage_email,
         database: permData.can_manage_database,
-        ftp: permData.can_manage_ftp,
+        
       };
       await users.setDomainPermissions(permUser.id, { domain: permData.domain, permissions });
       setSuccess(`Permissions set for ${permUser.username}`);
@@ -458,7 +458,7 @@ const UserSettings = () => {
                   { key: 'can_manage_ssl', label: 'SSL Certificates' },
                   { key: 'can_manage_email', label: 'Email' },
                   { key: 'can_manage_database', label: 'Database' },
-                  { key: 'can_manage_ftp', label: 'FTP' },
+          
                 ].map(({ key, label }) => (
                   <div key={key} className="flex items-center gap-2">
                     <input type="checkbox" id={key} checked={permData[key]} onChange={(e) => setPermData({ ...permData, [key]: e.target.checked })} className="h-4 w-4 text-[var(--accent-color)] border-[var(--border-color)]" />

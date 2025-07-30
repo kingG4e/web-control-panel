@@ -43,7 +43,6 @@ class RoundcubeService:
             return "http://localhost/roundcube"  # Simulation
         
         # Try to detect the web server configuration
-        apache_sites = '/etc/apache2/sites-available'
         nginx_sites = '/etc/nginx/sites-available'
         
         # Default URLs to try
@@ -289,73 +288,104 @@ $config['check_all_folders'] = true;
         # For now, return empty string for default installation
         return ""
     
-    def configure_apache_roundcube(self, domain=None):
-        """Configure Apache virtual host for Roundcube"""
+    def configure_nginx_roundcube(self, domain=None):
+        """Configure Nginx virtual host for Roundcube"""
         try:
             if self.is_windows:
-                print(f"[SIMULATION] Would configure Apache for Roundcube on domain: {domain}")
+                print(f"[SIMULATION] Would configure Nginx for Roundcube on domain: {domain}")
                 return True
             
-            # Create Apache configuration for Roundcube
+            # Create Nginx configuration for Roundcube
             if domain:
-                config_content = f"""
-<VirtualHost *:80>
-    ServerName webmail.{domain}
-    DocumentRoot {self.roundcube_path}
-    
-    <Directory {self.roundcube_path}>
-        Options -Indexes
-        AllowOverride All
-        Require all granted
-    </Directory>
-    
-    # Security headers
-    Header always set X-Content-Type-Options nosniff
-    Header always set X-Frame-Options DENY
-    Header always set X-XSS-Protection "1; mode=block"
-    
-    # Hide server information
-    ServerTokens Prod
-    ServerSignature Off
-    
-    ErrorLog ${{APACHE_LOG_DIR}}/roundcube-{domain}-error.log
-    CustomLog ${{APACHE_LOG_DIR}}/roundcube-{domain}-access.log combined
-</VirtualHost>
+                config_content = f"""server {{
+    listen 80;
+    server_name webmail.{domain};
+    root {self.roundcube_path};
+    index index.php index.html;
 
-<VirtualHost *:443>
-    ServerName webmail.{domain}
-    DocumentRoot {self.roundcube_path}
-    
-    SSLEngine on
-    SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
-    SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
-    
-    <Directory {self.roundcube_path}>
-        Options -Indexes
-        AllowOverride All
-        Require all granted
-    </Directory>
-    
     # Security headers
-    Header always set X-Content-Type-Options nosniff
-    Header always set X-Frame-Options DENY
-    Header always set X-XSS-Protection "1; mode=block"
-    Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options DENY;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+
+    # Hide server information
+    server_tokens off;
+
+    location / {{
+        try_files $uri $uri/ /index.php?$query_string;
+    }}
+
+    location ~ \.php$ {{
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }}
+
+    location ~ /\.ht {{
+        deny all;
+    }}
+
+    error_log /var/log/nginx/roundcube-{domain}-error.log;
+    access_log /var/log/nginx/roundcube-{domain}-access.log;
+}}
+
+server {{
+    listen 443 ssl http2;
+    server_name webmail.{domain};
+    root {self.roundcube_path};
+    index index.php index.html;
+
+    ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem;
+    ssl_certificate_key /etc/ssl/private/ssl-cert-snakeoil.key;
     
-    ErrorLog ${{APACHE_LOG_DIR}}/roundcube-{domain}-ssl-error.log
-    CustomLog ${{APACHE_LOG_DIR}}/roundcube-{domain}-ssl-access.log combined
-</VirtualHost>
-"""
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # Security headers
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options DENY;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload";
+
+    # Hide server information
+    server_tokens off;
+
+    location / {{
+        try_files $uri $uri/ /index.php?$query_string;
+    }}
+
+    location ~ \.php$ {{
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }}
+
+    location ~ /\.ht {{
+        deny all;
+    }}
+
+    error_log /var/log/nginx/roundcube-{domain}-ssl-error.log;
+    access_log /var/log/nginx/roundcube-{domain}-ssl-access.log;
+}}"""
                 
-                config_file = f"/etc/apache2/sites-available/roundcube-{domain}.conf"
+                config_file = f"/etc/nginx/sites-available/roundcube-{domain}.conf"
                 with open(config_file, 'w') as f:
                     f.write(config_content)
                 
                 # Enable site
-                subprocess.run(['a2ensite', f'roundcube-{domain}'], check=True)
-                subprocess.run(['systemctl', 'reload', 'apache2'], check=True)
+                subprocess.run(['ln', '-sf', config_file, f'/etc/nginx/sites-enabled/roundcube-{domain}.conf'], check=True)
+                subprocess.run(['nginx', '-t'], check=True)
+                subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
             
             return True
             
         except Exception as e:
-            raise Exception(f'Failed to configure Apache for Roundcube: {str(e)}')
+            raise Exception(f'Failed to configure Nginx for Roundcube: {str(e)}')

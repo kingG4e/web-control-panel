@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import SettingsModal from '../modals/SettingsModal';
-import NotificationDropdown from '../NotificationDropdown';
 
 const Navbar = ({ onMenuClick }) => {
     const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -31,7 +30,7 @@ const Navbar = ({ onMenuClick }) => {
         <>
             <header className="navbar">
                 <div className="navbar-content">
-                    {/* Left section with menu button and breadcrumb */}
+                    {/* Left section with menu button */}
                     <div className="flex items-center space-x-4">
                         <button
                             onClick={onMenuClick}
@@ -41,44 +40,10 @@ const Navbar = ({ onMenuClick }) => {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                             </svg>
                         </button>
-                        <nav className="hidden md:flex items-center space-x-2 text-sm">
-                            <span className="text-[var(--secondary-text)]">Control Panel</span>
-                            <span className="text-[var(--tertiary-text)]">/</span>
-                            <span className="text-[var(--primary-text)] font-medium">Dashboard</span>
-                        </nav>
                     </div>
 
-                    {/* Right section with search and profile */}
+                    {/* Right section with profile */}
                     <div className="flex items-center space-x-4">
-                        {/* Search */}
-                        <div className="hidden md:flex items-center">
-                            <div className="relative group">
-                                <input
-                                    type="text"
-                                    placeholder="Search..."
-                                    className="w-64 pl-10 pr-4 py-2.5 bg-[var(--input-bg)] border border-[var(--border-color)] 
-                                    rounded-lg text-[var(--primary-text)] placeholder-[var(--tertiary-text)] 
-                                    transition-all duration-200 shadow-sm
-                                    focus:outline-none focus:ring-2 focus:ring-[var(--focus-border)] focus:border-transparent
-                                    hover:border-[var(--hover-border)] group-hover:border-[var(--hover-border)]"
-                                />
-                                <svg
-                                    className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--tertiary-text)] 
-                                    group-hover:text-[var(--secondary-text)] transition-colors duration-200"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                >
-                                    <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                                    />
-                                </svg>
-                            </div>
-                        </div>
-
                         {/* Help */}
                         <button className="p-2 rounded-lg text-[var(--secondary-text)] hover:text-[var(--primary-text)] hover:bg-[var(--hover-bg)] transition-colors">
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -86,8 +51,7 @@ const Navbar = ({ onMenuClick }) => {
                             </svg>
                         </button>
 
-                        {/* Notifications */}
-                        <NotificationDropdown />
+
 
                         {/* Profile Dropdown */}
                         <div className="relative">

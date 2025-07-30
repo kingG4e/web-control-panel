@@ -5,7 +5,7 @@ class VirtualHost(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     domain = db.Column(db.String(255), unique=True, nullable=False)
     document_root = db.Column(db.String(255), nullable=False)
-    linux_username = db.Column(db.String(32), unique=True, nullable=False)
+    linux_username = db.Column(db.String(32), nullable=False)  # Removed unique=True
     server_admin = db.Column(db.String(255))
     php_version = db.Column(db.String(10))
     status = db.Column(db.String(50), default='active')

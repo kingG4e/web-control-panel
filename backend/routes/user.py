@@ -2,7 +2,6 @@ from flask import Blueprint, request, jsonify
 from services.user_service import UserService
 from services.virtual_host_service import VirtualHostService
 from services.mysql_service import MySQLService
-from services.ftp_service import FTPService
 from services.ssl_service import SSLService
 from services.email_service import EmailService
 from services.bind_service import BindService
@@ -15,19 +14,16 @@ import shutil
 from models.virtual_host import VirtualHost
 from models.dns import DNSZone, DNSRecord
 from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias
-from models.ftp import FTPAccount
 from models.ssl_certificate import SSLCertificate
-from services.apache_service import ApacheService
+from services.nginx_service import NginxService
 from services.mysql_service import MySQLService
 from services.ssl_service import SSLService
-from services.ftp_service import FTPService
 from models.database import db
 
 user_bp = Blueprint('user', __name__)
 user_service = UserService()
 vhost_service = VirtualHostService()
 mysql_service = MySQLService()
-ftp_service = FTPService()
 ssl_service = SSLService()
 email_service = EmailService()
 bind_service = BindService()
@@ -183,9 +179,14 @@ def delete_account(current_user, id):
             
             for vhost in virtual_hosts:
                 try:
-                    # Delete Apache virtual host configuration
-                    vhost_service.remove_apache_config(vhost['domain'])
-                    deletion_log.append(f"Deleted Apache config for {vhost['domain']}")
+                    # Delete Nginx virtual host configuration
+                    try:
+                        # Create a temporary virtual host object for deletion
+                        temp_vh = type('obj', (object,), {'domain': vhost['domain']})
+                        nginx_service.delete_virtual_host(temp_vh)
+                        deletion_log.append(f"Deleted Nginx config for {vhost['domain']}")
+                    except Exception as e:
+                        deletion_log.append(f"Failed to delete Nginx config for {vhost['domain']}: {str(e)}")
                     
                     # Delete DNS zone
                     bind_service.delete_zone(vhost['domain'])
@@ -225,26 +226,7 @@ def delete_account(current_user, id):
             errors.append(error_msg)
             deletion_log.append(error_msg)
         
-        # Step 3: Delete all FTP accounts
-        try:
-            ftp_accounts = ftp_service.get_accounts_by_user(id)
-            deletion_log.append(f"Found {len(ftp_accounts)} FTP accounts to delete")
-            
-            for ftp_account in ftp_accounts:
-                try:
-                    ftp_service.delete_account(ftp_account['username'])
-                    deletion_log.append(f"Deleted FTP account {ftp_account['username']}")
-                except Exception as e:
-                    error_msg = f"Error deleting FTP account {ftp_account['username']}: {str(e)}"
-                    errors.append(error_msg)
-                    deletion_log.append(error_msg)
-                    
-        except Exception as e:
-            error_msg = f"Error fetching FTP accounts: {str(e)}"
-            errors.append(error_msg)
-            deletion_log.append(error_msg)
-        
-        # Step 4: Delete all SSL certificates
+                # Step 3: Delete all SSL certificates
         try:
             ssl_certs = ssl_service.get_certificates_by_user(id)
             deletion_log.append(f"Found {len(ssl_certs)} SSL certificates to delete")
@@ -263,7 +245,7 @@ def delete_account(current_user, id):
             errors.append(error_msg)
             deletion_log.append(error_msg)
         
-        # Step 5: Delete all email domains and accounts
+        # Step 4: Delete all email domains and accounts
         try:
             email_domains = email_service.get_domains_by_user(id)
             deletion_log.append(f"Found {len(email_domains)} email domains to delete")
@@ -282,7 +264,7 @@ def delete_account(current_user, id):
             errors.append(error_msg)
             deletion_log.append(error_msg)
         
-        # Step 6: Delete Linux user account
+        # Step 5: Delete Linux user account
         try:
             linux_service.delete_user(target_user.username)
             deletion_log.append(f"Deleted Linux user {target_user.username}")
@@ -291,7 +273,7 @@ def delete_account(current_user, id):
             errors.append(error_msg)
             deletion_log.append(error_msg)
         
-        # Step 7: Delete user home directory
+        # Step 6: Delete user home directory
         try:
             home_dir = f"/home/{target_user.username}"
             if os.path.exists(home_dir):
@@ -312,9 +294,7 @@ def delete_account(current_user, id):
             mysql_service.delete_all_records_by_user(id)
             deletion_log.append("Deleted database records")
             
-            # Remove FTP records
-            ftp_service.delete_all_records_by_user(id)
-            deletion_log.append("Deleted FTP records")
+
             
             # Remove SSL certificate records
             ssl_service.delete_all_records_by_user(id)
@@ -345,9 +325,9 @@ def delete_account(current_user, id):
         
         # Step 10: Reload services
         try:
-            # Reload Apache
-            os.system('systemctl reload apache2')
-            deletion_log.append("Reloaded Apache")
+            # Reload Nginx
+            os.system('systemctl reload nginx')
+            deletion_log.append("Reloaded Nginx")
             
             # Reload Bind9
             bind_service.reload_bind()
@@ -508,12 +488,8 @@ def get_account_stats(current_user):
         except Exception as e:
             print(f"Error getting databases count: {str(e)}")
 
-        # Get FTP accounts count
-        try:
-            ftp_accounts = ftp_service.get_accounts_by_user(current_user.id)
-            stats['ftpAccounts'] = len(ftp_accounts) if ftp_accounts else 0
-        except Exception as e:
-            print(f"Error getting FTP accounts count: {str(e)}")
+        # FTP removed from system
+        stats['ftpAccounts'] = 0
 
         # Get SSL certificates count
         try:
@@ -569,12 +545,7 @@ def export_user_data(current_user):
             export_data['databases'] = []
             export_data['statistics']['databases_count'] = 0
             
-        # Get FTP accounts
-        try:
-            ftp_accounts = ftp_service.get_accounts_by_user(current_user.id)
-            export_data['ftp_accounts'] = [ftp.to_dict() for ftp in ftp_accounts] if ftp_accounts else []
-            export_data['statistics']['ftp_accounts_count'] = len(ftp_accounts) if ftp_accounts else 0
-        except Exception as e:
+        # FTP removed from system
             export_data['ftp_accounts'] = []
             export_data['statistics']['ftp_accounts_count'] = 0
             
@@ -661,11 +632,8 @@ def get_account_details(current_user):
         except:
             pass
             
-        try:
-            ftp_accounts = ftp_service.get_accounts_by_user(current_user.id)
-            stats['ftpAccounts'] = len(ftp_accounts) if ftp_accounts else 0
-        except:
-            pass
+        # FTP removed from system
+        stats['ftpAccounts'] = 0
             
         try:
             ssl_certs = ssl_service.get_certificates_by_user(current_user.id)
@@ -706,30 +674,30 @@ def delete_system_user(current_user, username):
         from models.virtual_host import VirtualHost
         from models.dns import DNSZone, DNSRecord
         from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias
-        from models.ftp import FTPAccount
+
         from models.ssl_certificate import SSLCertificate
-        from services.apache_service import ApacheService
+        from services.nginx_service import NginxService
         from services.bind_service import BindService
         from services.email_service import EmailService
         from services.mysql_service import MySQLService
         from services.ssl_service import SSLService
-        from services.ftp_service import FTPService
+
         
-        apache_service = ApacheService()
+        nginx_service = NginxService()
         bind_service = BindService()
         email_service = EmailService()
         mysql_service = MySQLService()
         ssl_service = SSLService()
-        ftp_service = FTPService()
+
 
         # --- Virtual Hosts & related domain cleanup ---
         vhosts = VirtualHost.query.filter_by(linux_username=username).all()
         for vh in vhosts:
             domain = vh.domain
             try:
-                apache_service.delete_virtual_host(vh)
+                nginx_service.delete_virtual_host(vh)
             except Exception as e:
-                print(f"[SystemUserDelete] Apache cleanup failed for {domain}: {e}")
+                print(f"[SystemUserDelete] Nginx cleanup failed for {domain}: {e}")
 
             # DNS
             try:
@@ -760,8 +728,7 @@ def delete_system_user(current_user, username):
             except Exception as e:
                 print(f"[SystemUserDelete] SSL cleanup failed for {domain}: {e}")
 
-            # FTP accounts for domain
-            FTPAccount.query.filter_by(domain=domain).delete(synchronize_session=False)
+
 
             # Database – attempt by derived name
             try:
@@ -774,12 +741,11 @@ def delete_system_user(current_user, username):
             # Finally delete VirtualHost row
             db.session.delete(vh)
 
-        # 2. Delete standalone FTP accounts for username
-        FTPAccount.query.filter_by(username=username).delete(synchronize_session=False)
+        # 2. All FTP accounts have been removed from system
 
         db.session.commit()
 
-        # 3. Delete Linux user account itself (home dir, maildir, etc.)
+        # 2. Delete Linux user account itself (home dir, maildir, etc.)
         success, message = linux_service.delete_user(username)
         if not success:
             return jsonify({'success': False, 'error': message}), 400

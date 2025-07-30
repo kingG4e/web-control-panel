@@ -47,6 +47,10 @@
   --input-border: #2a3447;
   --input-text: #ffffff;
   --input-placeholder: #64748b;
+  
+  /* Additional theme variables */
+  --error-border: rgba(239, 68, 68, 0.3);
+  --error-text: #ef4444;
 }
 
 :root[data-theme="light"] {
@@ -94,6 +98,10 @@
   --input-border: #e2e8f0;
   --input-text: #0f172a;
   --input-placeholder: #64748b;
+  
+  /* Additional theme variables */
+  --error-border: rgba(220, 38, 38, 0.3);
+  --error-text: #dc2626;
 }
 
 @layer base {
@@ -325,10 +333,9 @@
  * Layer 3: Layout Elements (z-[75] to z-[90])
  *   - Sidebar: z-[75]
  *   - Navbar: z-[80] 
- *   - Profile/Notification Dropdowns: z-[85]
+ *   - Profile Dropdowns: z-[85]
  *   - Sidebar Tooltips: z-[90]
  * Layer 4: Modals (z-[100]+)
- *   - NotificationModal: z-[150] (HIGH PRIORITY - Must be visible)
  *   - ConfirmationModal: z-[110]
  *   - SettingsModal: z-[120]
  *   - Page Modals (DNS, Database, etc.): z-[120]
@@ -509,11 +516,11 @@
  * Layer 3: Layout Elements (z-[75] to z-[90])
  *   - Sidebar: z-[75]
  *   - Navbar: z-[80] 
- *   - Profile/Notification Dropdowns: z-[85]
+ *   - Profile Dropdowns: z-[85]
  *   - Sidebar Tooltips: z-[90]
  *
  * Layer 4: Modals (z-[100]+)
- *   - NotificationModal: z-[150] (HIGH PRIORITY - Must be visible)
+
  *   - ConfirmationModal: z-[110]
  *   - SettingsModal: z-[120]
  *   - Page Modals (DNS, Database, etc.): z-[120]
@@ -576,11 +583,31 @@
 @keyframes slideUp {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(20px) scale(0.95);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes modalFadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes modalSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -590,4 +617,12 @@
 
 .animate-slideUp {
   animation: slideUp 0.3s ease-out;
+}
+
+.animate-modalFadeIn {
+  animation: modalFadeIn 0.3s ease-out;
+}
+
+.animate-modalSlideIn {
+  animation: modalSlideIn 0.3s ease-out;
 } 

@@ -4,7 +4,6 @@ from typing import Optional, List, Dict
 from .base_service import BaseService
 from models import VirtualHost, VirtualHostAlias
 from models.base import db
-from models.notification import Notification
 
 class VirtualHostService(BaseService):
     def __init__(self):
@@ -30,26 +29,10 @@ class VirtualHostService(BaseService):
             # Reload Nginx
             self._reload_nginx()
 
-            # Create success notification
-            Notification.create_notification(
-                title="Virtual Host Created",
-                message=f"Virtual host for {virtual_host.domain} has been created successfully.",
-                type="success",
-                category="virtual_host",
-                user_id=virtual_host.user_id
-            )
+
 
             return virtual_host
         except Exception as e:
-            # Create error notification if user_id is available
-            if 'virtual_host' in locals() and virtual_host.user_id:
-                Notification.create_notification(
-                    title="Virtual Host Creation Failed",
-                    message=f"Failed to create virtual host for {virtual_host.domain}: {str(e)}",
-                    type="error",
-                    category="virtual_host",
-                    user_id=virtual_host.user_id
-                )
             # Cleanup if something goes wrong
             if 'virtual_host' in locals():
                 super().delete(virtual_host.id)
@@ -85,25 +68,10 @@ class VirtualHostService(BaseService):
             # Reload Nginx
             self._reload_nginx()
 
-            # Create success notification
-            Notification.create_notification(
-                title="Virtual Host Deleted",
-                message=f"Virtual host {domain} has been deleted successfully.",
-                type="success",
-                category="virtual_host",
-                user_id=user_id
-            )
+
 
             return result
         except Exception as e:
-            # Create error notification
-            Notification.create_notification(
-                title="Virtual Host Deletion Failed",
-                message=f"Failed to delete virtual host {virtual_host.domain}: {str(e)}",
-                type="error",
-                category="virtual_host",
-                user_id=virtual_host.user_id
-            )
             raise e
 
     def add_alias(self, virtual_host_id: int, domain: str) -> Optional[VirtualHostAlias]:
@@ -159,6 +127,15 @@ class VirtualHostService(BaseService):
     root {virtual_host.document_root};
     index index.html index.htm index.php;
 
+    # Security headers
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options DENY;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+
+    # Hide server information
+    server_tokens off;
+
     location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
@@ -173,11 +150,14 @@ class VirtualHostService(BaseService):
     }}
 """
         
-        config += """
-    location ~ /\.ht {
+        config += f"""
+    location ~ /\.ht {{
         deny all;
-    }
-}"""
+    }}
+
+    error_log /var/log/nginx/{virtual_host.domain}_error.log;
+    access_log /var/log/nginx/{virtual_host.domain}_access.log;
+}}"""
 
         # Write configuration to file
         config_path = os.path.join(self.nginx_sites_path, f"{virtual_host.domain}.conf")

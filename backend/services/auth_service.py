@@ -19,12 +19,10 @@ class AuthService:
         """Check if Unix authentication modules are available."""
         try:
             import pwd
-            import spwd
-            import crypt
-            import pam
+            # pwd is the minimum requirement - other modules are optional
             return True
         except ImportError:
-            logger.warning("Unix authentication modules not available (Windows system)")
+            logger.warning("pwd module not available (likely Windows system)")
             return False
     
     def authenticate_user(self, username: str, password: str) -> Dict[str, Any]:
@@ -103,36 +101,52 @@ class AuthService:
     
     def _authenticate_system_user(self, username: str, password: str) -> bool:
         """Authenticate user using system authentication."""
-        if not self.unix_auth_available:
-            # Development mode - simple authentication
-            return username == "admin" and password == "admin"
-        
+        # Always try to use PAM first for proper system authentication
         try:
             import pam
             auth = pam.pam()
             return auth.authenticate(username, password)
+        except ImportError:
+            logger.warning("PAM module not available - trying alternative authentication")
+            
+        # Fallback to crypt-based authentication if PAM is not available
+        try:
+            import pwd
+            import spwd
+            import crypt
+            
+            # Check if user exists in system
+            user_info = pwd.getpwnam(username)
+            
+            # Get password hash from shadow file
+            shadow_entry = spwd.getspnam(username)
+            encrypted_password = shadow_entry.sp_pwd
+            
+            # Check if account is locked or disabled
+            if encrypted_password.startswith('!') or encrypted_password.startswith('*'):
+                logger.warning(f"Account {username} is locked or disabled")
+                return False
+            
+            # Verify password using crypt
+            return crypt.crypt(password, encrypted_password) == encrypted_password
+            
+        except (ImportError, KeyError, PermissionError) as e:
+            logger.error(f"System authentication fallback failed: {e}")
+            return False
         except Exception as e:
             logger.error(f"System authentication error: {e}")
             return False
     
     def _get_system_user_info(self, username: str) -> Optional[Any]:
         """Get user information from system."""
-        if not self.unix_auth_available:
-            # Return default user info for development
-            if username == "admin":
-                return type('DefaultUser', (), {
-                    'pw_name': username,
-                    'pw_uid': 1000,
-                    'pw_gid': 1000,
-                    'pw_dir': '/home/' + username,
-                    'pw_shell': '/bin/bash'
-                })()
-            return None
-        
         try:
             import pwd
             return pwd.getpwnam(username)
+        except ImportError:
+            logger.warning("pwd module not available")
+            return None
         except KeyError:
+            logger.debug(f"User {username} not found in system")
             return None
     
     def _create_system_user(self, username: str, user_info: Any) -> User:

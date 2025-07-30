@@ -5,14 +5,12 @@ from models.user import User
 from models.dns import DNSZone, DNSRecord
 from models.email import EmailDomain, EmailAccount
 from models.ssl_certificate import SSLCertificate
-from models.ftp import FTPAccount
-from services.apache_service import ApacheService
+from services.nginx_service import NginxService
 from services.linux_user_service import LinuxUserService
 from services.bind_service import BindService
 from services.email_service import EmailService
 from services.mysql_service import MySQLService
 from services.ssl_service import SSLService
-from services.ftp_service import FTPService
 from utils.auth import token_required
 from utils.permissions import (
     check_virtual_host_permission, 
@@ -20,6 +18,7 @@ from utils.permissions import (
     filter_virtual_hosts_by_permission,
     check_document_root_permission
 )
+from utils.rate_limiter import rate_limit
 import os
 import re
 import subprocess
@@ -29,18 +28,21 @@ import string
 from datetime import datetime, timedelta
 
 virtual_host_bp = Blueprint('virtual_host', __name__)
-apache_service = ApacheService()
+nginx_service = NginxService()
 linux_user_service = LinuxUserService()
 bind_service = BindService()
 email_service = EmailService()
 mysql_service = MySQLService()
 ssl_service = SSLService()
-ftp_service = FTPService()
 
 def _generate_secure_password(length=12):
     """Generate a secure random password"""
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+def _get_document_root_path(linux_username):
+    """Generate document root path"""
+    return f'/home/{linux_username}/public_html'
 
 def _create_cgi_bin_folder(home_directory):
     """Create cgi-bin folder for the user"""
@@ -48,25 +50,6 @@ def _create_cgi_bin_folder(home_directory):
         cgi_bin_path = os.path.join(home_directory, 'cgi-bin')
         os.makedirs(cgi_bin_path, exist_ok=True)
         os.chmod(cgi_bin_path, 0o755)
-        
-        # Create a sample CGI script
-        sample_cgi = os.path.join(cgi_bin_path, 'test.cgi')
-        with open(sample_cgi, 'w') as f:
-            f.write('''#!/usr/bin/env python3
-import cgi
-import cgitb
-
-# Enable CGI error reporting
-cgitb.enable()
-
-print("Content-Type: text/html\\n")
-print("<html><body>")
-print("<h1>CGI Test Script</h1>")
-print("<p>This is a test CGI script.</p>")
-print("</body></html>")
-''')
-        os.chmod(sample_cgi, 0o755)
-        
         return True
     except Exception as e:
         print(f"Warning: Could not create cgi-bin folder: {e}")
@@ -249,27 +232,7 @@ def _create_mysql_database(domain, linux_username):
         print(f"Warning: Could not create MySQL database: {e}")
         return None, None, None
 
-def _create_ftp_account(domain, linux_username, linux_password, home_directory, user_id):
-    """Create FTP account"""
-    # Check if FTP account already exists
-    existing_ftp = FTPAccount.query.filter_by(username=linux_username).first()
-    if existing_ftp:
-        print(f"FTP account for {linux_username} already exists, skipping creation")
-        return existing_ftp
-    
-    ftp_data = {
-        'username': linux_username,
-        'password': linux_password,
-        'home_directory': home_directory,
-        'is_sftp': True,
-        'user_id': user_id,
-        'domain': domain,
-        'permissions': '0755',
-        'quota_size_mb': 1024  # 1GB default quota
-    }
-    
-    ftp_account = ftp_service.create_account(ftp_data)
-    return ftp_account
+
 
 def _auto_fix_virtual_host(virtual_host):
     """Auto-fix virtual host to prevent PHP-related errors"""
@@ -339,27 +302,26 @@ def get_virtual_hosts(current_user):
 
 @virtual_host_bp.route('/api/virtual-hosts', methods=['POST'])
 @token_required
+@rate_limit('virtual_host_create', per_user=True)
 @check_virtual_host_permission('create')
 def create_virtual_host(current_user):
     """
     สร้าง Virtual Host ตามขั้นตอนที่กำหนด:
     1. สร้าง Linux user + home directory
-    2. สร้าง Apache VirtualHost + DNS zone
+    2. สร้าง Nginx VirtualHost + DNS zone
     3. สร้าง maildir + email mapping
     4. สร้างฐานข้อมูล + user
-    5. สร้าง FTP user
-    6. ขอ SSL
-    7. บันทึกทั้งหมดในระบบ
+    5. ขอ SSL
+    6. บันทึกทั้งหมดในระบบ
     """
     
     # Store created resources for cleanup on failure
     created_resources = {
         'linux_user': None,
-        'apache_config': None,
+        'nginx_config': None,
         'dns_zone': None,
         'email_domain': None,
         'database': None,
-        'ftp_account': None,
         'ssl_certificate': None,
         'virtual_host_id': None
     }
@@ -434,26 +396,14 @@ def create_virtual_host(current_user):
         # Generate Linux username from domain
         linux_username = linux_user_service.generate_username_from_domain(domain)
         
-        # Check if username already exists in database
-        existing_user_host = VirtualHost.query.filter_by(linux_username=linux_username).first()
-        if existing_user_host:
-            return jsonify({
-                'success': False,
-                'error': f'ชื่อผู้ใช้ Linux "{linux_username}" มีอยู่ในระบบแล้ว กรุณาเลือกโดเมนอื่น',
-                'error_code': 'USERNAME_EXISTS',
-                'existing_username': linux_username,
-                'suggested_alternatives': [
-                    f"{linux_username}2",
-                    f"{linux_username}3",
-                    f"new{linux_username}"
-                ]
-            }), 409
+        # Check if username already exists in database (but allow multiple virtual hosts per user)
+        existing_user_hosts = VirtualHost.query.filter_by(linux_username=linux_username).all()
+        if existing_user_hosts:
+            # User already has virtual hosts, we'll create another one
+            print(f"User {linux_username} already has {len(existing_user_hosts)} virtual host(s), creating additional one")
         
-        # Set document root
-        if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
-            doc_root = data.get('document_root', f'/home/{linux_username}/public_html')
-        else:
-            doc_root = f'/home/{linux_username}/public_html'
+        # Get document root path
+        doc_root = _get_document_root_path(linux_username)
         
         user_password = data['linux_password']
         home_directory = f'/home/{linux_username}'
@@ -499,17 +449,17 @@ def create_virtual_host(current_user):
         db.session.flush()  # Get ID without committing
         created_resources['virtual_host_id'] = virtual_host.id
         
-        # ขั้นตอนที่ 2: สร้าง Apache VirtualHost + DNS zone
-        print("Step 2: Creating Apache VirtualHost + DNS zone...")
+        # ขั้นตอนที่ 2: สร้าง Nginx VirtualHost + DNS zone
+        print("Step 2: Creating Nginx VirtualHost + DNS zone...")
         
-        # สร้าง Apache VirtualHost
+        # สร้าง Nginx VirtualHost
         try:
-            apache_service.create_virtual_host(virtual_host)
-            created_resources['apache_config'] = domain
-            response_data['services_created'].append('Apache VirtualHost')
-            print(f"✓ Apache VirtualHost for {domain} created")
+            nginx_service.create_virtual_host(virtual_host)
+            created_resources['nginx_config'] = domain
+            response_data['services_created'].append('Nginx VirtualHost')
+            print(f"✓ Nginx VirtualHost for {domain} created")
         except Exception as e:
-            raise Exception(f'Failed to create Apache VirtualHost: {str(e)}')
+            raise Exception(f'Failed to create Nginx VirtualHost: {str(e)}')
         
         # สร้าง DNS Zone
         try:
@@ -523,7 +473,7 @@ def create_virtual_host(current_user):
             print(f"Warning: DNS zone creation failed: {e}")
             response_data['errors'].append(f"DNS zone creation failed: {str(e)}")
         
-        response_data['steps_completed'].append('2. Apache VirtualHost + DNS zone created')
+        response_data['steps_completed'].append('2. Nginx VirtualHost + DNS zone created')
         
         # ขั้นตอนที่ 3: สร้าง maildir + email mapping
         print("Step 3: Creating maildir + email mapping...")
@@ -591,45 +541,8 @@ def create_virtual_host(current_user):
         
         response_data['steps_completed'].append('4. MySQL database + user created')
         
-        # ขั้นตอนที่ 5: สร้าง FTP user
-        print("Step 5: Creating FTP user...")
-        try:
-            # Ensure we have a valid virtual host object
-            if not hasattr(virtual_host, 'id') or virtual_host.id is None:
-                db.session.flush()  # Ensure virtual_host has an ID
-            
-            ftp_account = _create_ftp_account(domain, linux_username, password, home_directory, current_user.id)
-            if ftp_account:
-                created_resources['ftp_account'] = ftp_account.id
-                response_data['services_created'].append('FTP/SFTP Account')
-                response_data['ftp_username'] = linux_username
-                response_data['ftp_password'] = password
-                print(f"✓ FTP account for {linux_username} created")
-        except Exception as e:
-            print(f"Warning: FTP account creation failed: {e}")
-            response_data['errors'].append(f"FTP account creation failed: {str(e)}")
-            # If this fails due to session issues, try to recover
-            try:
-                db.session.rollback()
-                # Re-add the virtual host
-                virtual_host = VirtualHost(
-                    domain=domain,
-                    document_root=doc_root,
-                    linux_username=linux_username,
-                    server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
-                    php_version=data.get('php_version', '8.1'),
-                    user_id=current_user.id
-                )
-                db.session.add(virtual_host)
-                db.session.flush()
-                created_resources['virtual_host_id'] = virtual_host.id
-            except Exception as recovery_error:
-                print(f"Warning: Session recovery failed: {recovery_error}")
-        
-        response_data['steps_completed'].append('5. FTP user created')
-        
-        # ขั้นตอนที่ 6: ขอ SSL
-        print("Step 6: Requesting SSL certificate...")
+        # ขั้นตอนที่ 5: ขอ SSL
+        print("Step 5: Requesting SSL certificate...")
         if data.get('create_ssl', False):
             try:
                 existing_ssl = SSLCertificate.query.filter_by(domain=domain).first()
@@ -639,7 +552,7 @@ def create_virtual_host(current_user):
                     response_data['ssl_certificate_id'] = existing_ssl.id
                     response_data['ssl_valid_until'] = existing_ssl.valid_until.isoformat()
                 else:
-                    ssl_cert_info = ssl_service.issue_certificate(domain)
+                    ssl_cert_info = ssl_service.issue_certificate(domain, document_root=doc_root)
                     ssl_certificate = SSLCertificate(
                         domain=domain,
                         certificate_path=ssl_cert_info['certificate_path'],
@@ -731,13 +644,7 @@ def create_virtual_host(current_user):
             except Exception as cleanup_e:
                 cleanup_errors.append(f"SSL cleanup: {str(cleanup_e)}")
         
-        # Cleanup FTP account
-        if created_resources.get('ftp_account'):
-            try:
-                # FTP account cleanup handled by database rollback
-                pass
-            except Exception as cleanup_e:
-                cleanup_errors.append(f"FTP cleanup: {str(cleanup_e)}")
+
         
         # Cleanup MySQL database
         if created_resources.get('database'):
@@ -757,14 +664,14 @@ def create_virtual_host(current_user):
             except Exception as cleanup_e:
                 cleanup_errors.append(f"DNS cleanup: {str(cleanup_e)}")
         
-        # Cleanup Apache config
-        if created_resources.get('apache_config'):
+        # Cleanup Nginx config
+        if created_resources.get('nginx_config'):
             try:
                 # Create a temporary virtual host object for cleanup
-                temp_vh = type('obj', (object,), {'domain': created_resources['apache_config']})
-                apache_service.delete_virtual_host(temp_vh)
+                temp_vh = type('obj', (object,), {'domain': created_resources['nginx_config']})
+                nginx_service.delete_virtual_host(temp_vh)
             except Exception as cleanup_e:
-                cleanup_errors.append(f"Apache cleanup: {str(cleanup_e)}")
+                cleanup_errors.append(f"Nginx cleanup: {str(cleanup_e)}")
         
         # Cleanup Linux user (this should be last as it removes home directory)
         if created_resources.get('linux_user'):
@@ -868,12 +775,12 @@ def update_virtual_host(current_user, id):
         if 'status' in data:
             virtual_host.status = data['status']
         
-        # Update Apache configuration
+        # Update Nginx configuration
         try:
-            apache_service.update_virtual_host(virtual_host)
+            nginx_service.update_virtual_host(virtual_host)
         except Exception as e:
-            print(f"Apache service error: {e}")
-            # Continue even if Apache service fails
+            print(f"Nginx service error: {e}")
+            # Continue even if Nginx service fails
         
         db.session.commit()
         
@@ -908,36 +815,152 @@ def delete_virtual_host(current_user, id):
                 'error': 'Access denied. You can only delete your own virtual hosts.'
             }), 403
         
-        # Remove Apache configuration
-        try:
-            apache_service.delete_virtual_host(virtual_host)
-        except Exception as e:
-            print(f"Apache service error: {e}")
-            # Continue even if Apache service fails
-        
-        # Delete Linux user
+        domain = virtual_host.domain
         linux_username = virtual_host.linux_username
+        deletion_summary = {
+            'virtual_host': False,
+            'nginx_config': False,
+            'linux_user': False,
+            'dns_zone': False,
+            'email_domain': False,
+            'ssl_certificates': False,
+            'databases': False
+        }
+
+        # 1. Remove Nginx configuration
+        try:
+            nginx_service.delete_virtual_host(virtual_host)
+            deletion_summary['nginx_config'] = True
+        except Exception as e:
+            print(f"Nginx service error: {e}")
+            # Continue even if Nginx service fails
+        
+        # 2. Delete related DNS zones and records
+        try:
+            dns_zone = DNSZone.query.filter_by(domain_name=domain).first()
+            if dns_zone:
+                # Delete DNS records (handled by cascade)
+                # Delete BIND zone file
+                try:
+                    bind_service.delete_zone(domain)  # Pass domain name, not zone object
+                except Exception as e:
+                    print(f"Warning: BIND zone file deletion failed: {e}")
+                
+                # Delete from database
+                db.session.delete(dns_zone)
+                deletion_summary['dns_zone'] = True
+        except Exception as e:
+            print(f"Warning: DNS zone deletion failed: {e}")
+
+        # 3. Delete related email domains and accounts
+        try:
+            email_domain = EmailDomain.query.filter_by(virtual_host_id=id).first()
+            if not email_domain:
+                # Also check by domain name in case virtual_host_id is not set
+                email_domain = EmailDomain.query.filter_by(domain=domain).first()
+            
+            if email_domain:
+                # Email accounts will be deleted by cascade (all, delete-orphan)
+                # Delete email service configuration
+                try:
+                    email_service.delete_domain(domain)  # Pass domain string, not EmailDomain object
+                except Exception as e:
+                    print(f"Warning: Email service deletion failed: {e}")
+                
+                # Delete from database
+                db.session.delete(email_domain)
+                deletion_summary['email_domain'] = True
+        except Exception as e:
+            print(f"Warning: Email domain deletion failed: {e}")
+
+        # 4. Delete related SSL certificates
+        try:
+            ssl_certificates = SSLCertificate.query.filter_by(domain=domain).all()
+            for cert in ssl_certificates:
+                try:
+                    ssl_service.delete_certificate(cert.id)  # Pass certificate ID
+                except Exception as e:
+                    print(f"Warning: SSL service deletion failed for {cert.domain}: {e}")
+                
+                db.session.delete(cert)
+            
+            if ssl_certificates:
+                deletion_summary['ssl_certificates'] = True
+        except Exception as e:
+            print(f"Warning: SSL certificate deletion failed: {e}")
+
+        # 5. Delete databases owned by the same user (optional - user may want to keep them)
+        # Note: This is more conservative - we only delete databases if they match the domain pattern
+        try:
+            # Look for databases that might be related to this domain
+            domain_prefix = domain.replace('.', '_').replace('-', '_')
+            
+            # Check Database model for databases owned by the user
+            user_databases = Database.query.filter_by(owner_id=virtual_host.user_id).all()
+            deleted_db_count = 0
+            
+            for database in user_databases:
+                # Only delete databases that appear to be related to this domain
+                if (domain_prefix in database.name or 
+                    linux_username in database.name or 
+                    database.name.startswith(domain.split('.')[0])):  # e.g. "example" from "example.com"
+                    try:
+                        # Delete from MySQL server
+                        mysql_service.delete_database(database.name)  # Pass database name, not ID
+                        # Delete from database model
+                        db.session.delete(database)
+                        deleted_db_count += 1
+                        print(f"Deleted database: {database.name}")
+                    except Exception as e:
+                        print(f"Warning: Database deletion failed for {database.name}: {e}")
+            
+            if deleted_db_count > 0:
+                deletion_summary['databases'] = True
+                print(f"Deleted {deleted_db_count} database(s) related to {domain}")
+            else:
+                print(f"No databases found related to domain {domain}")
+                
+        except Exception as e:
+            print(f"Warning: Database deletion failed: {e}")
+
+        # 6. Delete Linux user and home directory
         try:
             user_success, user_message = linux_user_service.delete_user(linux_username)
-            if not user_success:
+            if user_success:
+                deletion_summary['linux_user'] = True
+            else:
                 print(f"Warning: Failed to delete Linux user {linux_username}: {user_message}")
         except Exception as e:
             print(f"Warning: Error deleting Linux user {linux_username}: {e}")
         
-        # Remove from database
+        # 7. Finally, remove virtual host from database
         db.session.delete(virtual_host)
+        deletion_summary['virtual_host'] = True
+        
+        # Commit all changes
         db.session.commit()
         
+        # Prepare response message
+        deleted_items = [key for key, value in deletion_summary.items() if value]
+        skipped_items = [key for key, value in deletion_summary.items() if not value]
+        
+        message = f'Virtual host {domain} deleted successfully.'
+        if deleted_items:
+            message += f' Deleted: {", ".join(deleted_items)}.'
+        if skipped_items:
+            message += f' Skipped (not found or failed): {", ".join(skipped_items)}.'
+
         return jsonify({
             'success': True,
-            'message': f'Virtual host and Linux user {linux_username} deleted successfully'
+            'message': message,
+            'deletion_summary': deletion_summary
         })
         
     except Exception as e:
         db.session.rollback()
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': f'Failed to delete virtual host: {str(e)}'
         }), 500
 
 # Admin-only routes for managing all virtual hosts
@@ -1077,4 +1100,339 @@ def cleanup_duplicate_services(current_user, domain):
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500 
+
+@virtual_host_bp.route('/api/virtual-hosts/existing-user', methods=['POST'])
+@token_required
+@check_virtual_host_permission('create')
+def create_virtual_host_for_existing_user(current_user):
+    """
+    สร้าง Virtual Host สำหรับ user Linux ที่มีอยู่แล้ว:
+    1. ตรวจสอบว่า user Linux มีอยู่จริง
+    2. สร้าง Nginx VirtualHost + DNS zone
+    3. สร้าง maildir + email mapping
+    4. สร้างฐานข้อมูล + user
+    5. สร้าง FTP user (ถ้ายังไม่มี)
+    6. ขอ SSL
+    7. บันทึกทั้งหมดในระบบ
+    """
+    
+    # Store created resources for cleanup on failure
+    created_resources = {
+        'nginx_config': None,
+        'dns_zone': None,
+        'email_domain': None,
+        'database': None,
+        'ftp_account': None,
+        'ssl_certificate': None,
+        'virtual_host_id': None
+    }
+    
+    try:
+        data = request.get_json()
+        
+        # Check if data is valid JSON
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No data provided or invalid JSON format',
+                'error_code': 'INVALID_REQUEST_DATA'
+            }), 400
+        
+        # Validate required fields
+        required_fields = ['domain', 'linux_username']
+        missing_fields = []
+        for field in required_fields:
+            if field not in data or not data[field] or str(data[field]).strip() == '':
+                missing_fields.append(field)
+        
+        if missing_fields:
+            return jsonify({
+                'success': False,
+                'error': f'Missing required fields: {", ".join(missing_fields)}',
+                'error_code': 'MISSING_REQUIRED_FIELDS',
+                'missing_fields': missing_fields
+            }), 400
+        
+        # Sanitize domain name and username
+        domain = str(data['domain']).strip().lower()
+        linux_username = str(data['linux_username']).strip()
+        data['domain'] = domain
+        data['linux_username'] = linux_username
+        
+        # Validate domain format
+        domain_pattern = r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
+        if not re.match(domain_pattern, domain):
+            return jsonify({
+                'success': False,
+                'error': 'รูปแบบโดเมนไม่ถูกต้อง กรุณาใส่โดเมนในรูปแบบ example.com',
+                'error_code': 'INVALID_DOMAIN_FORMAT',
+                'provided_domain': domain
+            }), 400
+        
+        # Check for reserved domains
+        reserved_domains = ['localhost', 'localhost.localdomain', '127.0.0.1', 'admin', 'www', 'mail', 'ftp', 'root']
+        domain_lower = domain
+        if any(reserved in domain_lower for reserved in reserved_domains):
+            return jsonify({
+                'success': False,
+                'error': f'โดเมน "{domain}" เป็นชื่อที่สงวนไว้ กรุณาเลือกชื่อโดเมนอื่น',
+                'error_code': 'RESERVED_DOMAIN'
+            }), 400
+        
+        # Check if domain already exists
+        existing_host = VirtualHost.query.filter_by(domain=domain).first()
+        if existing_host:
+            return jsonify({
+                'success': False,
+                'error': f'โดเมน "{domain}" มีอยู่ในระบบแล้ว กรุณาเลือกชื่อโดเมนอื่น',
+                'error_code': 'DOMAIN_EXISTS',
+                'existing_domain': domain
+            }), 409
+        
+        # Check if Linux user exists
+        try:
+            import pwd
+            user_info = pwd.getpwnam(linux_username)
+            home_directory = user_info.pw_dir
+        except KeyError:
+            return jsonify({
+                'success': False,
+                'error': f'Linux user "{linux_username}" ไม่มีอยู่ในระบบ กรุณาตรวจสอบชื่อผู้ใช้',
+                'error_code': 'LINUX_USER_NOT_FOUND',
+                'provided_username': linux_username
+            }), 404
+        
+        # Check if user has permission to use this Linux username
+        if not current_user.is_admin and current_user.role != 'admin' and current_user.username != 'root':
+            if current_user.username != linux_username:
+                return jsonify({
+                    'success': False,
+                    'error': f'คุณไม่มีสิทธิ์ใช้ Linux user "{linux_username}" กรุณาใช้ชื่อผู้ใช้ของคุณเอง',
+                    'error_code': 'PERMISSION_DENIED',
+                    'your_username': current_user.username,
+                    'requested_username': linux_username
+                }), 403
+        
+        # Get document root path
+        doc_root = _get_document_root_path(linux_username)
+        
+        # Initialize response data
+        response_data = {
+            'domain': domain,
+            'linux_username': linux_username,
+            'document_root': doc_root,
+            'services_created': [],
+            'errors': [],
+            'steps_completed': []
+        }
+        
+        print(f"\n=== Starting Virtual Host Creation for {domain} (Existing User: {linux_username}) ===")
+        
+        # สร้าง virtual host record เพื่อเตรียมไว้ (ยังไม่ commit)
+        virtual_host = VirtualHost(
+            domain=domain,
+            document_root=doc_root,
+            linux_username=linux_username,
+            server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
+            php_version=data.get('php_version', '8.1'),
+            user_id=current_user.id
+        )
+        db.session.add(virtual_host)
+        db.session.flush()  # Get ID without committing
+        created_resources['virtual_host_id'] = virtual_host.id
+        
+        # ขั้นตอนที่ 1: สร้าง Nginx VirtualHost + DNS zone
+        print("Step 1: Creating Nginx VirtualHost + DNS zone...")
+        
+        # สร้าง Nginx VirtualHost
+        try:
+            nginx_service.create_virtual_host(virtual_host)
+            created_resources['nginx_config'] = domain
+            response_data['services_created'].append('Nginx VirtualHost')
+            print(f"✓ Nginx VirtualHost for {domain} created")
+        except Exception as e:
+            raise Exception(f'Failed to create Nginx VirtualHost: {str(e)}')
+        
+        # สร้าง DNS Zone
+        try:
+            dns_zone = _create_dns_zone(domain, linux_username)
+            if dns_zone:
+                created_resources['dns_zone'] = dns_zone.id
+                response_data['services_created'].append('DNS Zone')
+                response_data['dns_zone_id'] = dns_zone.id
+                print(f"✓ DNS zone for {domain} created")
+        except Exception as e:
+            print(f"Warning: DNS zone creation failed: {e}")
+            response_data['errors'].append(f"DNS zone creation failed: {str(e)}")
+        
+        response_data['steps_completed'].append('1. Nginx VirtualHost + DNS zone created')
+        
+        # ขั้นตอนที่ 2: สร้าง maildir + email mapping
+        print("Step 2: Creating maildir + email mapping...")
+        try:
+            email_domain, email_address, email_password = _create_email_domain(domain, linux_username)
+            if email_domain:
+                email_domain.virtual_host_id = virtual_host.id
+                created_resources['email_domain'] = email_domain.id
+                response_data['services_created'].append('Email Domain + Maildir')
+                response_data['default_email'] = email_address
+                response_data['email_password'] = email_password
+                print(f"✓ Email domain and maildir for {email_address} created")
+            
+            # Create maildir structure
+            maildir_path = f"{home_directory}/Maildir"
+            try:
+                os.makedirs(f"{maildir_path}/cur", exist_ok=True)
+                os.makedirs(f"{maildir_path}/new", exist_ok=True)
+                os.makedirs(f"{maildir_path}/tmp", exist_ok=True)
+                # Set proper permissions
+                if not linux_user_service.is_development:
+                    os.chown(maildir_path, user_info.pw_uid, user_info.pw_gid)
+                    for subdir in ['cur', 'new', 'tmp']:
+                        os.chown(f"{maildir_path}/{subdir}", user_info.pw_uid, user_info.pw_gid)
+                print(f"✓ Maildir structure created at {maildir_path}")
+            except Exception as e:
+                print(f"Warning: Maildir structure creation failed: {e}")
+                
+        except Exception as e:
+            print(f"Warning: Email domain creation failed: {e}")
+            response_data['errors'].append(f"Email domain creation failed: {str(e)}")
+            # Rollback the current transaction and start fresh
+            db.session.rollback()
+            # Re-add the virtual host since rollback removed it
+            virtual_host = VirtualHost(
+                domain=domain,
+                document_root=doc_root,
+                linux_username=linux_username,
+                server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
+                php_version=data.get('php_version', '8.1'),
+                user_id=current_user.id
+            )
+            db.session.add(virtual_host)
+            db.session.flush()
+            created_resources['virtual_host_id'] = virtual_host.id
+        
+        response_data['steps_completed'].append('2. Maildir + email mapping created')
+        
+        # ขั้นตอนที่ 3: สร้างฐานข้อมูล + user
+        print("Step 3: Creating MySQL database + user...")
+        try:
+            db_name, db_user, db_password = _create_mysql_database(domain, linux_username)
+            if db_name:
+                created_resources['database'] = {'name': db_name, 'user': db_user}
+                response_data['services_created'].append('MySQL Database')
+                response_data['database_name'] = db_name
+                response_data['database_user'] = db_user
+                response_data['database_password'] = db_password
+                print(f"✓ MySQL database {db_name} created with user {db_user}")
+        except Exception as e:
+            print(f"Warning: MySQL database creation failed: {e}")
+            response_data['errors'].append(f"MySQL database creation failed: {str(e)}")
+        
+        response_data['steps_completed'].append('3. MySQL database + user created')
+        
+        # ขั้นตอนที่ 4: ขอ SSL
+        print("Step 4: Requesting SSL certificate...")
+        if data.get('create_ssl', True):
+            try:
+                ssl_cert = ssl_service.request_certificate(domain)
+                if ssl_cert:
+                    created_resources['ssl_certificate'] = ssl_cert.id
+                    response_data['services_created'].append('SSL Certificate')
+                    response_data['ssl_status'] = 'requested'
+                    print(f"✓ SSL certificate for {domain} requested")
+            except Exception as e:
+                print(f"Warning: SSL certificate request failed: {e}")
+                response_data['errors'].append(f"SSL certificate request failed: {str(e)}")
+        else:
+            print("SSL certificate creation skipped")
+        
+        response_data['steps_completed'].append('4. SSL certificate requested')
+        
+        # ขั้นตอนที่ 5: บันทึกทั้งหมดในระบบ
+        print("Step 5: Saving everything to database...")
+        try:
+            db.session.commit()
+            print(f"✓ All database changes committed successfully for {domain}")
+            response_data['steps_completed'].append('5. All data saved to database')
+        except Exception as e:
+            print(f"Database commit failed: {e}")
+            raise Exception(f"Failed to save virtual host to database: {str(e)}")
+        
+        # Run auto-fix to ensure no PHP issues
+        try:
+            _auto_fix_virtual_host(virtual_host)
+        except Exception as e:
+            print(f"Warning: Auto-fix failed: {e}")
+        
+        # Prepare success message
+        services_count = len(response_data['services_created'])
+        message = f'🎉 Virtual host created successfully for existing user!\n\n'
+        message += f'📋 Summary:\n'
+        message += f'   Domain: {domain}\n'
+        message += f'   Linux User: {linux_username}\n'
+        message += f'   Document Root: {doc_root}\n\n'
+        
+        if response_data.get('default_email'):
+            message += f'📧 Email: {response_data["default_email"]} (Password: {response_data["email_password"]})\n'
+        if response_data.get('database_name'):
+            message += f'🗄️ Database: {response_data["database_name"]} (User: {response_data["database_user"]}, Password: {response_data["database_password"]})\n'
+        if response_data.get('ftp_username'):
+            if response_data.get('ftp_password') == '[existing]':
+                message += f'📁 FTP/SFTP: {response_data["ftp_username"]} (Using existing account)\n'
+            else:
+                message += f'📁 FTP/SFTP: {response_data["ftp_username"]} (Password: {response_data["ftp_password"]})\n'
+        
+        message += f'\n✅ Services created ({services_count}): {", ".join(response_data["services_created"])}'
+        
+        if response_data['errors']:
+            message += f'\n\n⚠️ Warnings: {len(response_data["errors"])} non-critical issues occurred'
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'data': response_data,
+            'virtual_host_id': virtual_host.id
+        }), 201
+        
+    except Exception as e:
+        print(f"Error creating virtual host for existing user: {e}")
+        
+        # Cleanup on failure
+        cleanup_errors = []
+        
+        # Cleanup database records
+        if created_resources.get('virtual_host_id'):
+            try:
+                db.session.rollback()
+            except Exception as cleanup_e:
+                cleanup_errors.append(f"Database cleanup: {str(cleanup_e)}")
+        
+        # Cleanup DNS zone (external service)
+        if created_resources.get('dns_zone'):
+            try:
+                # BIND cleanup if needed
+                bind_service.delete_zone(domain)
+            except Exception as cleanup_e:
+                cleanup_errors.append(f"DNS cleanup: {str(cleanup_e)}")
+        
+        # Cleanup Nginx config
+        if created_resources.get('nginx_config'):
+            try:
+                # Create a temporary virtual host object for cleanup
+                temp_vh = type('obj', (object,), {'domain': created_resources['nginx_config']})
+                nginx_service.delete_virtual_host(temp_vh)
+            except Exception as cleanup_e:
+                cleanup_errors.append(f"Nginx cleanup: {str(cleanup_e)}")
+        
+        error_message = str(e)
+        if cleanup_errors:
+            error_message += f"\n\nCleanup warnings: {'; '.join(cleanup_errors)}"
+        
+        return jsonify({
+            'success': False,
+            'error': error_message,
+            'cleanup_performed': True,
+            'cleanup_errors': cleanup_errors if cleanup_errors else None
         }), 500 

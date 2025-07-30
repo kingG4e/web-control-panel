@@ -113,12 +113,13 @@ def create_app(config_class=Config) -> Flask:
     # Configure CORS
     CORS(app, 
          supports_credentials=True, 
-         origins=app.config.get('CORS_ORIGINS', [
+         origins=[
              "http://localhost:3000", 
              "http://127.0.0.1:3000",
              "http://0.0.0.0:3000",
+             "http://192.168.128.4:3000",
              "http://192.168.1.174:3000"
-         ]))
+         ])
     
     # Initialize extensions
     init_db(app)
@@ -129,7 +130,6 @@ def create_app(config_class=Config) -> Flask:
     from models.dns import DNSZone, DNSRecord
     from models.ssl_certificate import SSLCertificate, SSLCertificateLog
     from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias
-    from models.ftp import FTPAccount
     
     # Import and register blueprints
     from routes.auth import auth_bp
@@ -140,7 +140,6 @@ def create_app(config_class=Config) -> Flask:
     from routes.ssl import ssl_bp
     from routes.email import email_bp
     from routes.roundcube import roundcube_bp
-    from routes.notifications import notifications_bp
     from routes.user import user_bp
     from routes.database import database_bp
     
@@ -152,7 +151,6 @@ def create_app(config_class=Config) -> Flask:
     app.register_blueprint(ssl_bp)
     app.register_blueprint(email_bp)
     app.register_blueprint(roundcube_bp)
-    app.register_blueprint(notifications_bp)
     app.register_blueprint(user_bp)
     app.register_blueprint(database_bp)
     
@@ -195,9 +193,11 @@ def register_routes(app: Flask) -> None:
     @app.route('/api/health')
     def health_check():
         """Basic health check endpoint."""
+        from datetime import datetime, timezone
+        logger.info(f"Health check requested from {request.remote_addr}")
         return jsonify({
             'status': 'healthy',
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'version': '2.0.0'
         })
     
@@ -230,10 +230,19 @@ def register_routes(app: Flask) -> None:
                     'POST /api/dns/zones/{id}/records': 'Create DNS record'
                 },
                 'system': {
-                    'GET /api/system/health': 'System health check',
-                    'GET /api/system/metrics': 'System metrics',
-                    'GET /api/system/logs': 'System logs',
-                    'GET /api/system/info': 'System information'
+                    'GET /api/system/health': 'Enhanced system health check with scores',
+                    'GET /api/system/metrics': 'System performance metrics',
+                    'GET /api/system/info': 'System information and features',
+                    'GET /api/system/logs': 'System logs (Admin only)',
+                    'GET /api/system/sync-check': 'Database/filesystem sync check (Admin only)',
+                    'POST /api/system/sync-check/fix': 'Auto-fix sync issues (Admin only)',
+                    'GET /api/system/config-validation': 'Validate service configurations (Admin only)',
+                    'GET /api/system/rate-limits': 'View current rate limits',
+                    'POST /api/system/rate-limits/reset': 'Reset rate limits (Admin only)',
+                    'GET /api/system/backup': 'List backups (Admin only)',
+                    'POST /api/system/backup': 'Create full system backup (Admin only)',
+                    'DELETE /api/system/backup/{id}': 'Delete backup (Admin only)',
+                    'POST /api/system/backup/cleanup': 'Cleanup old backups (Admin only)'
                 },
                 'files': {
                     'GET /api/files': 'List files',

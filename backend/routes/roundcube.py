@@ -207,8 +207,8 @@ def configure_domain_webmail(current_user):
                 'error': 'Access denied to this domain'
             }), 403
         
-        # Configure Apache for this domain
-        result = roundcube_service.configure_apache_roundcube(domain)
+        # Configure Nginx for this domain
+        result = roundcube_service.configure_nginx_roundcube(domain)
         
         if result:
             return jsonify({

@@ -138,7 +138,7 @@ class UserService:
             raise Exception(f"Failed to update user: {str(e)}")
 
     def delete_user(self, user_id: int) -> bool:
-        """Delete a user and ALL resources owned by that user (virtual hosts, dns, email, ftp, ssl, linux user, home dir)."""
+        """Delete a user and ALL resources owned by that user (virtual hosts, dns, email, ssl, linux user, home dir)."""
         user = User.query.get(user_id)
         if not user:
             return False
@@ -155,12 +155,12 @@ class UserService:
             from models.virtual_host import VirtualHost
             from models.dns import DNSZone, DNSRecord
             from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias
-            from models.ftp import FTPAccount
+
             from models.ssl_certificate import SSLCertificate
-            from services.apache_service import ApacheService
+            from services.nginx_service import NginxService
             from services.linux_user_service import LinuxUserService
 
-            apache_service = ApacheService()
+            nginx_service = NginxService()
             linux_service = self.linux_user_service
 
             user_vhosts = VirtualHost.query.filter_by(user_id=user_id).all()
@@ -168,9 +168,9 @@ class UserService:
             for vh in user_vhosts:
                 domain = vh.domain
 
-                # Remove Apache/Nginx configuration & home directory via service
+                # Remove Nginx configuration & home directory via service
                 try:
-                    apache_service.delete_virtual_host(vh)
+                    nginx_service.delete_virtual_host(vh)
                 except Exception as e:
                     print(f"Warning: failed to delete vhost cfg for {domain}: {e}")
 
@@ -191,14 +191,12 @@ class UserService:
                 # Delete SSL certificates
                 SSLCertificate.query.filter_by(domain=domain).delete()
 
-                # Delete FTP accounts for domain
-                FTPAccount.query.filter_by(domain=domain).delete()
+
 
                 # Finally delete virtual host record
                 db.session.delete(vh)
 
-            # 2. Delete user's standalone FTP accounts (not domain-specific)
-            FTPAccount.query.filter_by(user_id=user_id).delete()
+            # 2. All FTP accounts have been removed from system
 
             # 3. Delete user roles/permissions associations handled via cascade
 
@@ -261,22 +259,8 @@ class UserService:
             except Exception as e:
                 log.append(f"ERROR during database deletion: {e}")
 
-            # 3. Delete all standalone FTP accounts
-            log.append("Step 3: Deleting FTP accounts...")
-            try:
-                from services.ftp_service import FtpService
-                ftp_service = FtpService()
-                ftp_accounts = ftp_service.get_accounts_by_user(user_id)
-                log.append(f"Found {len(ftp_accounts)} FTP account(s).")
-                for ftp in ftp_accounts:
-                    log.append(f"Deleting FTP account: {ftp.username}")
-                    ftp_service.delete_account(ftp.id)
-                log.append("FTP account deletion step completed.")
-            except Exception as e:
-                log.append(f"ERROR during FTP account deletion: {e}")
-
-            # 4. Delete all SSL certificates
-            log.append("Step 4: Deleting SSL certificates...")
+            # 3. Delete all SSL certificates
+            log.append("Step 3: Deleting SSL certificates...")
             try:
                 from services.ssl_service import SSLService
                 ssl_service = SSLService()
@@ -292,8 +276,8 @@ class UserService:
             except Exception as e:
                 log.append(f"ERROR during SSL certificate deletion: {e}")
 
-            # 5. Delete the Linux user
-            log.append(f"Step 5: Deleting Linux user '{username}'...")
+            # 4. Delete the Linux user
+            log.append(f"Step 4: Deleting Linux user '{username}'...")
             try:
                 if user.is_system_user and username != 'root':
                     self.linux_user_service.delete_user(username)
@@ -303,8 +287,8 @@ class UserService:
             except Exception as e:
                 log.append(f"ERROR during Linux user deletion: {e}")
 
-            # 6. Finally, delete the user record from the database
-            log.append(f"Step 6: Deleting user record for '{username}' from database...")
+            # 5. Finally, delete the user record from the database
+            log.append(f"Step 5: Deleting user record for '{username}' from database...")
             try:
                 db.session.delete(user)
                 db.session.commit()
@@ -350,7 +334,7 @@ class UserService:
                 'ssl': perm.can_manage_ssl,
                 'email': perm.can_manage_email,
                 'database': perm.can_manage_database,
-                'ftp': perm.can_manage_ftp
+    
             }
             for perm in user.domain_permissions
         }
@@ -378,7 +362,7 @@ class UserService:
             domain_perm.can_manage_ssl = permissions.get('ssl', False)
             domain_perm.can_manage_email = permissions.get('email', False)
             domain_perm.can_manage_database = permissions.get('database', False)
-            domain_perm.can_manage_ftp = permissions.get('ftp', False)
+
 
             db.session.add(domain_perm)
             db.session.commit()
@@ -528,8 +512,7 @@ class UserService:
                     return domain_perm.can_manage_email
                 elif resource_type == 'database':
                     return domain_perm.can_manage_database
-                elif resource_type == 'ftp':
-                    return domain_perm.can_manage_ftp
+                
 
         return False
 
@@ -566,15 +549,24 @@ class UserService:
         """Get default system users for development."""
         users = []
         
-        # Create default admin user if it doesn't exist
-        admin_user = self.get_user_by_username('admin')
-        if not admin_user:
-            admin_user = self.create_user('admin', 'admin', 'admin@localhost', 'admin')
-            admin_user.is_system_user = True
-            admin_user.system_uid = 1000
-            db.session.commit()
+        # Try to get actual system users first
+        try:
+            import pwd
+            for user_info in pwd.getpwall():
+                # Include regular users (UID >= 1000) and root; skip service accounts
+                if (user_info.pw_uid >= 1000 or user_info.pw_name == 'root') and \
+                   user_info.pw_shell not in ('/usr/sbin/nologin', '/bin/false', '/sbin/nologin'):
+                    # Check if user exists in database
+                    user = self.get_user_by_username(user_info.pw_name)
+                    if not user:
+                        # Create user in database
+                        user = self._create_system_user_from_info(user_info)
+                    users.append(user)
+            return users
+        except ImportError:
+            logger.warning("pwd module not available - creating default admin user only")
         
-        users.append(admin_user)
+        # No fallback admin user creation - system users only
         return users
     
     def _get_actual_system_users(self) -> List[User]:

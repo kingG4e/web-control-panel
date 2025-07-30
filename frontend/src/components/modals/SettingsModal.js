@@ -3,7 +3,6 @@ import {
   Cog6ToothIcon,
   UserIcon,
   ShieldCheckIcon,
-  BellIcon,
   LanguageIcon,
   PaintBrushIcon,
   ChartBarIcon,
@@ -31,13 +30,6 @@ const SettingsModal = ({ isOpen, onClose }) => {
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [settings, setSettings] = useState({
-    notifications: {
-      emailNotifications: true,
-      pushNotifications: true,
-      notifyOnLogin: true,
-      notifyOnBackup: true,
-      notifyOnError: true
-    },
     security: {
       twoFactorAuth: false,
       sessionTimeout: '30',
@@ -80,7 +72,7 @@ const SettingsModal = ({ isOpen, onClose }) => {
       setAccountStats({
         virtualHosts: '-',
         databases: '-',
-        ftpAccounts: '-',
+    
         sslCertificates: '-'
       });
     } finally {
@@ -137,14 +129,11 @@ const SettingsModal = ({ isOpen, onClose }) => {
       }
 
       setIsDeleting(true);
-      console.log('Attempting to delete account...');
       
       const response = await api.delete('/users/delete-account');
-      console.log('Delete response:', response);
       
       // Any 2xx status code is considered success
       if (response.status >= 200 && response.status < 300) {
-        console.log('Account deleted successfully');
         await logout();
         onClose();
         navigate('/login?deleted=true');
@@ -208,11 +197,7 @@ const SettingsModal = ({ isOpen, onClose }) => {
       label: 'Security',
       icon: <ShieldCheckIcon className="w-5 h-5" />
     },
-    {
-      id: 'notifications',
-      label: 'Notifications',
-      icon: <BellIcon className="w-5 h-5" />
-    }
+
   ];
 
   const renderTabContent = () => {
@@ -223,31 +208,43 @@ const SettingsModal = ({ isOpen, onClose }) => {
             <ModalSectionTitle>General Settings</ModalSectionTitle>
             <div className="grid gap-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
                   Language
                 </label>
                 <select
                   value={language}
                   onChange={(e) => changeLanguage(e.target.value)}
-                  className="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2 rounded-lg focus:outline-none focus:ring-2"
+                  style={{
+                    backgroundColor: 'var(--input-bg)',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--primary-text)',
+                    focusRingColor: 'var(--focus-border)'
+                  }}
                 >
                   <option value="en">English</option>
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
                   Theme
                 </label>
                 <select
                   value={themePreference}
                   onChange={(e) => changeTheme(e.target.value)}
-                  className="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2 rounded-lg focus:outline-none focus:ring-2"
+                  style={{
+                    backgroundColor: 'var(--input-bg)',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--primary-text)',
+                    focusRingColor: 'var(--focus-border)'
+                  }}
                 >
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
                   <option value="system">System</option>
                 </select>
-                <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                <p className="mt-2 text-sm" style={{ color: 'var(--secondary-text)' }}>
                   {themePreference === 'system' ? 'Follows your system theme preference' : `Using ${themePreference} theme`}
                 </p>
               </div>
@@ -262,8 +259,8 @@ const SettingsModal = ({ isOpen, onClose }) => {
             
             {isLoadingStats ? (
               <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Loading...</p>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto mb-4" style={{ borderColor: 'var(--accent-color)' }}></div>
+                <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>Loading...</p>
               </div>
             ) : loadError ? (
               <ModalInfoBox variant="error">
@@ -276,56 +273,54 @@ const SettingsModal = ({ isOpen, onClose }) => {
               <>
                 {/* Resource Usage Cards */}
                 <div>
-                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Resource Usage</h4>
+                  <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--primary-text)' }}>Resource Usage</h4>
                   <div className="grid grid-cols-2 gap-3">
                     {/* Virtual Hosts Card */}
-                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="rounded-lg p-4 border" style={{ 
+                      backgroundColor: 'var(--card-bg)', 
+                      borderColor: 'var(--border-color)' 
+                    }}>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-gray-600 dark:text-gray-400">Virtual Hosts</span>
-                        <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <span className="text-xs" style={{ color: 'var(--secondary-text)' }}>Virtual Hosts</span>
+                        <svg className="w-4 h-4" style={{ color: 'var(--accent-color)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
                         </svg>
                       </div>
-                      <div className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+                      <div className="text-2xl font-bold mb-1" style={{ color: 'var(--primary-text)' }}>
                         {accountStats?.virtualHosts || 0}
                       </div>
                     </div>
 
                     {/* Databases Card */}
-                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="rounded-lg p-4 border" style={{ 
+                      backgroundColor: 'var(--card-bg)', 
+                      borderColor: 'var(--border-color)' 
+                    }}>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-gray-600 dark:text-gray-400">Databases</span>
-                        <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <span className="text-xs" style={{ color: 'var(--secondary-text)' }}>Databases</span>
+                        <svg className="w-4 h-4" style={{ color: 'var(--accent-color)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
                         </svg>
                       </div>
-                      <div className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+                      <div className="text-2xl font-bold mb-1" style={{ color: 'var(--primary-text)' }}>
                         {accountStats?.databases || 0}
                       </div>
                     </div>
 
-                    {/* FTP Accounts Card */}
-                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-gray-600 dark:text-gray-400">FTP Accounts</span>
-                        <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                        </svg>
-                      </div>
-                      <div className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
-                        {accountStats?.ftpAccounts || 0}
-                      </div>
-                    </div>
+
 
                     {/* SSL Certificates Card */}
-                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="rounded-lg p-4 border" style={{ 
+                      backgroundColor: 'var(--card-bg)', 
+                      borderColor: 'var(--border-color)' 
+                    }}>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-gray-600 dark:text-gray-400">SSL Certificates</span>
-                        <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <span className="text-xs" style={{ color: 'var(--secondary-text)' }}>SSL Certificates</span>
+                        <svg className="w-4 h-4" style={{ color: 'var(--accent-color)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                         </svg>
                       </div>
-                      <div className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+                      <div className="text-2xl font-bold mb-1" style={{ color: 'var(--primary-text)' }}>
                         {accountStats?.sslCertificates || 0}
                       </div>
                     </div>
@@ -334,43 +329,49 @@ const SettingsModal = ({ isOpen, onClose }) => {
 
                 {/* Account Management */}
                 <div>
-                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Account Management</h4>
+                  <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--primary-text)' }}>Account Management</h4>
                   <div className="space-y-2">
                     <button
                       onClick={handleExportData}
                       disabled={isExporting}
-                      className="w-full text-left px-4 py-3 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex justify-between items-center"
+                      className="w-full text-left px-4 py-3 rounded-lg transition-colors flex justify-between items-center bg-[var(--card-bg)] border border-[var(--border-color)] hover:bg-[var(--hover-bg)]"
                     >
                       <div>
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">Export Account Data</p>
-                        <p className="text-xs text-gray-600 dark:text-gray-400">Download all your data as JSON</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--primary-text)' }}>Export Account Data</p>
+                        <p className="text-xs" style={{ color: 'var(--secondary-text)' }}>Download all your data as JSON</p>
                       </div>
-                      <ArrowDownTrayIcon className="w-5 h-5 text-gray-500" />
+                      <ArrowDownTrayIcon className="w-5 h-5" style={{ color: 'var(--secondary-text)' }} />
                     </button>
                   </div>
                 </div>
 
                 {/* Danger Zone */}
-                <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                  <h4 className="text-sm font-medium text-red-600 dark:text-red-400 mb-3">Danger Zone</h4>
+                <div className="pt-6" style={{ borderTop: '1px solid var(--border-color)' }}>
+                  <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--danger-color)' }}>Danger Zone</h4>
                   <ModalInfoBox variant="error">
                     <p className="mb-3">
                       Delete your account permanently. This action cannot be undone.
                     </p>
                     <details className="group">
-                      <summary className="cursor-pointer text-sm text-red-600 hover:text-red-700 font-medium">
+                      <summary className="cursor-pointer text-sm font-medium" style={{ color: 'var(--danger-color)' }}>
                         Delete Account
                       </summary>
                       <div className="mt-3 space-y-3">
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          To confirm deletion, type your username <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">{user?.username}</span> below:
+                        <p className="text-xs" style={{ color: 'var(--secondary-text)' }}>
+                          To confirm deletion, type your username <span className="font-mono px-1 rounded" style={{ backgroundColor: 'var(--secondary-bg)' }}>{user?.username}</span> below:
                         </p>
                         <input
                           type="text"
                           placeholder="Enter your username to confirm"
                           value={deleteConfirm}
                           onChange={(e) => setDeleteConfirm(e.target.value)}
-                          className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-red-300 dark:border-red-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className="w-full px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2"
+                          style={{
+                            backgroundColor: 'var(--input-bg)',
+                            border: '1px solid var(--danger-color)',
+                            color: 'var(--primary-text)',
+                            focusRingColor: 'var(--danger-color)'
+                          }}
                         />
                         <ModalButton
                           variant="danger"
@@ -399,15 +400,7 @@ const SettingsModal = ({ isOpen, onClose }) => {
           </div>
         );
 
-      case 'notifications':
-        return (
-          <div className="space-y-6">
-            <ModalSectionTitle>Notification Settings</ModalSectionTitle>
-            <ModalInfoBox variant="info">
-              <p>Notification settings will be implemented in future updates.</p>
-            </ModalInfoBox>
-          </div>
-        );
+
 
       default:
         return null;
@@ -430,13 +423,13 @@ const SettingsModal = ({ isOpen, onClose }) => {
       isOpen={isOpen}
       onClose={onClose}
       title="Settings"
-      titleIcon={<Cog6ToothIcon className="w-6 h-6 text-gray-600 dark:text-gray-400" />}
+      titleIcon={<Cog6ToothIcon className="w-6 h-6" style={{ color: 'var(--secondary-text)' }} />}
       footer={footer}
       maxWidth="max-w-4xl"
     >
       <div className="flex h-full">
         {/* Sidebar */}
-        <div className="w-64 border-r border-gray-200 dark:border-gray-700 p-4">
+        <div className="w-64 p-4" style={{ borderRight: '1px solid var(--border-color)' }}>
           <nav className="space-y-1">
             {tabs.map(tab => (
               <button
@@ -444,8 +437,8 @@ const SettingsModal = ({ isOpen, onClose }) => {
                 onClick={() => setActiveTab(tab.id)}
                 className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
                   activeTab === tab.id
-                    ? 'bg-blue-500 text-white'
-                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
+                    ? 'bg-[var(--accent-color)] hover:bg-[var(--accent-hover)] text-white'
+                    : 'bg-transparent hover:bg-[var(--hover-bg)] text-[var(--secondary-text)] hover:text-[var(--primary-text)]'
                 }`}
               >
                 {tab.icon}

@@ -215,7 +215,7 @@ const EditVirtualHost = () => {
                   color: 'var(--primary-text)',
                   focusRingColor: 'var(--accent-color)'
                 }}
-                placeholder="/var/www/example.com"
+                placeholder="/home/username/public_html"
               />
             </div>
 

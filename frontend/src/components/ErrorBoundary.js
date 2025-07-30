@@ -12,6 +12,12 @@ class ErrorBoundary extends React.Component {
   }
 
   static getDerivedStateFromError(error) {
+    // Don't show error boundary for cancellation errors
+    if (ErrorBoundary.isCancellationError(error)) {
+      console.debug('Cancellation error caught by ErrorBoundary, not showing error UI:', error);
+      return { hasError: false };
+    }
+
     // Update state so the next render will show the fallback UI
     return { 
       hasError: true,
@@ -19,7 +25,23 @@ class ErrorBoundary extends React.Component {
     };
   }
 
+  static isCancellationError(error) {
+    const errorMessage = error?.message?.toLowerCase() || '';
+    return (
+      errorMessage.includes('canceled') ||
+      errorMessage.includes('cancelled') ||
+      errorMessage.includes('aborted') ||
+      error?.name === 'AbortError' ||
+      error?.code === 'ERR_CANCELED'
+    );
+  }
+
   componentDidCatch(error, errorInfo) {
+    // Don't process cancellation errors
+    if (ErrorBoundary.isCancellationError(error)) {
+      return;
+    }
+
     // Log the error to console and any error reporting service
     console.error('ErrorBoundary caught an error:', error, errorInfo);
     
@@ -31,6 +53,27 @@ class ErrorBoundary extends React.Component {
     // You can also log the error to an error reporting service here
     // Example: logErrorToService(error, errorInfo);
   }
+
+  componentDidMount() {
+    // Listen for unhandled promise rejections specific to this component
+    window.addEventListener('unhandledrejection', this.handleUnhandledRejection);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('unhandledrejection', this.handleUnhandledRejection);
+  }
+
+  handleUnhandledRejection = (event) => {
+    // Filter out cancellation errors from promise rejections
+    if (ErrorBoundary.isCancellationError(event.reason)) {
+      console.debug('Promise cancellation handled by ErrorBoundary');
+      event.preventDefault();
+      return;
+    }
+
+    // Log other promise rejections for debugging
+    console.warn('Unhandled promise rejection in ErrorBoundary:', event.reason);
+  };
 
   handleReload = () => {
     window.location.reload();
@@ -53,7 +96,7 @@ class ErrorBoundary extends React.Component {
     };
 
     // You can send this to your error reporting service
-    console.log('Error Report:', errorReport);
+    // console.log('Error Report:', errorReport);
     
     // For now, just copy to clipboard
     navigator.clipboard.writeText(JSON.stringify(errorReport, null, 2))

@@ -78,7 +78,7 @@ class Permission(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), unique=True, nullable=False)
     description = db.Column(db.String(255))
-    resource_type = db.Column(db.String(50))  # virtual_host, database, email, ftp, etc.
+    resource_type = db.Column(db.String(50))  # virtual_host, database, email, etc.
     action = db.Column(db.String(50))  # create, read, update, delete
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -101,7 +101,7 @@ class DomainPermission(db.Model):
     can_manage_ssl = db.Column(db.Boolean, default=False)
     can_manage_email = db.Column(db.Boolean, default=False)
     can_manage_database = db.Column(db.Boolean, default=False)
-    can_manage_ftp = db.Column(db.Boolean, default=False)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -115,7 +115,7 @@ class DomainPermission(db.Model):
             'can_manage_ssl': self.can_manage_ssl,
             'can_manage_email': self.can_manage_email,
             'can_manage_database': self.can_manage_database,
-            'can_manage_ftp': self.can_manage_ftp,
+
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }

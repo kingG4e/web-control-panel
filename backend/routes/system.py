@@ -1,24 +1,26 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from functools import wraps
-from utils.auth import token_required
-from routes.auth import login_required
+from utils.auth import token_required, admin_required
+from utils.rate_limiter import rate_limit, check_rate_limit_status, reset_rate_limit
+from services.sync_check_service import SyncCheckService
+from services.backup_service import BackupService
 import platform
 import time
 import subprocess
 import os
 from datetime import datetime, timedelta
-import redis
 
 # Import psutil with better error handling
 try:
     import psutil
     PSUTIL_AVAILABLE = True
-    # print("psutil module loaded successfully")  # Hidden
 except ImportError as e:
     PSUTIL_AVAILABLE = False
     print(f"Warning: psutil module not available: {e}")  # Keep - important warning
 
 system_bp = Blueprint('system', __name__)
+sync_check_service = SyncCheckService()
+backup_service = BackupService()
 
 # Simple in-memory cache
 _cache = {}
@@ -99,14 +101,12 @@ def get_system_stats():
 def get_service_status():
     """Get service status with caching"""
     services = [
-        {'name': 'Apache', 'service': 'apache2'},
+        {'name': 'Nginx', 'service': 'nginx'},
         {'name': 'MySQL', 'service': 'mysql'},
         {'name': 'BIND', 'service': 'bind9'},
         {'name': 'Postfix', 'service': 'postfix'},
         {'name': 'Dovecot', 'service': 'dovecot'},
-        {'name': 'ProFTPD', 'service': 'proftpd'},
         {'name': 'SSH', 'service': 'ssh'},
-        {'name': 'Fail2Ban', 'service': 'fail2ban'},
     ]
     
     result = []
@@ -291,11 +291,8 @@ def get_server_info():
 def get_dashboard_stats(current_user):
     """Get dashboard statistics for the current user"""
     try:
-        # print(f"Dashboard stats requested by user: {current_user.username} (ID: {current_user.id})")  # Hidden
-        
         # Check if user is admin
         is_admin = current_user.role == 'admin' or current_user.is_admin
-        # print(f"User {current_user.username} is admin: {is_admin}")  # Hidden
         
         # Try to import models and count safely
         try:
@@ -303,11 +300,9 @@ def get_dashboard_stats(current_user):
             if is_admin:
                 # Admin sees all virtual hosts
                 virtual_hosts_count = VirtualHost.query.count()
-                # print(f"Dashboard (Admin): Found {virtual_hosts_count} total virtual hosts")  # Hidden
             else:
                 # Regular users see only their own virtual hosts
                 virtual_hosts_count = VirtualHost.query.filter_by(user_id=current_user.id).count()
-                # print(f"Dashboard (User {current_user.username}): Found {virtual_hosts_count} virtual hosts")  # Hidden
         except Exception as e:
             print(f"Dashboard: Error counting virtual hosts: {e}")  # Keep - error
             virtual_hosts_count = 0
@@ -375,20 +370,7 @@ def get_dashboard_stats(current_user):
             print(f"Dashboard: Error counting SSL certificates: {e}")  # Keep - error
             ssl_certificates_count = 0
         
-        try:
-            from models.ftp import FTPAccount
-            if is_admin:
-                ftp_accounts_count = FTPAccount.query.count()
-            else:
-                # Filter by user if FTPAccount model has user_id field
-                try:
-                    ftp_accounts_count = FTPAccount.query.filter_by(user_id=current_user.id).count()
-                except:
-                    # If no user_id field, regular users see 0
-                    ftp_accounts_count = 0
-        except Exception as e:
-            print(f"Dashboard: Error counting FTP accounts: {e}")  # Keep - error
-            ftp_accounts_count = 0
+        ftp_accounts_count = 0  # FTP removed from system
         
         result = {
             'success': True,
@@ -403,7 +385,6 @@ def get_dashboard_stats(current_user):
             }
         }
         
-        # print(f"Dashboard stats result for {current_user.username} (admin={is_admin}): {result}")  # Hidden
         return jsonify(result)
         
     except Exception as e:
@@ -414,7 +395,7 @@ def get_dashboard_stats(current_user):
 def get_service_logs(service):
     try:
         # Security: only allow specific service names
-        allowed_services = ['apache2', 'mysql', 'postfix', 'roundcube', 'bind9', 'syslog']
+        allowed_services = ['nginx', 'mysql', 'postfix', 'roundcube', 'bind9', 'syslog']
         if service not in allowed_services:
             return jsonify({'success': False, 'error': 'Service not allowed'}), 400
         
@@ -473,7 +454,7 @@ def restart_service(current_user, service):
             return jsonify({'success': False, 'error': 'Admin access required'}), 403
         
         # Security: only allow specific service names
-        allowed_services = ['apache2', 'mysql', 'postfix', 'roundcube', 'bind9']
+        allowed_services = ['nginx', 'mysql', 'postfix', 'roundcube', 'bind9']
         if service not in allowed_services:
             return jsonify({'success': False, 'error': 'Service not allowed'}), 400
         
@@ -505,74 +486,472 @@ def restart_service(current_user, service):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@system_bp.route('/api/system/health')
-def health_check():
-    """Enhanced health check endpoint"""
+@system_bp.route('/api/system/sync-check', methods=['GET'])
+@token_required
+@rate_limit('sync_check', per_user=True)
+def run_sync_check(current_user):
+    """รัน sync check ระหว่าง database และไฟล์ระบบ"""
     try:
-        # Check database connection
-        db_status = "healthy"
-        try:
-            db.session.execute('SELECT 1')
-        except Exception as e:
-            db_status = f"unhealthy: {str(e)}"
+        # เฉพาะ admin เท่านั้นที่สามารถรัน full sync check ได้
+        if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required for sync check'
+            }), 403
         
-        # Check Redis connection
-        redis_status = "healthy"
-        try:
-            redis_client = redis.Redis(host='localhost', port=6379, db=0)
-            redis_client.ping()
-        except Exception as e:
-            redis_status = f"unhealthy: {str(e)}"
-        
-        # Check disk space
-        disk_status = "healthy"
-        try:
-            disk_usage = psutil.disk_usage('/')
-            disk_percent = disk_usage.percent
-            if disk_percent > 90:
-                disk_status = f"warning: {disk_percent}% used"
-        except Exception as e:
-            disk_status = f"unhealthy: {str(e)}"
-        
-        # Check memory usage
-        memory_status = "healthy"
-        try:
-            memory = psutil.virtual_memory()
-            memory_percent = memory.percent
-            if memory_percent > 90:
-                memory_status = f"warning: {memory_percent}% used"
-        except Exception as e:
-            memory_status = f"unhealthy: {str(e)}"
-        
-        # Overall status
-        overall_status = "healthy"
-        if any(status != "healthy" for status in [db_status, redis_status, disk_status, memory_status]):
-            overall_status = "degraded"
+        # รัน sync check
+        results = sync_check_service.run_full_sync_check(current_user.id)
         
         return jsonify({
-            'status': overall_status,
-            'timestamp': datetime.utcnow().isoformat(),
-            'version': '2.0.0',
-            'services': {
-                'database': db_status,
-                'redis': redis_status,
-                'disk': disk_status,
-                'memory': memory_status
-            }
-        }), 200 if overall_status == "healthy" else 503
+            'success': True,
+            'data': results
+        })
         
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
         return jsonify({
-            'status': 'unhealthy',
-            'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
-        }), 503
+            'success': False,
+            'error': str(e)
+        }), 500
 
-@system_bp.route('/api/system/metrics')
-def system_metrics():
-    """System metrics endpoint for monitoring"""
+@system_bp.route('/api/system/sync-check/fix', methods=['POST'])
+@token_required
+@admin_required
+def auto_fix_sync_issues(current_user):
+    """พยายามแก้ไขปัญหา sync อัตโนมัติ"""
     try:
+        data = request.get_json()
+        if not data or 'issue_type' not in data or 'domain' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields: issue_type, domain'
+            }), 400
+        
+        result = sync_check_service.auto_fix_issue(
+            data['issue_type'], 
+            data['domain'], 
+            **data.get('extra_params', {})
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': result
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/health', methods=['GET'])
+@token_required
+def system_health_check(current_user):
+    """ตรวจสอบสุขภาพระบบโดยรวม"""
+    try:
+        health_data = {
+            'timestamp': datetime.now().isoformat(),
+            'system': {
+                'platform': platform.platform(),
+                'python_version': platform.python_version(),
+                'uptime': None,
+                'load_average': None
+            },
+            'resources': {
+                'cpu_percent': psutil.cpu_percent(interval=1),
+                'memory': {
+                    'total': psutil.virtual_memory().total,
+                    'available': psutil.virtual_memory().available,
+                    'percent': psutil.virtual_memory().percent,
+                    'used': psutil.virtual_memory().used
+                },
+                'disk': {
+                    'total': psutil.disk_usage('/').total,
+                    'free': psutil.disk_usage('/').free,
+                    'used': psutil.disk_usage('/').used,
+                    'percent': psutil.disk_usage('/').percent
+                }
+            },
+            'services': sync_check_service.check_system_health(),
+            'database': {
+                'connected': True,
+                'connection_pool': None
+            }
+        }
+        
+        # เพิ่มข้อมูล uptime สำหรับ Linux
+        if platform.system() != 'Windows':
+            try:
+                with open('/proc/uptime', 'r') as f:
+                    uptime_seconds = float(f.readline().split()[0])
+                    health_data['system']['uptime'] = uptime_seconds
+                
+                health_data['system']['load_average'] = os.getloadavg()
+            except Exception:
+                pass
+        
+        # ตรวจสอบการเชื่อมต่อฐานข้อมูล
+        try:
+            from models.base import db
+            db.session.execute('SELECT 1')
+            health_data['database']['connected'] = True
+        except Exception as e:
+            health_data['database']['connected'] = False
+            health_data['database']['error'] = str(e)
+        
+        # คำนวณ health score
+        health_score = 100
+        if health_data['resources']['cpu_percent'] > 80:
+            health_score -= 20
+        if health_data['resources']['memory']['percent'] > 80:
+            health_score -= 20
+        if health_data['resources']['disk']['percent'] > 90:
+            health_score -= 30
+        if not health_data['database']['connected']:
+            health_score -= 50
+        
+        # ตรวจสอบ services ที่ล้มเหลว
+        failed_services = len([item for item in health_data['services']['items'] 
+                             if item['status'] not in ['active', 'running']])
+        health_score -= (failed_services * 10)
+        
+        health_data['health_score'] = max(0, health_score)
+        health_data['status'] = 'healthy' if health_score >= 80 else 'warning' if health_score >= 60 else 'critical'
+        
+        return jsonify({
+            'success': True,
+            'data': health_data
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/rate-limits', methods=['GET'])
+@token_required
+def get_rate_limits(current_user):
+    """ดูสถานะ rate limits ปัจจุบัน"""
+    try:
+        rules = ['virtual_host_create', 'virtual_host_delete', 'ssl_create', 
+                'email_create', 'database_create', 'sync_check', 'general_api']
+        
+        rate_limits = {}
+        for rule in rules:
+            rate_limits[rule] = check_rate_limit_status(rule)
+        
+        return jsonify({
+            'success': True,
+            'data': rate_limits
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/rate-limits/reset', methods=['POST'])
+@token_required
+@admin_required
+def reset_user_rate_limits(current_user):
+    """รีเซ็ต rate limits สำหรับผู้ใช้ (admin เท่านั้น)"""
+    try:
+        data = request.get_json()
+        rule_name = data.get('rule_name')
+        target_user_id = data.get('user_id')
+        
+        if not rule_name:
+            return jsonify({
+                'success': False,
+                'error': 'Missing rule_name'
+            }), 400
+        
+        client_id = f"user_{target_user_id}" if target_user_id else None
+        result = reset_rate_limit(rule_name, client_id)
+        
+        return jsonify({
+            'success': result,
+            'message': 'Rate limit reset successfully' if result else 'Failed to reset rate limit'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/config-validation', methods=['GET'])
+@token_required
+@admin_required
+def validate_configurations(current_user):
+    """ตรวจสอบความถูกต้องของไฟล์ configuration ต่างๆ"""
+    try:
+        validation_results = {
+            'timestamp': datetime.now().isoformat(),
+            'nginx': {'valid': None, 'errors': []},
+            'bind': {'valid': None, 'errors': []},
+            'postfix': {'valid': None, 'errors': []},
+            'dovecot': {'valid': None, 'errors': []},
+            'mysql': {'valid': None, 'errors': []}
+        }
+        
+        # ตรวจสอบ Nginx configuration
+        try:
+            if platform.system() != 'Windows':
+                result = subprocess.run(['nginx', '-t'], capture_output=True, text=True, timeout=10)
+                validation_results['nginx']['valid'] = result.returncode == 0
+                if result.returncode != 0:
+                    validation_results['nginx']['errors'] = result.stderr.split('\n')
+            else:
+                validation_results['nginx']['valid'] = True
+        except Exception as e:
+            validation_results['nginx']['valid'] = False
+            validation_results['nginx']['errors'] = [str(e)]
+        
+        # ตรวจสอบ BIND configuration
+        try:
+            if platform.system() != 'Windows':
+                result = subprocess.run(['named-checkconf'], capture_output=True, text=True, timeout=10)
+                validation_results['bind']['valid'] = result.returncode == 0
+                if result.returncode != 0:
+                    validation_results['bind']['errors'] = result.stderr.split('\n')
+            else:
+                validation_results['bind']['valid'] = True
+        except Exception as e:
+            validation_results['bind']['valid'] = False
+            validation_results['bind']['errors'] = [str(e)]
+        
+        # ตรวจสอบ Postfix configuration
+        try:
+            if platform.system() != 'Windows':
+                result = subprocess.run(['postfix', 'check'], capture_output=True, text=True, timeout=10)
+                validation_results['postfix']['valid'] = result.returncode == 0
+                if result.returncode != 0:
+                    validation_results['postfix']['errors'] = result.stderr.split('\n')
+            else:
+                validation_results['postfix']['valid'] = True
+        except Exception as e:
+            validation_results['postfix']['valid'] = False
+            validation_results['postfix']['errors'] = [str(e)]
+        
+        # ตรวจสอบ MySQL connection
+        try:
+            from models.base import db
+            db.session.execute('SELECT VERSION()')
+            validation_results['mysql']['valid'] = True
+        except Exception as e:
+            validation_results['mysql']['valid'] = False
+            validation_results['mysql']['errors'] = [str(e)]
+        
+        # คำนวณผลรวม
+        total_services = len(validation_results) - 1  # ไม่นับ timestamp
+        valid_services = sum(1 for k, v in validation_results.items() 
+                           if k != 'timestamp' and v.get('valid') is True)
+        
+        validation_results['summary'] = {
+            'total_services': total_services,
+            'valid_services': valid_services,
+            'invalid_services': total_services - valid_services,
+            'overall_valid': valid_services == total_services
+        }
+        
+        return jsonify({
+            'success': True,
+            'data': validation_results
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/logs', methods=['GET'])
+@token_required
+@admin_required  
+def get_system_logs(current_user):
+    """ดู system logs (admin เท่านั้น)"""
+    try:
+        log_type = request.args.get('type', 'nginx')  # nginx, mysql, mail, dns
+        lines = int(request.args.get('lines', 100))
+        lines = min(lines, 1000)  # จำกัดไม่เกิน 1000 บรรทัด
+        
+        log_files = {
+            'nginx': ['/var/log/nginx/error.log', '/var/log/nginx/access.log'],
+            'mysql': ['/var/log/mysql/error.log'],
+            'mail': ['/var/log/mail.log', '/var/log/mail.err'],
+            'dns': ['/var/log/syslog'],  # BIND logs usually go to syslog
+            'system': ['/var/log/syslog', '/var/log/messages']
+        }
+        
+        if log_type not in log_files:
+            return jsonify({
+                'success': False,
+                'error': f'Unknown log type: {log_type}'
+            }), 400
+        
+        logs = []
+        for log_file in log_files[log_type]:
+            if platform.system() != 'Windows' and os.path.exists(log_file):
+                try:
+                    result = subprocess.run(
+                        ['tail', '-n', str(lines), log_file], 
+                        capture_output=True, text=True, timeout=10
+                    )
+                    if result.returncode == 0:
+                        logs.append({
+                            'file': log_file,
+                            'content': result.stdout,
+                            'lines': len(result.stdout.split('\n'))
+                        })
+                except Exception as e:
+                    logs.append({
+                        'file': log_file,
+                        'error': str(e),
+                        'content': None
+                    })
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'log_type': log_type,
+                'requested_lines': lines,
+                'logs': logs,
+                'timestamp': datetime.now().isoformat()
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/backup', methods=['POST'])
+@token_required
+@admin_required
+@rate_limit('general_api', per_user=True)
+def create_backup(current_user):
+    """สร้าง backup แบบเต็มระบบ (admin เท่านั้น)"""
+    try:
+        result = backup_service.create_full_backup(current_user.id)
+        
+        return jsonify({
+            'success': len(result['errors']) == 0,
+            'data': result
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/backup', methods=['GET'])
+@token_required
+@admin_required
+def list_backups(current_user):
+    """แสดงรายการ backups ที่มีอยู่"""
+    try:
+        backups = backup_service.list_backups()
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'backups': backups,
+                'total_backups': len(backups),
+                'backup_dir': backup_service.backup_base_dir
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/backup/<backup_id>', methods=['DELETE'])
+@token_required
+@admin_required
+def delete_backup_endpoint(current_user, backup_id):
+    """ลบ backup"""
+    try:
+        result = backup_service.delete_backup(backup_id)
+        
+        return jsonify({
+            'success': result['success'],
+            'data': result
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@system_bp.route('/api/system/backup/cleanup', methods=['POST'])
+@token_required
+@admin_required
+def cleanup_backups(current_user):
+    """ลบ backups เก่าที่เกิน limit"""
+    try:
+        result = backup_service.cleanup_old_backups()
+        
+        return jsonify({
+            'success': result['success'],
+            'data': result
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+
+@system_bp.route('/api/system/info', methods=['GET'])
+@token_required
+def get_system_info(current_user):
+    """ข้อมูลระบบพื้นฐาน (backward compatibility)"""
+    try:
+        return jsonify({
+            'success': True,
+            'data': {
+                'platform': platform.platform(),
+                'python_version': platform.python_version(),
+                'system': platform.system(),
+                'architecture': platform.architecture()[0],
+                'hostname': platform.node(),
+                'timestamp': datetime.now().isoformat(),
+                'features': {
+                    'sync_check': True,
+                    'backup_management': True,
+                    'rate_limiting': True,
+                    'enhanced_monitoring': True,
+                    'scheduler': False  # ปิดใช้งานชั่วคราว
+                }
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500 
+
+@system_bp.route('/api/system/metrics', methods=['GET'])
+@token_required
+def get_system_metrics(current_user):
+    """ระบบ metrics พื้นฐาน (backward compatibility)"""
+    try:
+        if not PSUTIL_AVAILABLE:
+            return jsonify({
+                'success': False,
+                'error': 'psutil not available. Install with: pip install psutil'
+            }), 503
+        
         # CPU usage
         cpu_percent = psutil.cpu_percent(interval=1)
         cpu_count = psutil.cpu_count()
@@ -583,78 +962,59 @@ def system_metrics():
         # Disk usage
         disk = psutil.disk_usage('/')
         
-        # Network I/O
-        network = psutil.net_io_counters()
+        # Network I/O (if available)
+        try:
+            network = psutil.net_io_counters()
+            network_data = {
+                'bytes_sent': network.bytes_sent,
+                'bytes_recv': network.bytes_recv,
+                'packets_sent': network.packets_sent,
+                'packets_recv': network.packets_recv
+            }
+        except Exception:
+            network_data = None
         
         # Load average (Linux only)
         load_avg = None
         try:
-            load_avg = psutil.getloadavg()
-        except AttributeError:
+            if hasattr(psutil, 'getloadavg'):
+                load_avg = psutil.getloadavg()
+        except Exception:
             pass
         
         # Process count
         process_count = len(psutil.pids())
         
         return jsonify({
-            'timestamp': datetime.utcnow().isoformat(),
-            'cpu': {
-                'percent': cpu_percent,
-                'count': cpu_count
-            },
-            'memory': {
-                'total': memory.total,
-                'available': memory.available,
-                'percent': memory.percent,
-                'used': memory.used
-            },
-            'disk': {
-                'total': disk.total,
-                'used': disk.used,
-                'free': disk.free,
-                'percent': disk.percent
-            },
-            'network': {
-                'bytes_sent': network.bytes_sent,
-                'bytes_recv': network.bytes_recv,
-                'packets_sent': network.packets_sent,
-                'packets_recv': network.packets_recv
-            },
-            'system': {
-                'load_average': load_avg,
-                'process_count': process_count
+            'success': True,
+            'data': {
+                'timestamp': datetime.now().isoformat(),
+                'cpu': {
+                    'percent': cpu_percent,
+                    'count': cpu_count
+                },
+                'memory': {
+                    'total': memory.total,
+                    'available': memory.available,
+                    'percent': memory.percent,
+                    'used': memory.used
+                },
+                'disk': {
+                    'total': disk.total,
+                    'used': disk.used,
+                    'free': disk.free,
+                    'percent': disk.percent
+                },
+                'network': network_data,
+                'system': {
+                    'load_average': load_avg,
+                    'process_count': process_count
+                }
             }
         })
         
     except Exception as e:
-        logger.error(f"Metrics collection failed: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@system_bp.route('/api/system/logs')
-@login_required
-def get_system_logs():
-    """Get system logs"""
-    try:
-        lines = request.args.get('lines', 100, type=int)
-        log_file = request.args.get('file', 'app.log')
-        
-        # Validate log file path
-        log_dir = current_app.config.get('LOG_DIR', 'logs')
-        log_path = os.path.join(log_dir, log_file)
-        
-        if not os.path.exists(log_path) or not log_path.startswith(os.path.abspath(log_dir)):
-            return jsonify({'error': 'Invalid log file'}), 400
-        
-        # Read last N lines
-        with open(log_path, 'r') as f:
-            log_lines = f.readlines()[-lines:]
-        
         return jsonify({
-            'logs': log_lines,
-            'file': log_file,
-            'lines': len(log_lines)
-        })
-        
-    except Exception as e:
-        logger.error(f"Log retrieval failed: {e}")
-        return jsonify({'error': str(e)}), 500 
+            'success': False,
+            'error': str(e)
+        }), 500 

@@ -35,11 +35,11 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
   const getServiceIcon = (serviceName) => {
     const iconClass = "w-5 h-5";
     if (serviceName.includes('Linux User')) return <ServerIcon className={iconClass} />;
-    if (serviceName.includes('Apache') || serviceName.includes('VirtualHost')) return <GlobeAltIcon className={iconClass} />;
+    if (serviceName.includes('Nginx') || serviceName.includes('VirtualHost')) return <GlobeAltIcon className={iconClass} />;
     if (serviceName.includes('DNS')) return <GlobeAltIcon className={iconClass} />;
     if (serviceName.includes('Email') || serviceName.includes('Maildir')) return <EnvelopeIcon className={iconClass} />;
     if (serviceName.includes('MySQL') || serviceName.includes('Database')) return <CircleStackIcon className={iconClass} />;
-    if (serviceName.includes('FTP') || serviceName.includes('SFTP')) return <FolderIcon className={iconClass} />;
+    
     if (serviceName.includes('SSL')) return <LockClosedIcon className={iconClass} />;
     return <CheckCircleIcon className={iconClass} />;
   };
@@ -191,14 +191,7 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
             </InfoCard>
           )}
 
-          {/* FTP Access */}
-          {data.ftp_username && (
-            <InfoCard icon={<FolderIcon className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />} title="FTP/SFTP Access">
-              <InfoRow label="Username" value={data.ftp_username} copyable />
-              <InfoRow label="Password" value={data.ftp_password} isPassword copyable />
-              <InfoRow label="Port" value="22 (SFTP) / 21 (FTP)" />
-            </InfoCard>
-          )}
+          
         </div>
 
         {/* SSL Certificate Info */}
@@ -233,7 +226,7 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
         <ModalInfoBox variant="info">
           <p className="font-medium mb-2">🚀 Next Steps:</p>
           <ol className="text-sm space-y-1 list-decimal list-inside">
-            <li>Upload your website files via FTP/SFTP</li>
+            <li>Upload your website files via File Manager</li>
             <li>Configure your domain's DNS records to point to this server</li>
             {!data.ssl_certificate_id && <li>Consider enabling SSL for security</li>}
             <li>Test your website and email functionality</li>

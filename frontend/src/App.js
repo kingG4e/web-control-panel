@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-ro
 import { DataProvider } from './contexts/DataContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Sidebar from './components/layout/Sidebar';
@@ -61,21 +62,23 @@ const AppContent = () => {
               <Breadcrumb />
               {/* Content Container */}
               <div className="container mx-auto px-4 py-4 max-w-7xl">
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/virtual-hosts" element={<VirtualHosts />} />
-                  <Route path="/virtual-hosts/new" element={<CreateVirtualHost />} />
-                  <Route path="/virtual-hosts/:id/edit" element={<EditVirtualHost />} />
-                  <Route path="/dns" element={<DNSManagement />} />
-                  <Route path="/email" element={<EmailSettings />} />
-                  <Route path="/database" element={<Database />} />
-                  <Route path="/users" element={<UserSettings />} />
-                  <Route path="/ssl" element={<SSLSettings />} />
-                  <Route path="/file-manager" element={<FileManager />} />
-                  {/* fallback */}
-                  <Route path="*" element={<Navigate to="/dashboard" />} />
-                </Routes>
+                <ErrorBoundary>
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/virtual-hosts" element={<VirtualHosts />} />
+                    <Route path="/virtual-hosts/new" element={<CreateVirtualHost />} />
+                    <Route path="/virtual-hosts/:id/edit" element={<EditVirtualHost />} />
+                    <Route path="/dns" element={<DNSManagement />} />
+                    <Route path="/email" element={<EmailSettings />} />
+                    <Route path="/database" element={<Database />} />
+                    <Route path="/users" element={<UserSettings />} />
+                    <Route path="/ssl" element={<SSLSettings />} />
+                    <Route path="/file-manager" element={<FileManager />} />
+                    {/* fallback */}
+                    <Route path="*" element={<Navigate to="/dashboard" />} />
+                  </Routes>
+                </ErrorBoundary>
               </div>
             </div>
           </div>
@@ -87,18 +90,20 @@ const AppContent = () => {
 
 const App = () => {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <DataProvider>
-          <Router>
-            <div className="App">
-              <ToastContainer />
-              <AppContent />
-            </div>
-          </Router>
-        </DataProvider>
-      </AuthProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AuthProvider>
+          <DataProvider>
+            <Router>
+              <div className="App">
+                <ToastContainer />
+                <AppContent />
+              </div>
+            </Router>
+          </DataProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 };
 

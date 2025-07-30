@@ -3,13 +3,32 @@ import subprocess
 import platform
 from datetime import datetime
 from jinja2 import Template
-from models.notification import Notification
 
 class BindService:
     def __init__(self):
-        # Use local development paths
-        self.zones_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'bind', 'zones')
-        self.named_conf_local = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'bind', 'conf', 'named.conf.local')
+        # Import config here to avoid circular imports
+        from config import Config
+        
+        # Use production BIND9 paths from config or environment variables
+        self.bind_config_dir = os.environ.get('BIND_CONFIG_DIR', Config.BIND_CONFIG_DIR)
+        self.zones_dir = os.environ.get('BIND_ZONES_DIR', Config.BIND_ZONES_DIR)
+        self.named_conf_local = os.path.join(self.bind_config_dir, 'named.conf.local')
+        
+        # Detect environment - use development paths only if explicitly set
+        self.is_development = (
+            os.getenv('FLASK_ENV') == 'development' or 
+            os.getenv('BIND9_DEV_MODE', 'False').lower() == 'true'
+        )
+        
+        # Override with development paths if in development mode
+        if self.is_development:
+            backend_dir = os.path.dirname(os.path.dirname(__file__))
+            self.zones_dir = os.path.join(backend_dir, 'bind', 'zones')
+            self.named_conf_local = os.path.join(backend_dir, 'bind', 'conf', 'named.conf.local')
+            print(f"BIND9 Development Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
+        else:
+            print(f"BIND9 Production Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
+        
         self.zone_template = '''$TTL    {{ zone.minimum }}
 @       IN      SOA     ns1.{{ zone.domain_name }}. admin.{{ zone.domain_name }}. (
                         {{ zone.serial }}      ; Serial
@@ -40,9 +59,8 @@ ns2     IN      A       {{ nameserver_ip }}
     def create_zone(self, zone, nameserver_ip, user_id=None):
         """Create a new DNS zone"""
         try:
-            # Ensure directories exist
-            os.makedirs(os.path.dirname(self.named_conf_local), exist_ok=True)
-            os.makedirs(self.zones_dir, exist_ok=True)
+            # Ensure directories exist with proper permissions
+            self._ensure_directories()
             
             # Generate zone file content
             template = Template(self.zone_template)
@@ -56,31 +74,33 @@ ns2     IN      A       {{ nameserver_ip }}
             with open(zone_file, 'w') as f:
                 f.write(zone_content)
             
+            # Set proper permissions for zone file
+            if not self.is_development:
+                try:
+                    # Set file ownership to bind user if possible
+                    os.chmod(zone_file, 0o644)
+                    if os.getuid() == 0:  # Running as root
+                        import pwd
+                        bind_user = pwd.getpwnam('bind')
+                        os.chown(zone_file, bind_user.pw_uid, bind_user.pw_gid)
+                except (PermissionError, KeyError, OSError) as e:
+                    print(f"Warning: Could not set zone file permissions: {e}")
+            
             # Update named.conf.local
             self._update_named_conf_local(zone.domain_name)
             
-            # Reload BIND (will be skipped in Windows/development)
+            # Test BIND configuration before reloading
+            if not self.is_development:
+                config_valid = self._test_bind_config()
+                if not config_valid:
+                    raise Exception("BIND configuration test failed")
+            
+            # Reload BIND
             self._reload_bind()
 
-            # Create success notification
-            if user_id:
-                Notification.create_notification(
-                    title="DNS Zone Created",
-                    message=f"DNS zone for {zone.domain_name} has been created successfully.",
-                    type="success",
-                    category="dns",
-                    user_id=user_id
-                )
+
             
         except Exception as e:
-            if user_id:
-                Notification.create_notification(
-                    title="DNS Zone Creation Failed",
-                    message=f"Failed to create DNS zone for {zone.domain_name}: {str(e)}",
-                    type="error",
-                    category="dns",
-                    user_id=user_id
-                )
             raise Exception(f'Failed to create DNS zone: {str(e)}')
 
     def update_zone(self, zone, nameserver_ip, user_id=None):
@@ -92,25 +112,9 @@ ns2     IN      A       {{ nameserver_ip }}
             # Generate and write new zone file
             self.create_zone(zone, nameserver_ip)
 
-            # Create success notification
-            if user_id:
-                Notification.create_notification(
-                    title="DNS Zone Updated",
-                    message=f"DNS zone for {zone.domain_name} has been updated successfully.",
-                    type="success",
-                    category="dns",
-                    user_id=user_id
-                )
+
             
         except Exception as e:
-            if user_id:
-                Notification.create_notification(
-                    title="DNS Zone Update Failed",
-                    message=f"Failed to update DNS zone for {zone.domain_name}: {str(e)}",
-                    type="error",
-                    category="dns",
-                    user_id=user_id
-                )
             raise Exception(f'Failed to update DNS zone: {str(e)}')
 
     def delete_zone(self, domain_name, user_id=None):
@@ -127,26 +131,54 @@ ns2     IN      A       {{ nameserver_ip }}
             # Reload BIND (will be skipped in Windows/development)
             self._reload_bind()
 
-            # Create success notification
-            if user_id:
-                Notification.create_notification(
-                    title="DNS Zone Deleted",
-                    message=f"DNS zone for {domain_name} has been deleted successfully.",
-                    type="success",
-                    category="dns",
-                    user_id=user_id
-                )
+
             
         except Exception as e:
-            if user_id:
-                Notification.create_notification(
-                    title="DNS Zone Deletion Failed",
-                    message=f"Failed to delete DNS zone for {domain_name}: {str(e)}",
-                    type="error",
-                    category="dns",
-                    user_id=user_id
-                )
             raise Exception(f'Failed to delete DNS zone: {str(e)}')
+
+    def _ensure_directories(self):
+        """Ensure BIND directories exist with proper permissions"""
+        try:
+            # Create zones directory
+            os.makedirs(self.zones_dir, exist_ok=True)
+            
+            # Create config directory
+            os.makedirs(os.path.dirname(self.named_conf_local), exist_ok=True)
+            
+            if not self.is_development:
+                # Set proper permissions
+                os.chmod(self.zones_dir, 0o755)
+                os.chmod(os.path.dirname(self.named_conf_local), 0o755)
+                
+                # Try to set ownership to bind user if running as root
+                if os.getuid() == 0:
+                    try:
+                        import pwd
+                        bind_user = pwd.getpwnam('bind')
+                        os.chown(self.zones_dir, bind_user.pw_uid, bind_user.pw_gid)
+                        os.chown(os.path.dirname(self.named_conf_local), bind_user.pw_uid, bind_user.pw_gid)
+                    except (KeyError, OSError) as e:
+                        print(f"Warning: Could not set directory ownership: {e}")
+        except Exception as e:
+            print(f"Warning: Could not ensure directories: {e}")
+
+    def _test_bind_config(self):
+        """Test BIND configuration before applying changes"""
+        try:
+            result = subprocess.run(
+                ['named-checkconf'], 
+                capture_output=True, 
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                return True
+            else:
+                print(f"BIND config test failed: {result.stderr}")
+                return False
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+            print(f"Warning: Could not test BIND config: {e}")
+            return True  # Allow operation to continue if test fails
 
     def _update_named_conf_local(self, domain_name):
         """Add zone configuration to named.conf.local"""
@@ -160,10 +192,29 @@ zone "{domain_name}" {{
         # Create file if it doesn't exist
         if not os.path.exists(self.named_conf_local):
             with open(self.named_conf_local, 'w') as f:
-                f.write('// Local DNS zones\n')
+                f.write('// Local DNS zones managed by Web Control Panel\n')
+        
+        # Check if zone already exists
+        if os.path.exists(self.named_conf_local):
+            with open(self.named_conf_local, 'r') as f:
+                content = f.read()
+                if f'zone "{domain_name}"' in content:
+                    print(f"Zone {domain_name} already exists in named.conf.local")
+                    return
         
         with open(self.named_conf_local, 'a') as f:
             f.write(zone_conf)
+        
+        # Set proper permissions
+        if not self.is_development:
+            try:
+                os.chmod(self.named_conf_local, 0o644)
+                if os.getuid() == 0:
+                    import pwd
+                    bind_user = pwd.getpwnam('bind')
+                    os.chown(self.named_conf_local, bind_user.pw_uid, bind_user.pw_gid)
+            except (PermissionError, KeyError, OSError) as e:
+                print(f"Warning: Could not set named.conf.local permissions: {e}")
 
     def _remove_from_named_conf_local(self, domain_name):
         """Remove zone configuration from named.conf.local"""
@@ -193,16 +244,35 @@ zone "{domain_name}" {{
             return
             
         # Skip BIND reload in development environment
-        if os.getenv('FLASK_ENV') == 'development':
+        if self.is_development:
             print("Skipping BIND reload in development environment")
             return
             
         try:
-            subprocess.run(['systemctl', 'reload', 'bind9'], check=True)
-            print("BIND reloaded successfully")
-        except subprocess.CalledProcessError as e:
-            # Don't raise exception, just log warning
+            # Try multiple reload commands
+            reload_commands = [
+                ['systemctl', 'reload', 'bind9'],
+                ['systemctl', 'reload', 'named'],
+                ['service', 'bind9', 'reload'],
+                ['service', 'named', 'reload'],
+                ['rndc', 'reload']
+            ]
+            
+            success = False
+            for cmd in reload_commands:
+                try:
+                    result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+                    print(f"BIND reloaded successfully using: {' '.join(cmd)}")
+                    success = True
+                    break
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    continue
+            
+            if not success:
+                print("Warning: Could not reload BIND using any known method")
+                print("Available commands tried: systemctl, service, rndc")
+                
+        except subprocess.TimeoutExpired:
+            print("Warning: BIND reload timed out")
+        except Exception as e:
             print(f"Warning: Failed to reload BIND: {str(e)}")
-        except FileNotFoundError:
-            # systemctl not found (not on Linux)
-            print("Warning: systemctl not found, skipping BIND reload")

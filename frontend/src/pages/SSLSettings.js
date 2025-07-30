@@ -86,10 +86,15 @@ const SSLSettings = () => {
         // Update existing certificate (renew)
         await ssl.renewCertificate(editingCert.id);
       } else {
+        // Get document root for the domain
+        const virtualHost = virtualHostsList.find(vh => vh.domain === formData.domain);
+        const document_root = virtualHost ? virtualHost.document_root : null;
+        
         // Create new certificate
         await ssl.createCertificate({
           domain: formData.domain,
-          auto_renewal: formData.auto_renew
+          auto_renewal: formData.auto_renew,
+          document_root: document_root
         });
       }
       
@@ -246,49 +251,6 @@ const SSLSettings = () => {
               </div>
               <ExclamationTriangleIcon className="w-8 h-8 text-orange-500" />
             </div>
-          </div>
-        </div>
-        {/* Top Actions Bar */}
-        <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-          <div className="p-4 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<DocumentTextIcon className="w-4 h-4" />}
-              >
-                View Logs
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<Cog6ToothIcon className="w-4 h-4" />}
-              >
-                Settings
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<DocumentDuplicateIcon className="w-4 h-4" />}
-              >
-                Import
-              </Button>
-            </div>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<PlusIcon className="w-4 h-4" />}
-              onClick={() => {
-                setEditingCert(null);
-                setFormData({
-                  domain: '',
-                  auto_renew: true,
-                });
-                setShowForm(true);
-              }}
-            >
-              Add Certificate
-            </Button>
           </div>
         </div>
 

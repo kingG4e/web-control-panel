@@ -350,13 +350,13 @@ const EmailSettings = () => {
         {/* Header */}
         <div className="mb-8">
           <div>
-            <h1 className="text-3xl font-bold" style={{ color: 'var(--primary-text)' }}>
+            <h1 className="text-2xl font-semibold" style={{ color: 'var(--primary-text)', marginBottom: '8px' }}>
               Email Management
             </h1>
-            <p className="text-lg mt-2" style={{ color: 'var(--secondary-text)' }}>
+            <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
               Manage email accounts and forwarders for your Virtual Hosts
             </p>
-            </div>
+          </div>
         </div>
 
         {/* Error Alert */}

@@ -372,31 +372,7 @@
   -webkit-line-clamp: 3;
 }
 
-/* Notification Components Styles */
-.notification-dropdown {
-  backdrop-filter: blur(8px);
-}
 
-.notification-item {
-  transition: all var(--transition-fast);
-}
-
-.notification-item:hover {
-  transform: translateY(-1px);
-}
-
-/* Notification Specific Overrides */
-.notification-dropdown {
-  backdrop-filter: blur(8px);
-}
-
-.notification-item {
-  transition: all var(--transition-fast);
-}
-
-.notification-item:hover {
-  transform: translateY(-1px);
-}
 
 /* Line clamp utilities */
 .line-clamp-2 {
@@ -413,61 +389,7 @@
   overflow: hidden;
 }
 
-/* Notification Modal Styles */
-.notification-modal {
-  animation: modal-fade-in 0.2s ease-out;
-}
 
-@keyframes modal-fade-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95) translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
-.notification-item {
-  animation: item-slide-in 0.2s ease-out;
-  transition: all 0.2s ease;
-}
-
-.notification-item:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-@keyframes item-slide-in {
-  from {
-    opacity: 0;
-    transform: translateX(-5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Mobile-specific modal styles */
-@media (max-width: 640px) {
-  .notification-modal {
-    margin: 0.5rem;
-    max-width: calc(100vw - 1rem);
-    min-height: 50vh;
-    max-height: 95vh;
-  }
-  
-  .notification-modal .filter-tabs {
-    flex-wrap: wrap;
-    gap: 0.25rem;
-  }
-  
-  .notification-modal .filter-tabs button {
-    font-size: 0.75rem;
-    padding: 0.375rem 0.75rem;
-  }
 }
 
  

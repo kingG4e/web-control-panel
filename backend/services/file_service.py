@@ -14,7 +14,6 @@ try:
     UNIX_MODULES_AVAILABLE = True
 except ImportError:
     UNIX_MODULES_AVAILABLE = False
-    # print("Warning: Unix modules (pwd, grp) not available (Windows system)")  # Hidden
     pwd = None
     grp = None
 
@@ -38,9 +37,6 @@ class FileService:
         
         # Normalize path for Linux
         self.root_dir = os.path.normpath(root_dir)
-        # print(f"FileService initialized:")  # Hidden
-        # print(f"- User: {current_user}")  # Hidden
-        # print(f"- Root directory: {self.root_dir}")  # Hidden
         
         # Create root directory if it doesn't exist
         os.makedirs(self.root_dir, exist_ok=True)
@@ -630,27 +626,18 @@ class FileService:
             full_path = os.path.join(self.root_dir, path)
             real_full_path = os.path.realpath(full_path)
             
-            print(f"List directory request:")
-            print(f"- Input path: {path}")
-            print(f"- Full path: {full_path}")
-            print(f"- Real path: {real_full_path}")
-            
             if not is_safe_path(self.root_dir, path):
-                print(f"Invalid path detected: {path}")
                 raise ValueError(f"Invalid path: {path}")
             
             if not os.path.exists(real_full_path):
-                print(f"Directory not found: {real_full_path}")
                 raise FileNotFoundError(f"Directory not found: {path}")
             
             if not os.path.isdir(real_full_path):
-                print(f"Not a directory: {real_full_path}")
                 raise ValueError(f"Not a directory: {path}")
 
             items = []
             try:
                 # Get directory contents
-                print(f"Scanning directory: {real_full_path}")
                 dir_entries = os.scandir(real_full_path)
                 
                 for entry in dir_entries:
@@ -709,7 +696,6 @@ class FileService:
                             'isSymlink': entry.is_symlink()
                         }
                         items.append(item_info)
-                        print(f"Added item: {name} ({file_type})")
                         
                     except (OSError, PermissionError) as e:
                         print(f"Error accessing {entry.path}: {e}")
@@ -726,7 +712,6 @@ class FileService:
 
             # Sort items: folders first, then files, both alphabetically
             sorted_items = sorted(items, key=lambda x: (x['type'] != 'folder', x['name'].lower()))
-            print(f"Total items found: {len(sorted_items)}")
             return sorted_items
             
         except Exception as e:

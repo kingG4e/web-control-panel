@@ -166,7 +166,6 @@ def is_safe_path(base_path, path):
             real_base = os.path.realpath(base_path)
             real_path = os.path.realpath(path)
             is_safe = real_path.startswith(real_base)
-            print(f"Absolute path check: {real_path} -> {real_base} = {is_safe}")
             return is_safe
             
         # For relative paths, join with base and check
@@ -174,13 +173,9 @@ def is_safe_path(base_path, path):
         real_base = os.path.realpath(base_path)
         real_full = os.path.realpath(full_path)
         
-        print(f"Base path (real): {real_base}")
-        print(f"Full path (real): {real_full}")
-        
         # Check if the path is within base directory
         is_safe = real_full.startswith(real_base)
         if not is_safe:
-            print(f"Path safety check failed: {real_full} is not within {real_base}")
             return False
             
         # Additional permission check

@@ -1,21 +1,27 @@
 {
   "dependencies": {
-    "@babel/eslint-parser": "^7.28.0",
     "@heroicons/react": "^2.2.0",
+    "@minoru/react-dnd-treeview": "^3.5.3",
+    "@monaco-editor/react": "^4.7.0",
+    "@nolesh/react-file-manager": "^2.2.1",
     "axios": "^1.9.0",
+    "devextreme": "^24.2.8",
+    "devextreme-react": "^24.2.8",
     "cookie": "^1.0.2",
     "es-abstract": "^1.24.0",
+    "monaco-editor": "^0.52.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-file-manager": "^1.2.4",
     "react-router-dom": "^7.6.3",
     "react-scripts": "^5.0.1",
     "react-toastify": "^11.0.5"
   },
   "scripts": {
-    "start": "REACT_APP_API_URL=http://localhost:5000 react-scripts start",
-    "start:network": "REACT_APP_API_URL=http://0.0.0.0:5000 react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test"
+    "start": "REACT_APP_API_URL=http://localhost:5000 react-app-rewired start",
+    "start:network": "REACT_APP_API_URL=http://192.168.128.4:5000 react-app-rewired start",
+    "build": "react-app-rewired build",
+    "test": "react-app-rewired test"
   },
   "proxy": "http://localhost:5000",
   "browserslist": {
@@ -31,9 +37,13 @@
     ]
   },
   "devDependencies": {
+    "@babel/eslint-parser": "^7.28.0",
     "@tailwindcss/forms": "^0.5.10",
     "autoprefixer": "^10.4.21",
+    "eslint-visitor-keys": "^4.2.1",
+    "monaco-editor-webpack-plugin": "^7.1.0",
     "postcss": "^8.5.3",
+    "react-app-rewired": "^2.2.1",
     "tailwindcss": "^3.4.17"
   }
 }

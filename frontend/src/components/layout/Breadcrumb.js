@@ -15,7 +15,7 @@ const Breadcrumb = () => {
     'users': 'User Settings',
     'ssl': 'SSL Settings',
     'settings': 'Account Settings',
-    'ftp': 'FTP Management'
+
   };
 
   return (

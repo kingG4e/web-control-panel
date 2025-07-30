@@ -5,31 +5,63 @@ const API_URL = '/api';
 // Create axios instance with default config
 const api = axios.create({
     baseURL: API_URL,
-  headers: {
+    headers: {
         'Content-Type': 'application/json'
-    }
+    },
+    timeout: 30000 // 30 second timeout
 });
 
 // Add token to requests if available
 api.interceptors.request.use(config => {
     const token = localStorage.getItem('token');
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+        config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
 });
 
-// Handle response errors
+// Handle response errors with better cancellation handling
 api.interceptors.response.use(
     response => response,
     error => {
+        // Handle cancellation errors gracefully
+        if (axios.isCancel(error) || error.code === 'ERR_CANCELED') {
+            console.debug('Request was canceled:', error.message);
+            return Promise.reject(new Error('Request canceled'));
+        }
+        
+        // Handle authentication errors
         if (error.response?.status === 401) {
             localStorage.removeItem('token');
             window.location.href = '/login';
         }
-    return Promise.reject(error);
-  }
+        
+        return Promise.reject(error);
+    }
 );
+
+// Utility to create cancellable requests
+export const createCancellableRequest = () => {
+    const controller = new AbortController();
+    
+    const request = (config) => {
+        return api({
+            ...config,
+            signal: controller.signal
+        }).catch(error => {
+            if (error.name === 'AbortError' || axios.isCancel(error)) {
+                throw new Error('Request canceled');
+            }
+            throw error;
+        });
+    };
+    
+    return {
+        request,
+        cancel: () => controller.abort(),
+        signal: controller.signal
+    };
+};
 
 // Auth API
 export const auth = {
@@ -320,28 +352,7 @@ export const ssl = {
     }
 };
 
-// FTP API
-export const ftp = {
-    getAccounts: async () => {
-        const response = await api.get('/ftp/accounts');
-        return response.data;
-    },
-    
-    createAccount: async (data) => {
-        const response = await api.post('/ftp/accounts', data);
-        return response.data;
-    },
-    
-    updateAccount: async (id, data) => {
-        const response = await api.put(`/ftp/accounts/${id}`, data);
-        return response.data;
-    },
-    
-    deleteAccount: async (id) => {
-        const response = await api.delete(`/ftp/accounts/${id}`);
-        return response.data;
-    }
-};
+
 
 // System API
 export const system = {

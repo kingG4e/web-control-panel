@@ -28,13 +28,13 @@ const CreateVirtualHostProgress = ({ isOpen, steps, currentStep, error, isComple
   const getStepIcon = (stepIndex, stepTitle) => {
     const icons = {
       'Linux user': <ServerIcon className="w-5 h-5" />,
-      'Apache': <GlobeAltIcon className="w-5 h-5" />,
+      'Nginx': <GlobeAltIcon className="w-5 h-5" />,
       'DNS': <GlobeAltIcon className="w-5 h-5" />,
       'email': <EnvelopeIcon className="w-5 h-5" />,
       'maildir': <EnvelopeIcon className="w-5 h-5" />,
       'database': <CircleStackIcon className="w-5 h-5" />,
       'MySQL': <CircleStackIcon className="w-5 h-5" />,
-      'FTP': <FolderIcon className="w-5 h-5" />,
+  
       'SSL': <LockClosedIcon className="w-5 h-5" />,
       'Save': <ServerIcon className="w-5 h-5" />
     };

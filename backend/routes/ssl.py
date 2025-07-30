@@ -33,18 +33,31 @@ def create_certificate():
         if existing_cert:
             return jsonify({'error': 'Certificate already exists for this domain'}), 400
         
-        # For development/testing - create a mock certificate record
-        # In production, this would call ssl_service.issue_certificate()
-        from datetime import datetime, timedelta
+        # Get document root for the domain
+        document_root = None
+        if 'document_root' in data:
+            document_root = data['document_root']
+        else:
+            # Try to get document root from virtual host
+            from models.virtual_host import VirtualHost
+            virtual_host = VirtualHost.query.filter_by(domain=data['domain']).first()
+            if virtual_host:
+                document_root = virtual_host.document_root
+        
+        # Issue certificate using SSL service
+        cert_info = ssl_service.issue_certificate(
+            domain=data['domain'], 
+            document_root=document_root
+        )
         
         certificate = SSLCertificate(
             domain=data['domain'],
-            certificate_path=f'/etc/letsencrypt/live/{data["domain"]}/fullchain.pem',
-            private_key_path=f'/etc/letsencrypt/live/{data["domain"]}/privkey.pem',
-            chain_path=f'/etc/letsencrypt/live/{data["domain"]}/chain.pem',
-            issuer="Let's Encrypt",
-            valid_from=datetime.utcnow(),
-            valid_until=datetime.utcnow() + timedelta(days=90),
+            certificate_path=cert_info['certificate_path'],
+            private_key_path=cert_info['private_key_path'],
+            chain_path=cert_info['chain_path'],
+            issuer=cert_info['issuer'],
+            valid_from=cert_info['valid_from'],
+            valid_until=cert_info['valid_until'],
             auto_renewal=data.get('auto_renewal', True),
             status='active'
         )
@@ -54,7 +67,7 @@ def create_certificate():
             certificate=certificate,
             action='issue',
             status='success',
-            message='Certificate issued successfully (mock for development)'
+            message='Certificate issued successfully'
         )
         
         db.session.add(certificate)

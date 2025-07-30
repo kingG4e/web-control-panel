@@ -4,28 +4,45 @@ from datetime import datetime
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import NameOID
-from models.notification import Notification
 
 class SSLService:
     def __init__(self):
         self.certbot_path = '/usr/bin/certbot'
         self.certificates_dir = '/etc/letsencrypt/live'
-        self.apache_config_dir = '/etc/apache2/sites-available'
+        self.nginx_config_dir = '/etc/nginx/sites-available'
 
-    def issue_certificate(self, domain, user_id=None):
+    def issue_certificate(self, domain, user_id=None, document_root=None):
         """Issue a new SSL certificate using Let's Encrypt"""
         try:
-            # Run certbot to obtain certificate
-            command = [
-                self.certbot_path,
-                'certonly',
-                '--apache',  # Use Apache plugin
-                '--non-interactive',
-                '--agree-tos',
-                '-d', domain,
-                '--keep-until-expiring',
-                '--expand'
-            ]
+            # Use certbot with webroot method if document_root is provided
+            if document_root:
+                # Create .well-known directory for ACME challenge
+                well_known_dir = os.path.join(document_root, '.well-known', 'acme-challenge')
+                os.makedirs(well_known_dir, exist_ok=True)
+                
+                command = [
+                    self.certbot_path,
+                    'certonly',
+                    '--webroot',
+                    '--webroot-path', document_root,
+                    '--non-interactive',
+                    '--agree-tos',
+                    '-d', domain,
+                    '--keep-until-expiring',
+                    '--expand'
+                ]
+            else:
+                # Fallback to nginx plugin
+                command = [
+                    self.certbot_path,
+                    'certonly',
+                    '--nginx',  # Use Nginx plugin
+                    '--non-interactive',
+                    '--agree-tos',
+                    '-d', domain,
+                    '--keep-until-expiring',
+                    '--expand'
+                ]
             
             subprocess.run(command, check=True, capture_output=True, text=True)
             
@@ -38,15 +55,7 @@ class SSLService:
             with open(cert_path, 'rb') as f:
                 cert_data = x509.load_pem_x509_certificate(f.read(), default_backend())
             
-            # Create success notification
-            if user_id:
-                Notification.create_notification(
-                    title="SSL Certificate Issued",
-                    message=f"SSL certificate for {domain} has been issued successfully. Valid until {cert_data.not_valid_after.strftime('%Y-%m-%d')}",
-                    type="success",
-                    category="ssl",
-                    user_id=user_id
-                )
+
             
             return {
                 'certificate_path': cert_path,
@@ -58,14 +67,6 @@ class SSLService:
             }
             
         except Exception as e:
-            if user_id:
-                Notification.create_notification(
-                    title="SSL Certificate Issue Failed",
-                    message=f"Failed to issue SSL certificate for {domain}: {str(e)}",
-                    type="error",
-                    category="ssl",
-                    user_id=user_id
-                )
             raise Exception(f'Failed to issue certificate: {str(e)}')
 
     def renew_certificate(self, domain, user_id=None):
@@ -88,15 +89,7 @@ class SSLService:
             with open(cert_path, 'rb') as f:
                 cert_data = x509.load_pem_x509_certificate(f.read(), default_backend())
             
-            # Create success notification
-            if user_id:
-                Notification.create_notification(
-                    title="SSL Certificate Renewed",
-                    message=f"SSL certificate for {domain} has been renewed successfully. Valid until {cert_data.not_valid_after.strftime('%Y-%m-%d')}",
-                    type="success",
-                    category="ssl",
-                    user_id=user_id
-                )
+
             
             return {
                 'valid_from': cert_data.not_valid_before,
@@ -104,14 +97,6 @@ class SSLService:
             }
             
         except Exception as e:
-            if user_id:
-                Notification.create_notification(
-                    title="SSL Certificate Renewal Failed",
-                    message=f"Failed to renew SSL certificate for {domain}: {str(e)}",
-                    type="error",
-                    category="ssl",
-                    user_id=user_id
-                )
             raise Exception(f'Failed to renew certificate: {str(e)}')
 
     def revoke_certificate(self, domain):
@@ -183,47 +168,93 @@ class SSLService:
         except Exception as e:
             raise Exception(f'Failed to get certificate info: {str(e)}')
 
-    def configure_apache_ssl(self, domain, certificate_path, private_key_path):
-        """Configure Apache to use SSL certificate"""
+    def configure_nginx_ssl(self, domain, certificate_path, private_key_path, document_root=None):
+        """Configure Nginx to use SSL certificate"""
         try:
-            config_path = os.path.join(self.apache_config_dir, f'{domain}-le-ssl.conf')
+            config_path = os.path.join(self.nginx_config_dir, f'{domain}-ssl.conf')
+            
+            # Use provided document root or fallback to /var/www for backward compatibility
+            if not document_root:
+                document_root = f'/var/www/{domain}'
+            
+            # Use provided document root or fallback to /var/www for backward compatibility
+            if not document_root:
+                document_root = f'/var/www/{domain}'
+            
+            # Use provided document root or fallback to /var/www for backward compatibility
+            if not document_root:
+                document_root = f'/var/www/{domain}'
             
             # Create SSL configuration
-            config = f'''<IfModule mod_ssl.c>
-<VirtualHost *:443>
-    ServerName {domain}
-    DocumentRoot /var/www/{domain}
+            config = f'''server {{
+    listen 443 ssl http2;
+    server_name {domain};
+    root {document_root};
+    index index.html index.htm index.php;
+
+    ssl_certificate {certificate_path};
+    ssl_certificate_key {private_key_path};
     
-    SSLEngine on
-    SSLCertificateFile {certificate_path}
-    SSLCertificateKeyFile {private_key_path}
-    
-    <Directory /var/www/{domain}>
-        Options -Indexes +FollowSymLinks
-        AllowOverride All
-        Require all granted
-    </Directory>
-    
-    ErrorLog ${{APACHE_LOG_DIR}}/error.log
-    CustomLog ${{APACHE_LOG_DIR}}/access.log combined
-</VirtualHost>
-</IfModule>'''
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    location / {{
+        try_files $uri $uri/ /index.php?$query_string;
+    }}
+
+    location ~ \.php$ {{
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+    }}
+
+    location ~ /\.ht {{
+        deny all;
+    }}
+
+    error_log /var/log/nginx/{domain}-error.log;
+    access_log /var/log/nginx/{domain}-access.log;
+}}
+
+# Redirect HTTP to HTTPS
+server {{
+    listen 80;
+    server_name {domain};
+    return 301 https://$server_name$request_uri;
+}}'''
             
             # Write configuration file
             with open(config_path, 'w') as f:
                 f.write(config)
             
-            # Enable site and SSL module
-            subprocess.run(['a2enmod', 'ssl'], check=True)
-            subprocess.run(['a2ensite', f'{domain}-le-ssl'], check=True)
+            # Enable site
+            subprocess.run(['ln', '-sf', config_path, f'/etc/nginx/sites-enabled/{domain}-ssl.conf'], check=True)
             
-            # Reload Apache
-            subprocess.run(['systemctl', 'reload', 'apache2'], check=True)
+            # Remove .well-known directory after certificate issuance
+            if document_root and document_root != f'/var/www/{domain}':
+                well_known_dir = os.path.join(document_root, '.well-known')
+                if os.path.exists(well_known_dir):
+                    import shutil
+                    shutil.rmtree(well_known_dir)
+            
+            # Remove .well-known directory after certificate issuance
+            if document_root and document_root != f'/var/www/{domain}':
+                well_known_dir = os.path.join(document_root, '.well-known')
+                if os.path.exists(well_known_dir):
+                    import shutil
+                    shutil.rmtree(well_known_dir)
+            
+            # Test and reload Nginx
+            subprocess.run(['nginx', '-t'], check=True)
+            subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
             
         except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to configure Apache SSL: {str(e)}')
+            raise Exception(f'Failed to configure Nginx SSL: {str(e)}')
         except Exception as e:
-            raise Exception(f'Failed to configure Apache SSL: {str(e)}')
+            raise Exception(f'Failed to configure Nginx SSL: {str(e)}')
 
     def _get_issuer(self, cert_data):
         """Get certificate issuer name"""

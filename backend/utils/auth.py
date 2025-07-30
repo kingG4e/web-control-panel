@@ -20,51 +20,53 @@ except ImportError:
 
 def verify_system_user(username, password):
     """Verify login credentials against system users or fallback"""
-    if not UNIX_AUTH_MODULES_AVAILABLE:
-        # Development mode - simple authentication
-        return username == "admin" and password == "admin"
-    
+    # Always try PAM first for proper system authentication
     try:
-        # Get user's password hash from shadow file
-        shadow_entry = spwd.getspnam(username)
-        if not shadow_entry:
-            return False
+        import pam
+        auth = pam.pam()
+        return auth.authenticate(username, password)
+    except ImportError:
+        print("PAM module not available - trying alternative authentication")
+    
+    # Fallback to crypt-based authentication if PAM is not available
+    if UNIX_AUTH_MODULES_AVAILABLE:
+        try:
+            # Check if user exists in system
+            pwd_entry = pwd.getpwnam(username)
             
-        # Get encrypted password
-        encrypted_password = shadow_entry.sp_pwd
-        
-        # Check if account is locked or disabled
-        if encrypted_password.startswith('!') or encrypted_password.startswith('*'):
-            return False
+            # Get user's password hash from shadow file
+            shadow_entry = spwd.getspnam(username)
+            if not shadow_entry:
+                return False
+                
+            # Get encrypted password
+            encrypted_password = shadow_entry.sp_pwd
             
-        # Verify password
-        salt = encrypted_password
-        encrypted_attempt = crypt.crypt(password, salt)
-        return encrypted_attempt == encrypted_password
-        
-    except KeyError:
-        # User not found
-        return False
-    except PermissionError:
-        # No permission to read shadow file
-        current_app.logger.error("No permission to read shadow file. Make sure the application is running with sufficient privileges.")
-        return False
+            # Check if account is locked or disabled
+            if encrypted_password.startswith('!') or encrypted_password.startswith('*'):
+                return False
+                
+            # Verify password
+            salt = encrypted_password
+            encrypted_attempt = crypt.crypt(password, salt)
+            return encrypted_attempt == encrypted_password
+            
+        except KeyError:
+            # User not found
+            return False
+        except PermissionError:
+            # No permission to read shadow file
+            if current_app:
+                current_app.logger.error("No permission to read shadow file. Make sure the application is running with sufficient privileges.")
+            return False
+    
+    # No fallback authentication - system users only
+    return False
 
 def get_system_user_info(username):
     """Get system user information or return default data"""
-    if not UNIX_AUTH_MODULES_AVAILABLE:
-        # Return default user info for development
-        if username == "admin":
-            return {
-                'username': username,
-                'uid': 1000,
-                'gid': 1000,
-                'home': '/home/' + username,
-                'shell': '/bin/bash'
-            }
-        return None
-    
     try:
+        import pwd
         pwd_entry = pwd.getpwnam(username)
         return {
             'username': username,
@@ -73,26 +75,38 @@ def get_system_user_info(username):
             'home': pwd_entry.pw_dir,
             'shell': pwd_entry.pw_shell
         }
+    except ImportError:
+        # No fallback user info - system users only
+        return None
     except KeyError:
         return None
 
 def is_system_admin(username):
     """Check if user is system administrator"""
-    if not UNIX_AUTH_MODULES_AVAILABLE:
-        # Development mode - admin user is admin
-        return username == "admin"
-    
     try:
+        import pwd
         # Check if user is root
         if username == 'root':
             return True
             
-        # Check if user is in sudo group
+        # Check if user exists in system
         pwd_entry = pwd.getpwnam(username)
-        groups = os.popen(f'groups {username}').read().strip().split()
-        return 'sudo' in groups or 'wheel' in groups
         
-    except:
+        # Check if user is in sudo group
+        try:
+            groups = os.popen(f'groups {username}').read().strip().split()
+            return 'sudo' in groups or 'wheel' in groups or 'admin' in groups
+        except:
+            # Fallback: check if UID is 0 (root)
+            return pwd_entry.pw_uid == 0
+            
+    except ImportError:
+        # No fallback admin check - system users only
+        return False
+    except KeyError:
+        # User not found in system
+        return False
+    except Exception:
         return False
 
 def authenticate_user(username, password):
@@ -168,5 +182,27 @@ def token_required(f):
             return jsonify({'success': False, 'error': 'Token validation failed'}), 401
         
         return f(current_user, *args, **kwargs)
+    
+    return decorated
+
+def admin_required(f):
+    """Decorator to require admin privileges"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # This decorator should be used after token_required
+        # So current_user should be available from the previous decorator
+        if not args:
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+            
+        current_user = args[0]  # First argument should be current_user from token_required
+        
+        # Check if user is admin
+        if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+            return jsonify({
+                'success': False, 
+                'error': 'Admin privileges required'
+            }), 403
+        
+        return f(*args, **kwargs)
     
     return decorated 

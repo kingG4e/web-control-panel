@@ -17,7 +17,7 @@ export const DataProvider = ({ children }) => {
   const [emailAccounts, setEmailAccounts] = useState([]);
   const [databases, setDatabases] = useState([]);
   const [sslCertificates, setSSLCertificates] = useState([]);
-  const [ftpAccounts, setFTPAccounts] = useState([]);
+  
   const [users, setUsers] = useState([]);
 
   // DNS Zones Functions
@@ -205,26 +205,7 @@ export const DataProvider = ({ children }) => {
     setSSLCertificates(sslCertificates.filter(cert => cert.id !== certId));
   };
 
-  // FTP Accounts Functions
-  const addFTPAccount = (accountData) => {
-    const newAccount = {
-      id: Math.max(0, ...ftpAccounts.map(account => account.id)) + 1,
-      ...accountData,
-      status: 'active'
-    };
-    setFTPAccounts([...ftpAccounts, newAccount]);
-    return newAccount;
-  };
 
-  const updateFTPAccount = (accountId, accountData) => {
-    setFTPAccounts(ftpAccounts.map(account =>
-      account.id === accountId ? { ...account, ...accountData } : account
-    ));
-  };
-
-  const deleteFTPAccount = (accountId) => {
-    setFTPAccounts(ftpAccounts.filter(account => account.id !== accountId));
-  };
 
   // Users Functions
   const addUser = (userData) => {
@@ -255,7 +236,7 @@ export const DataProvider = ({ children }) => {
     emailAccounts,
     databases,
     sslCertificates,
-    ftpAccounts,
+
     users,
 
     // DNS Functions
@@ -287,10 +268,7 @@ export const DataProvider = ({ children }) => {
     updateSSLCertificate,
     deleteSSLCertificate,
 
-    // FTP Functions
-    addFTPAccount,
-    updateFTPAccount,
-    deleteFTPAccount,
+
 
     // User Functions
     addUser,

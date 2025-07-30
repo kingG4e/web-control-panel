@@ -51,6 +51,9 @@ structlog==23.1.0
 gunicorn==21.2.0
 Werkzeug==3.0.1
 
+# Nginx integration
+python-nginx==1.5.3
+
 # Development and testing
 pytest==7.4.2
 pytest-flask==1.2.0
@@ -60,3 +63,7 @@ mypy==1.5.1
 
 # Redis
 redis==5.0.1 
+
+# System Monitoring and Task Scheduling
+schedule==1.2.0
+psutil==5.9.5
