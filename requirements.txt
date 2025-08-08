@@ -10,7 +10,8 @@ WTForms==3.0.1
 # Database
 SQLAlchemy==2.0.28
 alembic==1.12.1
-mariadb==1.1.7
+# mariadb driver requires system-level MariaDB Connector/C; skip for dev (SQLite default)
+# mariadb==1.1.7
 pymysql==1.1.0
 
 # Authentication and security

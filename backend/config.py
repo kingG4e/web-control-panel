@@ -75,6 +75,11 @@ class Config:
     MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD') or ''
     MYSQL_ROOT_PASSWORD = os.environ.get('MYSQL_ROOT_PASSWORD') or ''
     
+    # phpMyAdmin Configuration
+    PHPMYADMIN_URL = os.environ.get('PHPMYADMIN_URL') or 'http://localhost/phpmyadmin'
+    PHPMYADMIN_PATH = os.environ.get('PHPMYADMIN_PATH') or '/usr/share/phpmyadmin'
+    PHPMYADMIN_ENABLED = os.environ.get('PHPMYADMIN_ENABLED', 'True').lower() == 'true'
+    
 
     
     # Logging Configuration

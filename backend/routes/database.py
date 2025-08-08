@@ -1,12 +1,14 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, session
 from models.database import Database, DatabaseUser, DatabaseBackup, db
 from services.mysql_service import MySQLService
+from services.phpmyadmin_service import PhpMyAdminService
 from datetime import datetime
 from sqlalchemy.orm import joinedload
 from sqlalchemy import desc
 
 database_bp = Blueprint('database', __name__)
 mysql_service = MySQLService()
+phpmyadmin_service = PhpMyAdminService()
 
 @database_bp.route('/api/databases', methods=['GET'])
 def get_databases():
@@ -346,3 +348,144 @@ def restore_database_backup(id, backup_id):
         return jsonify({'message': 'Database restored successfully'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500 
+
+@database_bp.route('/api/mysql-root-connect', methods=['POST'])
+def mysql_root_connect():
+    data = request.get_json()
+    password = data.get('password')
+    if not password:
+        return jsonify({'success': False, 'error': 'Password is required'}), 400
+    # ทดสอบเชื่อมต่อ MySQL
+    try:
+        import mysql.connector
+        conn = mysql.connector.connect(
+            host='localhost',
+            user='root',
+            password=password
+        )
+        conn.close()
+        # เก็บรหัสผ่านใน session (แนะนำ: ใช้ session เฉพาะ admin)
+        session['mysql_root_password'] = password
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@database_bp.route('/api/databases/<int:id>/phpmyadmin', methods=['GET'])
+def get_phpmyadmin_url(id):
+    """Get phpMyAdmin URL for specific database"""
+    try:
+        # Get database info
+        database = Database.query.get_or_404(id)
+        
+        # Check if phpMyAdmin is available
+        if not phpmyadmin_service.is_installed():
+            return jsonify({
+                'success': False,
+                'error': 'phpMyAdmin is not installed on this system'
+            }), 404
+        
+        # Get database user info (first user if multiple)
+        db_user = database.users[0] if database.users else None
+        
+        if not db_user:
+            return jsonify({
+                'success': False,
+                'error': 'No database user found for this database'
+            }), 400
+        
+        # Generate phpMyAdmin URL
+        url = phpmyadmin_service.get_phpmyadmin_url(
+            database_name=database.name,
+            username=db_user.username
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'url': url,
+                'database_name': database.name,
+                'username': db_user.username
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/databases/<int:id>/phpmyadmin/auto-login', methods=['POST'])
+def get_phpmyadmin_auto_login(id):
+    """Get phpMyAdmin auto-login URL for specific database"""
+    try:
+        # Get database info
+        database = Database.query.get_or_404(id)
+        
+        # Check if phpMyAdmin is available
+        if not phpmyadmin_service.is_installed():
+            return jsonify({
+                'success': False,
+                'error': 'phpMyAdmin is not installed on this system'
+            }), 404
+        
+        # Get database user info
+        db_user = database.users[0] if database.users else None
+        
+        if not db_user:
+            return jsonify({
+                'success': False,
+                'error': 'No database user found for this database'
+            }), 400
+        
+        # Get password from request (optional - for auto-login)
+        data = request.get_json() or {}
+        user_password = data.get('password', '')
+        
+        # Generate auto-login URL
+        url = phpmyadmin_service.create_auto_login_url(
+            database_name=database.name,
+            username=db_user.username,
+            password=user_password
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'url': url,
+                'database_name': database.name,
+                'username': db_user.username,
+                'auto_login': True
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/phpmyadmin/status', methods=['GET'])
+def get_phpmyadmin_status():
+    """Check phpMyAdmin installation status"""
+    try:
+        is_installed = phpmyadmin_service.is_installed()
+        
+        if is_installed:
+            url = phpmyadmin_service.get_phpmyadmin_url()
+        else:
+            url = None
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'installed': is_installed,
+                'url': url,
+                'message': 'phpMyAdmin is available' if is_installed else 'phpMyAdmin is not installed'
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500 

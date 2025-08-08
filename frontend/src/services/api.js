@@ -1,6 +1,10 @@
 import axios from 'axios';
 
-const API_URL = '/api';
+// Prefer explicit API base via env, fallback to dev-server proxy path
+const apiHost = process.env.REACT_APP_API_URL
+  ? process.env.REACT_APP_API_URL.replace(/\/+$/,'')
+  : '';
+const API_URL = apiHost ? `${apiHost}/api` : '/api';
 
 // Create axios instance with default config
 const api = axios.create({
