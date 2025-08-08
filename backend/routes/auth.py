@@ -100,6 +100,23 @@ def _set_session_data(user: User) -> None:
     if hasattr(user, 'system_uid'):
         session['uid'] = user.system_uid
 
+@auth_bp.route('/api/auth/refresh', methods=['POST'])
+def refresh_token_route():
+    """Refresh JWT token using the current token."""
+    try:
+        token = _extract_token_from_header()
+        if not token:
+            return jsonify({'error': 'Token required'}), 400
+
+        new_token = auth_service.refresh_token(token)
+        if not new_token:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+
+        return jsonify({'token': new_token})
+    except Exception as e:
+        logger.error(f"Token refresh error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @auth_bp.route('/api/auth/register', methods=['POST'])
 def register():
     """Register a new user (for development/testing)."""

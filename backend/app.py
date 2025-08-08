@@ -212,6 +212,7 @@ def register_routes(app: Flask) -> None:
                 'authentication': {
                     'POST /api/auth/login': 'User login',
                     'POST /api/auth/logout': 'User logout',
+                    'POST /api/auth/refresh': 'Refresh JWT token',
                     'GET /api/auth/user': 'Get current user',
                     'POST /api/auth/register': 'Register new user',
                     'POST /api/auth/change-password': 'Change password'
