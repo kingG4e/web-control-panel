@@ -165,8 +165,12 @@ def is_safe_path(base_path, path):
         if os.path.isabs(path):
             real_base = os.path.realpath(base_path)
             real_path = os.path.realpath(path)
-            is_safe = real_path.startswith(real_base)
-            return is_safe
+            try:
+                # os.path.commonpath provides proper path boundary checks
+                return os.path.commonpath([real_base, real_path]) == real_base
+            except ValueError:
+                # Raised if paths are on different drives on Windows; treat as unsafe
+                return False
             
         # For relative paths, join with base and check
         full_path = os.path.abspath(os.path.join(base_path, path)).replace('\\', '/')
@@ -174,8 +178,10 @@ def is_safe_path(base_path, path):
         real_full = os.path.realpath(full_path)
         
         # Check if the path is within base directory
-        is_safe = real_full.startswith(real_base)
-        if not is_safe:
+        try:
+            if os.path.commonpath([real_base, real_full]) != real_base:
+                return False
+        except ValueError:
             return False
             
         # Additional permission check
