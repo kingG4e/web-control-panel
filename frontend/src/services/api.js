@@ -24,22 +24,42 @@ api.interceptors.request.use(config => {
     return config;
 });
 
+// Helper to refresh JWT token
+const refreshToken = async () => {
+    const response = await api.post('/auth/refresh');
+    const newToken = response.data.token;
+    if (newToken) {
+        localStorage.setItem('token', newToken);
+    }
+    return newToken;
+};
+
 // Handle response errors with better cancellation handling
 api.interceptors.response.use(
     response => response,
-    error => {
+    async error => {
         // Handle cancellation errors gracefully
         if (axios.isCancel(error) || error.code === 'ERR_CANCELED') {
             console.debug('Request was canceled:', error.message);
             return Promise.reject(new Error('Request canceled'));
         }
-        
-        // Handle authentication errors
-        if (error.response?.status === 401) {
+
+        const { response, config } = error;
+        if (response?.status === 401 && !config._retry && !config.url.includes('/auth/refresh') && !config.url.includes('/auth/login')) {
+            config._retry = true;
+            try {
+                const newToken = await refreshToken();
+                if (newToken) {
+                    config.headers.Authorization = `Bearer ${newToken}`;
+                    return api(config);
+                }
+            } catch (refreshError) {
+                // fall through to logout
+            }
             localStorage.removeItem('token');
             window.location.href = '/login';
         }
-        
+
         return Promise.reject(error);
     }
 );
@@ -88,7 +108,9 @@ export const auth = {
     getCurrentUser: async () => {
         const response = await api.get('/auth/user');
         return response.data;
-    }
+    },
+
+    refresh: refreshToken
 };
 
 // Users API
