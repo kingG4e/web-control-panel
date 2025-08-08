@@ -5,6 +5,8 @@ from typing import Optional
 
 from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
+from flask_swagger import swagger
+from flask_swagger_ui import get_swaggerui_blueprint
 
 from models.database import db, init_db
 from utils.logger import setup_logger
@@ -201,64 +203,23 @@ def register_routes(app: Flask) -> None:
             'version': '2.0.0'
         })
     
-    @app.route('/api/docs')
-    def api_documentation():
-        """API Documentation endpoint."""
-        return jsonify({
+    @app.route('/api/swagger.json')
+    def swagger_spec():
+        """Generate OpenAPI specification."""
+        swag = swagger(app)
+        swag['info'] = {
             'title': 'Web Control Panel API',
-            'version': '2.0.0',
-            'description': 'Complete API documentation for Web Control Panel',
-            'endpoints': {
-                'authentication': {
-                    'POST /api/auth/login': 'User login',
-                    'POST /api/auth/logout': 'User logout',
-                    'GET /api/auth/user': 'Get current user',
-                    'POST /api/auth/register': 'Register new user',
-                    'POST /api/auth/change-password': 'Change password'
-                },
-                'virtual_hosts': {
-                    'GET /api/virtual-hosts': 'List all virtual hosts',
-                    'POST /api/virtual-hosts': 'Create new virtual host',
-                    'GET /api/virtual-hosts/{id}': 'Get virtual host details',
-                    'PUT /api/virtual-hosts/{id}': 'Update virtual host',
-                    'DELETE /api/virtual-hosts/{id}': 'Delete virtual host'
-                },
-                'dns': {
-                    'GET /api/dns/zones': 'List DNS zones',
-                    'POST /api/dns/zones': 'Create DNS zone',
-                    'GET /api/dns/zones/{id}/records': 'Get DNS records',
-                    'POST /api/dns/zones/{id}/records': 'Create DNS record'
-                },
-                'system': {
-                    'GET /api/system/health': 'Enhanced system health check with scores',
-                    'GET /api/system/metrics': 'System performance metrics',
-                    'GET /api/system/info': 'System information and features',
-                    'GET /api/system/logs': 'System logs (Admin only)',
-                    'GET /api/system/sync-check': 'Database/filesystem sync check (Admin only)',
-                    'POST /api/system/sync-check/fix': 'Auto-fix sync issues (Admin only)',
-                    'GET /api/system/config-validation': 'Validate service configurations (Admin only)',
-                    'GET /api/system/rate-limits': 'View current rate limits',
-                    'POST /api/system/rate-limits/reset': 'Reset rate limits (Admin only)',
-                    'GET /api/system/backup': 'List backups (Admin only)',
-                    'POST /api/system/backup': 'Create full system backup (Admin only)',
-                    'DELETE /api/system/backup/{id}': 'Delete backup (Admin only)',
-                    'POST /api/system/backup/cleanup': 'Cleanup old backups (Admin only)'
-                },
-                'files': {
-                    'GET /api/files': 'List files',
-                    'POST /api/files/upload': 'Upload file',
-                    'DELETE /api/files/{path}': 'Delete file'
-                }
-            },
-            'authentication': {
-                'type': 'Bearer Token',
-                'header': 'Authorization: Bearer <token>'
-            },
-            'rate_limiting': {
-                'default': '100 requests per minute',
-                'login': '5 attempts per 15 minutes'
-            }
-        })
+            'version': '2.0.0'
+        }
+        return jsonify(swag)
+
+    # Swagger UI blueprint
+    swaggerui_bp = get_swaggerui_blueprint(
+        '/api/docs',
+        '/api/swagger.json',
+        config={'app_name': 'Web Control Panel API'}
+    )
+    app.register_blueprint(swaggerui_bp, url_prefix='/api/docs')
 
 def register_error_handlers(app: Flask) -> None:
     """Register error handlers."""
