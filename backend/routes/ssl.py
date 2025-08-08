@@ -2,12 +2,14 @@ from flask import Blueprint, request, jsonify
 from models.ssl_certificate import SSLCertificate, SSLCertificateLog, db
 from services.ssl_service import SSLService
 from datetime import datetime
+from utils.auth import permission_required
 
 ssl_bp = Blueprint('ssl', __name__)
 ssl_service = SSLService()
 
 @ssl_bp.route('/api/ssl/certificates', methods=['GET'])
-def get_certificates():
+@permission_required('ssl', 'read')
+def get_certificates(current_user):
     try:
         certificates = SSLCertificate.query.all()
         return jsonify([cert.to_dict() for cert in certificates])
@@ -15,12 +17,14 @@ def get_certificates():
         return jsonify({'error': str(e)}), 500
 
 @ssl_bp.route('/api/ssl/certificates/<int:id>', methods=['GET'])
-def get_certificate(id):
+@permission_required('ssl', 'read')
+def get_certificate(current_user, id):
     certificate = SSLCertificate.query.get_or_404(id)
     return jsonify(certificate.to_dict())
 
 @ssl_bp.route('/api/ssl/certificates', methods=['POST'])
-def create_certificate():
+@permission_required('ssl', 'create')
+def create_certificate(current_user):
     data = request.get_json()
     
     # Validate required fields
@@ -81,7 +85,8 @@ def create_certificate():
         return jsonify({'error': str(e)}), 500
 
 @ssl_bp.route('/api/ssl/certificates/<int:id>/renew', methods=['POST'])
-def renew_certificate(id):
+@permission_required('ssl', 'update')
+def renew_certificate(current_user, id):
     certificate = SSLCertificate.query.get_or_404(id)
     
     try:
@@ -111,7 +116,8 @@ def renew_certificate(id):
         return jsonify({'error': str(e)}), 500
 
 @ssl_bp.route('/api/ssl/certificates/<int:id>', methods=['DELETE'])
-def delete_certificate(id):
+@permission_required('ssl', 'delete')
+def delete_certificate(current_user, id):
     try:
         certificate = SSLCertificate.query.get_or_404(id)
         
@@ -132,6 +138,7 @@ def delete_certificate(id):
         return jsonify({'error': str(e)}), 500
 
 @ssl_bp.route('/api/ssl/certificates/<int:id>/logs', methods=['GET'])
-def get_certificate_logs(id):
+@permission_required('ssl', 'read')
+def get_certificate_logs(current_user, id):
     certificate = SSLCertificate.query.get_or_404(id)
-    return jsonify([log.to_dict() for log in certificate.logs]) 
+    return jsonify([log.to_dict() for log in certificate.logs])

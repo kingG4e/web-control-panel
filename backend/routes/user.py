@@ -7,7 +7,7 @@ from services.email_service import EmailService
 from services.bind_service import BindService
 from services.linux_user_service import LinuxUserService, UNIX_MODULES_AVAILABLE
 from models.user import User, Role, Permission
-from utils.auth import token_required
+from utils.auth import token_required, admin_required, permission_required
 from functools import wraps
 import os
 import shutil
@@ -28,29 +28,6 @@ ssl_service = SSLService()
 email_service = EmailService()
 bind_service = BindService()
 linux_service = LinuxUserService()
-
-def admin_required(f):
-    @wraps(f)
-    @token_required
-    def decorated_function(current_user, *args, **kwargs):
-        if not current_user or not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
-            return jsonify({'error': 'Admin privileges required'}), 403
-        return f(current_user, *args, **kwargs)
-    return decorated_function
-
-def permission_required(resource_type, action):
-    def decorator(f):
-        @wraps(f)
-        @token_required
-        def decorated_function(current_user, *args, **kwargs):
-            domain = request.args.get('domain')
-            
-            if not user_service.check_permission(current_user.id, domain, resource_type, action):
-                return jsonify({'error': 'Permission denied'}), 403
-                
-            return f(current_user, *args, **kwargs)
-        return decorated_function
-    return decorator
 
 def user_or_admin_required(f):
     @wraps(f)

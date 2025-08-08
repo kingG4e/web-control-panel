@@ -5,13 +5,15 @@ from services.phpmyadmin_service import PhpMyAdminService
 from datetime import datetime
 from sqlalchemy.orm import joinedload
 from sqlalchemy import desc
+from utils.auth import permission_required, admin_required
 
 database_bp = Blueprint('database', __name__)
 mysql_service = MySQLService()
 phpmyadmin_service = PhpMyAdminService()
 
 @database_bp.route('/api/databases', methods=['GET'])
-def get_databases():
+@permission_required('database', 'read')
+def get_databases(current_user):
     try:
         # Get pagination parameters
         page = request.args.get('page', 1, type=int)
@@ -54,7 +56,8 @@ def get_databases():
         }), 500
 
 @database_bp.route('/api/databases/<int:id>', methods=['GET'])
-def get_database(id):
+@permission_required('database', 'read')
+def get_database(current_user, id):
     # Use eager loading for single database
     database = Database.query.options(
         joinedload(Database.users),
@@ -70,7 +73,8 @@ def get_database(id):
     })
 
 @database_bp.route('/api/databases/<int:id>/users', methods=['GET'])
-def get_database_users(id):
+@permission_required('database', 'read')
+def get_database_users(current_user, id):
     try:
         # Get pagination parameters
         page = request.args.get('page', 1, type=int)
@@ -107,7 +111,8 @@ def get_database_users(id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>/backups', methods=['GET'])
-def get_database_backups(id):
+@permission_required('database', 'read')
+def get_database_backups(current_user, id):
     try:
         # Get pagination parameters
         page = request.args.get('page', 1, type=int)
@@ -144,7 +149,8 @@ def get_database_backups(id):
         }), 500
 
 @database_bp.route('/api/databases', methods=['POST'])
-def create_database():
+@permission_required('database', 'create')
+def create_database(current_user):
     data = request.get_json()
     
     # Validate required fields
@@ -188,7 +194,8 @@ def create_database():
         }), 500
 
 @database_bp.route('/api/databases/<int:id>', methods=['PUT'])
-def update_database(id):
+@permission_required('database', 'update')
+def update_database(current_user, id):
     database = Database.query.get_or_404(id)
     data = request.get_json()
     
@@ -217,7 +224,8 @@ def update_database(id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>', methods=['DELETE'])
-def delete_database(id):
+@permission_required('database', 'delete')
+def delete_database(current_user, id):
     database = Database.query.get_or_404(id)
     
     try:
@@ -240,7 +248,8 @@ def delete_database(id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>/users', methods=['POST'])
-def create_database_user(id):
+@permission_required('database', 'create')
+def create_database_user(current_user, id):
     database = Database.query.get_or_404(id)
     data = request.get_json()
     
@@ -284,7 +293,8 @@ def create_database_user(id):
         }), 500
 
 @database_bp.route('/api/databases/<int:db_id>/users/<int:user_id>', methods=['DELETE'])
-def delete_database_user(db_id, user_id):
+@permission_required('database', 'delete')
+def delete_database_user(current_user, db_id, user_id):
     user = DatabaseUser.query.filter_by(id=user_id, database_id=db_id).first_or_404()
     
     try:
@@ -307,7 +317,8 @@ def delete_database_user(db_id, user_id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>/backups', methods=['POST'])
-def create_database_backup(id):
+@permission_required('database', 'create')
+def create_database_backup(current_user, id):
     database = Database.query.get_or_404(id)
     data = request.get_json()
     
@@ -335,7 +346,8 @@ def create_database_backup(id):
         return jsonify({'error': str(e)}), 500
 
 @database_bp.route('/api/databases/<int:id>/backups/<int:backup_id>/restore', methods=['POST'])
-def restore_database_backup(id, backup_id):
+@permission_required('database', 'update')
+def restore_database_backup(current_user, id, backup_id):
     database = Database.query.get_or_404(id)
     backup = DatabaseBackup.query.get_or_404(backup_id)
     
@@ -350,7 +362,8 @@ def restore_database_backup(id, backup_id):
         return jsonify({'error': str(e)}), 500 
 
 @database_bp.route('/api/mysql-root-connect', methods=['POST'])
-def mysql_root_connect():
+@admin_required
+def mysql_root_connect(current_user):
     data = request.get_json()
     password = data.get('password')
     if not password:
@@ -371,7 +384,8 @@ def mysql_root_connect():
         return jsonify({'success': False, 'error': str(e)})
 
 @database_bp.route('/api/databases/<int:id>/phpmyadmin', methods=['GET'])
-def get_phpmyadmin_url(id):
+@permission_required('database', 'read')
+def get_phpmyadmin_url(current_user, id):
     """Get phpMyAdmin URL for specific database"""
     try:
         # Get database info
@@ -415,7 +429,8 @@ def get_phpmyadmin_url(id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>/phpmyadmin/auto-login', methods=['POST'])
-def get_phpmyadmin_auto_login(id):
+@permission_required('database', 'read')
+def get_phpmyadmin_auto_login(current_user, id):
     """Get phpMyAdmin auto-login URL for specific database"""
     try:
         # Get database info
@@ -465,7 +480,8 @@ def get_phpmyadmin_auto_login(id):
         }), 500
 
 @database_bp.route('/api/phpmyadmin/status', methods=['GET'])
-def get_phpmyadmin_status():
+@permission_required('database', 'read')
+def get_phpmyadmin_status(current_user):
     """Check phpMyAdmin installation status"""
     try:
         is_installed = phpmyadmin_service.is_installed()

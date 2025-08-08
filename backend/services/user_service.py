@@ -492,8 +492,8 @@ class UserService:
             return True
 
         # Check role-based permissions
-        for role in user.roles:
-            for permission in role.permissions:
+        for role in getattr(user, 'roles', []):
+            for permission in getattr(role, 'permissions', []):
                 if permission.resource_type == resource_type and permission.action == action:
                     return True
 
@@ -501,17 +501,14 @@ class UserService:
         if domain:
             domain_perm = DomainPermission.query.filter_by(user_id=user_id, domain=domain).first()
             if domain_perm:
-                # Check specific permission based on resource type
-                if resource_type == 'virtual_host':
-                    return domain_perm.can_manage_vhost
-                elif resource_type == 'dns':
-                    return domain_perm.can_manage_dns
-                elif resource_type == 'ssl':
-                    return domain_perm.can_manage_ssl
-                elif resource_type == 'email':
-                    return domain_perm.can_manage_email
-                elif resource_type == 'database':
-                    return domain_perm.can_manage_database
+                resource_map = {
+                    'virtual_host': domain_perm.can_manage_vhost,
+                    'dns': domain_perm.can_manage_dns,
+                    'ssl': domain_perm.can_manage_ssl,
+                    'email': domain_perm.can_manage_email,
+                    'database': domain_perm.can_manage_database,
+                }
+                return resource_map.get(resource_type, False)
                 
 
         return False

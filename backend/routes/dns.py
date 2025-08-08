@@ -3,28 +3,33 @@ from models.dns import DNSZone, DNSRecord, db
 from services.bind_service import BindService
 from datetime import datetime
 import os
+from utils.auth import permission_required, admin_required
 
 dns_bp = Blueprint('dns', __name__)
 bind_service = BindService()
 
 @dns_bp.route('/api/dns/zones', methods=['GET'])
-def get_zones():
+@permission_required('dns', 'read')
+def get_zones(current_user):
     zones = DNSZone.query.all()
     return jsonify([zone.to_dict() for zone in zones])
 
 @dns_bp.route('/api/dns/zones/<int:id>', methods=['GET'])
-def get_zone(id):
+@permission_required('dns', 'read')
+def get_zone(current_user, id):
     zone = DNSZone.query.get_or_404(id)
     return jsonify(zone.to_dict())
 
 @dns_bp.route('/api/dns/zones/<int:zone_id>/records', methods=['GET'])
-def get_records(zone_id):
+@permission_required('dns', 'read')
+def get_records(current_user, zone_id):
     zone = DNSZone.query.get_or_404(zone_id)
     records = DNSRecord.query.filter_by(zone_id=zone_id).all()
     return jsonify([record.to_dict() for record in records])
 
 @dns_bp.route('/api/dns/zones', methods=['POST'])
-def create_zone():
+@permission_required('dns', 'create')
+def create_zone(current_user):
     data = request.get_json()
     
     # Validate required fields
@@ -57,7 +62,8 @@ def create_zone():
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/zones/<int:id>/records', methods=['POST'])
-def add_record(id):
+@permission_required('dns', 'create')
+def add_record(current_user, id):
     zone = DNSZone.query.get_or_404(id)
     data = request.get_json()
     
@@ -91,7 +97,8 @@ def add_record(id):
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/zones/<int:zone_id>/records/<int:record_id>', methods=['PUT'])
-def update_record(zone_id, record_id):
+@permission_required('dns', 'update')
+def update_record(current_user, zone_id, record_id):
     zone = DNSZone.query.get_or_404(zone_id)
     record = DNSRecord.query.get_or_404(record_id)
     data = request.get_json()
@@ -124,7 +131,8 @@ def update_record(zone_id, record_id):
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/zones/<int:zone_id>/records/<int:record_id>', methods=['DELETE'])
-def delete_record(zone_id, record_id):
+@permission_required('dns', 'delete')
+def delete_record(current_user, zone_id, record_id):
     zone = DNSZone.query.get_or_404(zone_id)
     record = DNSRecord.query.get_or_404(record_id)
     
@@ -145,7 +153,8 @@ def delete_record(zone_id, record_id):
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/zones/<int:id>', methods=['DELETE'])
-def delete_zone(id):
+@permission_required('dns', 'delete')
+def delete_zone(current_user, id):
     zone = DNSZone.query.get_or_404(id)
     
     try:
@@ -162,7 +171,8 @@ def delete_zone(id):
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/zones/<int:id>/zonefile', methods=['GET'])
-def get_zone_file(id):
+@permission_required('dns', 'read')
+def get_zone_file(current_user, id):
     zone = DNSZone.query.get_or_404(id)
     
     try:
@@ -179,7 +189,8 @@ def get_zone_file(id):
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/reload', methods=['POST'])
-def reload_bind():
+@admin_required
+def reload_bind(current_user):
     try:
         bind_service._reload_bind()
         return jsonify({'message': 'BIND reloaded successfully'})
@@ -187,16 +198,17 @@ def reload_bind():
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/rebuild', methods=['POST'])
-def rebuild_dns():
+@admin_required
+def rebuild_dns(current_user):
     try:
         # Get all zones and rebuild them
         zones = DNSZone.query.all()
         for zone in zones:
             bind_service.update_zone(zone, nameserver_ip='127.0.0.1')
-        
+
         # Reload BIND
         bind_service._reload_bind()
-        
+
         return jsonify({'message': 'DNS zones rebuilt and BIND reloaded successfully'})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500 
+        return jsonify({'error': str(e)}), 500
