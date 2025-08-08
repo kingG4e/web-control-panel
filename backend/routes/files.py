@@ -17,6 +17,14 @@ def init_file_service():
 @files_bp.route('/list', methods=['GET'])
 @token_required
 def list_directory(current_user):
+    """List directory contents.
+    ---
+    tags:
+      - files
+    responses:
+      200:
+        description: Directory listing
+    """
     try:
         init_file_service()
         path = request.args.get('path', '/')

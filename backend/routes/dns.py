@@ -9,6 +9,14 @@ bind_service = BindService()
 
 @dns_bp.route('/api/dns/zones', methods=['GET'])
 def get_zones():
+    """List DNS zones.
+    ---
+    tags:
+      - dns
+    responses:
+      200:
+        description: List of DNS zones
+    """
     zones = DNSZone.query.all()
     return jsonify([zone.to_dict() for zone in zones])
 

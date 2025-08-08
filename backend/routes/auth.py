@@ -56,7 +56,27 @@ def _extract_token_from_header() -> Optional[str]:
 
 @auth_bp.route('/api/auth/login', methods=['POST'])
 def login():
-    """Handle user login."""
+    """Handle user login.
+    ---
+    tags:
+      - auth
+    parameters:
+      - in: body
+        name: credentials
+        schema:
+          type: object
+          required:
+            - username
+            - password
+          properties:
+            username:
+              type: string
+            password:
+              type: string
+    responses:
+      200:
+        description: Login successful
+    """
     try:
         data = request.get_json()
         if not _validate_login_data(data):
@@ -102,7 +122,14 @@ def _set_session_data(user: User) -> None:
 
 @auth_bp.route('/api/auth/register', methods=['POST'])
 def register():
-    """Register a new user (for development/testing)."""
+    """Register a new user (for development/testing).
+    ---
+    tags:
+      - auth
+    responses:
+      201:
+        description: User registered successfully
+    """
     try:
         data = request.get_json()
         if not _validate_register_data(data):
@@ -135,7 +162,14 @@ def _validate_register_data(data: Dict[str, Any]) -> bool:
 
 @auth_bp.route('/api/auth/logout', methods=['POST'])
 def logout():
-    """Handle user logout."""
+    """Handle user logout.
+    ---
+    tags:
+      - auth
+    responses:
+      200:
+        description: Logout successful
+    """
     try:
         session.clear()
         logger.info("User logged out successfully")
@@ -147,7 +181,14 @@ def logout():
 @auth_bp.route('/api/auth/user', methods=['GET'])
 @login_required
 def get_current_user():
-    """Get current authenticated user information."""
+    """Get current authenticated user information.
+    ---
+    tags:
+      - auth
+    responses:
+      200:
+        description: User information
+    """
     try:
         username = session.get('username') or getattr(request, 'current_username', None)
         if not username:

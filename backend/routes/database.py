@@ -12,6 +12,14 @@ phpmyadmin_service = PhpMyAdminService()
 
 @database_bp.route('/api/databases', methods=['GET'])
 def get_databases():
+    """List databases.
+    ---
+    tags:
+      - database
+    responses:
+      200:
+        description: List of databases
+    """
     try:
         # Get pagination parameters
         page = request.args.get('page', 1, type=int)
