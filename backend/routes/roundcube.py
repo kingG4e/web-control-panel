@@ -13,7 +13,14 @@ roundcube_service = RoundcubeService()
 @roundcube_bp.route('/api/roundcube/status', methods=['GET'])
 @token_required
 def get_roundcube_status(current_user):
-    """Get Roundcube installation and configuration status"""
+    """Get Roundcube installation and configuration status.
+    ---
+    tags:
+      - roundcube
+    responses:
+      200:
+        description: Roundcube status
+    """
     try:
         status = roundcube_service.check_roundcube_status()
         return jsonify({

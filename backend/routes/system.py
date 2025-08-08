@@ -169,6 +169,14 @@ def get_service_status():
 
 @system_bp.route('/api/system/status')
 def get_system_status():
+    """System status information.
+    ---
+    tags:
+      - system
+    responses:
+      200:
+        description: Current system metrics
+    """
     try:
         # Get system load
         load_avg = os.getloadavg() if hasattr(os, 'getloadavg') else [0, 0, 0]

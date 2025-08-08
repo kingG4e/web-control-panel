@@ -72,7 +72,14 @@ def user_or_admin_required(f):
 @user_bp.route('/api/users', methods=['GET'])
 @admin_required
 def get_users(current_user):
-    """Return only Linux system users (no database users)."""
+    """Return only Linux system users (no database users).
+    ---
+    tags:
+      - user
+    responses:
+      200:
+        description: List of system users
+    """
     # Collect system users (Linux) only
     if UNIX_MODULES_AVAILABLE:
         try:

@@ -21,7 +21,7 @@
   "scripts": {
     "start": "react-app-rewired start",
     "start:lan": "REACT_APP_API_URL=http://192.168.1.174:5000 react-app-rewired start",
-    "build": "react-app-rewired build",
+    "build": "python ../backend/generate_schema.py && react-app-rewired build",
     "test": "react-app-rewired test"
   },
   "proxy": "http://localhost:5000",

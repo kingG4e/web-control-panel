@@ -276,6 +276,14 @@ def _auto_fix_virtual_host(virtual_host):
 @virtual_host_bp.route('/api/virtual-hosts', methods=['GET'])
 @token_required
 def get_virtual_hosts(current_user):
+    """List virtual hosts.
+    ---
+    tags:
+      - virtual_host
+    responses:
+      200:
+        description: List of virtual hosts
+    """
     try:
         # Admin/root can see all virtual hosts
         if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
