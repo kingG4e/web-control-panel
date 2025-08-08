@@ -88,6 +88,25 @@ def login():
         logger.error(f"Login error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+@auth_bp.route('/api/auth/refresh', methods=['POST'])
+def refresh():
+    """Refresh JWT token."""
+    try:
+        token = _extract_token_from_header()
+        if not token:
+            return jsonify({'error': 'Token missing'}), 401
+
+        new_token = auth_service.refresh_token(token)
+        if not new_token:
+            return jsonify({'error': 'Invalid token'}), 401
+
+        return jsonify({'token': new_token})
+
+    except Exception as e:
+        logger.error(f"Token refresh error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 def _validate_login_data(data: Dict[str, Any]) -> bool:
     """Validate login request data."""
     return data and data.get('username') and data.get('password')
