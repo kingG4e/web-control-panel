@@ -205,4 +205,33 @@ def admin_required(f):
         
         return f(*args, **kwargs)
     
-    return decorated 
+    return decorated
+
+def permission_required(resource_type, action):
+    """Decorator to require specific resource permissions"""
+    def decorator(f):
+        @wraps(f)
+        @token_required
+        def decorated(current_user, *args, **kwargs):
+            from services.user_service import UserService
+
+            user_service = UserService()
+            domain = (
+                request.args.get('domain')
+                or kwargs.get('domain')
+            )
+            if not domain and request.is_json:
+                data = request.get_json(silent=True) or {}
+                domain = data.get('domain') or data.get('domain_name')
+
+            if not user_service.check_permission(current_user.id, domain, resource_type, action):
+                return jsonify({
+                    'success': False,
+                    'error': 'Permission denied'
+                }), 403
+
+            return f(current_user, *args, **kwargs)
+
+        return decorated
+
+    return decorator
