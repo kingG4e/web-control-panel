@@ -27,19 +27,42 @@ api.interceptors.request.use(config => {
 // Handle response errors with better cancellation handling
 api.interceptors.response.use(
     response => response,
-    error => {
+    async error => {
         // Handle cancellation errors gracefully
         if (axios.isCancel(error) || error.code === 'ERR_CANCELED') {
             console.debug('Request was canceled:', error.message);
             return Promise.reject(new Error('Request canceled'));
         }
-        
+
+        const originalRequest = error.config || {};
+
+        // Attempt token refresh once on 401 errors
+        if (
+            error.response?.status === 401 &&
+            !originalRequest._retry &&
+            !['/auth/login', '/auth/register', '/auth/refresh'].includes(originalRequest.url)
+        ) {
+            originalRequest._retry = true;
+            try {
+                const newToken = await auth.refresh();
+                if (newToken) {
+                    originalRequest.headers = originalRequest.headers || {};
+                    originalRequest.headers.Authorization = `Bearer ${newToken}`;
+                }
+                return api(originalRequest);
+            } catch (refreshError) {
+                localStorage.removeItem('token');
+                window.location.href = '/login';
+                return Promise.reject(refreshError);
+            }
+        }
+
         // Handle authentication errors
         if (error.response?.status === 401) {
             localStorage.removeItem('token');
             window.location.href = '/login';
         }
-        
+
         return Promise.reject(error);
     }
 );
@@ -74,12 +97,21 @@ export const auth = {
         localStorage.setItem('token', response.data.token);
         return response.data;
     },
-    
+
     register: async (username, password) => {
         const response = await api.post('/auth/register', { username, password });
         return response.data;
     },
-    
+
+    refresh: async () => {
+        const response = await api.post('/auth/refresh');
+        const newToken = response.data.token;
+        if (newToken) {
+            localStorage.setItem('token', newToken);
+        }
+        return newToken;
+    },
+
     logout: () => {
         localStorage.removeItem('token');
         window.location.href = '/login';
