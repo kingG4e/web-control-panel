@@ -11,7 +11,14 @@ email_service = EmailService()
 @email_bp.route('/api/email/domains', methods=['GET'])
 @token_required
 def get_domains(current_user):
-    """Get all email domains for the current user"""
+    """Get all email domains for the current user.
+    ---
+    tags:
+      - email
+    responses:
+      200:
+        description: List of email domains
+    """
     try:
         # Get user's virtual hosts
         virtual_hosts = VirtualHost.query.filter_by(user_id=current_user.id).all()

@@ -8,6 +8,14 @@ ssl_service = SSLService()
 
 @ssl_bp.route('/api/ssl/certificates', methods=['GET'])
 def get_certificates():
+    """List SSL certificates.
+    ---
+    tags:
+      - ssl
+    responses:
+      200:
+        description: List of SSL certificates
+    """
     try:
         certificates = SSLCertificate.query.all()
         return jsonify([cert.to_dict() for cert in certificates])
