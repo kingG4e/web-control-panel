@@ -4,6 +4,7 @@ from services.bind_service import BindService
 from datetime import datetime
 import os
 from utils.auth import permission_required, admin_required
+from sqlalchemy.orm import joinedload
 
 dns_bp = Blueprint('dns', __name__)
 bind_service = BindService()
@@ -24,8 +25,24 @@ def get_zone(current_user, id):
 @permission_required('dns', 'read')
 def get_records(current_user, zone_id):
     zone = DNSZone.query.get_or_404(zone_id)
+    # Prefer reading from actual zone file so UI reflects real state
+    file_records = bind_service.read_zone_records(zone.domain_name)
+    if file_records:
+        return jsonify(file_records)
+    # Fallback to DB if parsing failed or file missing
     records = DNSRecord.query.filter_by(zone_id=zone_id).all()
-    return jsonify([record.to_dict() for record in records])
+    records_json = [record.to_dict() for record in records]
+    # Ensure SOA appears at top even if not stored as a DB record
+    soa_record = {
+        'id': None,
+        'name': '@',
+        'record_type': 'SOA',
+        'content': f"ns1.{zone.domain_name}. admin.{zone.domain_name}. ( {zone.serial} {zone.refresh} {zone.retry} {zone.expire} {zone.minimum} )",
+        'ttl': 3600,
+        'priority': None,
+        'status': 'active'
+    }
+    return jsonify([soa_record] + records_json)
 
 @dns_bp.route('/api/dns/zones', methods=['POST'])
 @permission_required('dns', 'create')
@@ -49,13 +66,33 @@ def create_zone(current_user):
     )
     
     try:
-        # Create zone in BIND
-        bind_service.create_zone(zone, nameserver_ip=data.get('nameserver_ip', '127.0.0.1'))
-        
-        # Save to database
+        # Save zone first to get ID
         db.session.add(zone)
+        db.session.flush()
+
+        # Create base records in DB so UI reflects the zone template
+        nameserver_ip = data.get('nameserver_ip', '127.0.0.1')
+        default_ip = nameserver_ip or '127.0.0.1'
+        base_records = [
+            DNSRecord(zone_id=zone.id, name='@',   record_type='NS',    content=f"ns1.{zone.domain_name}.", ttl=3600, status='active'),
+            DNSRecord(zone_id=zone.id, name='ns1', record_type='A',     content=default_ip,                   ttl=3600, status='active'),
+            DNSRecord(zone_id=zone.id, name='@',   record_type='A',     content=default_ip,                   ttl=3600, status='active'),
+            DNSRecord(zone_id=zone.id, name='www', record_type='CNAME', content=f"{zone.domain_name}.",      ttl=3600, status='active')
+        ]
+        # Optional MX/mail records if requested
+        if data.get('with_mail', True):
+            base_records.extend([
+                DNSRecord(zone_id=zone.id, name='@',    record_type='MX', content=f"mail.{zone.domain_name}.", priority=10, ttl=3600, status='active'),
+                DNSRecord(zone_id=zone.id, name='mail', record_type='A',  content=default_ip,                            ttl=3600, status='active')
+            ])
+
+        for r in base_records:
+            db.session.add(r)
+
+        # Create zone in BIND
+        bind_service.create_zone(zone, nameserver_ip=default_ip)
+
         db.session.commit()
-        
         return jsonify(zone.to_dict()), 201
     except Exception as e:
         db.session.rollback()
@@ -87,10 +124,13 @@ def add_record(current_user, id):
         # Add record to database
         db.session.add(record)
         db.session.commit()
-        
+
+        # Re-fetch zone with fresh records (ensures template sees the newly added row)
+        zone = DNSZone.query.options(joinedload(DNSZone.records)).get(zone.id)
+
         # Update zone file
         bind_service.update_zone(zone, nameserver_ip=data.get('nameserver_ip', '127.0.0.1'))
-        
+
         return jsonify(record.to_dict()), 201
     except Exception as e:
         db.session.rollback()
@@ -121,7 +161,10 @@ def update_record(current_user, zone_id, record_id):
         
         # Save to database
         db.session.commit()
-        
+
+        # Re-fetch zone with fresh records
+        zone = DNSZone.query.options(joinedload(DNSZone.records)).get(zone.id)
+
         # Update zone file
         bind_service.update_zone(zone, nameserver_ip=data.get('nameserver_ip', '127.0.0.1'))
         
@@ -143,7 +186,10 @@ def delete_record(current_user, zone_id, record_id):
         # Remove record from database
         db.session.delete(record)
         db.session.commit()
-        
+
+        # Re-fetch zone with fresh records
+        zone = DNSZone.query.options(joinedload(DNSZone.records)).get(zone.id)
+
         # Update zone file
         bind_service.update_zone(zone, nameserver_ip='127.0.0.1')
         

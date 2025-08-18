@@ -64,7 +64,7 @@ class Config:
     
     # DNS Configuration
     BIND_CONFIG_DIR = os.environ.get('BIND_CONFIG_DIR') or '/etc/bind'
-    BIND_ZONES_DIR = os.environ.get('BIND_ZONES_DIR') or '/var/lib/bind'
+    BIND_ZONES_DIR = os.environ.get('BIND_ZONES_DIR') or '/etc/bind/zones'
     BIND_RELOAD_COMMAND = os.environ.get('BIND_RELOAD_COMMAND') or 'systemctl reload bind9'
     BIND_DEV_MODE = os.environ.get('BIND9_DEV_MODE', 'False').lower() == 'true'
     

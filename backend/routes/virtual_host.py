@@ -76,16 +76,37 @@ def _create_dns_zone(domain, linux_username):
     db.session.add(dns_zone)
     db.session.flush()  # Get the ID
     
-    # Create basic DNS records
+    # Create base DNS records so UI reflects the template-generated zone file
+    default_ip = '127.0.0.1'
     records = [
+        # NS record
+        DNSRecord(
+            zone_id=dns_zone.id,
+            name='@',
+            record_type='NS',
+            content=f'ns1.{domain}.',
+            ttl=3600,
+            status='active'
+        ),
+        # ns1 A record
+        DNSRecord(
+            zone_id=dns_zone.id,
+            name='ns1',
+            record_type='A',
+            content=default_ip,
+            ttl=3600,
+            status='active'
+        ),
+        # root A record
         DNSRecord(
             zone_id=dns_zone.id,
             name='@',
             record_type='A',
-            content='127.0.0.1',  # Default to localhost, should be changed to actual IP
+            content=default_ip,
             ttl=3600,
             status='active'
         ),
+        # www CNAME
         DNSRecord(
             zone_id=dns_zone.id,
             name='www',
@@ -94,6 +115,7 @@ def _create_dns_zone(domain, linux_username):
             ttl=3600,
             status='active'
         ),
+        # MX record (mail)
         DNSRecord(
             zone_id=dns_zone.id,
             name='@',
@@ -103,11 +125,12 @@ def _create_dns_zone(domain, linux_username):
             ttl=3600,
             status='active'
         ),
+        # mail A record
         DNSRecord(
             zone_id=dns_zone.id,
             name='mail',
             record_type='A',
-            content='127.0.0.1',  # Default to localhost
+            content=default_ip,
             ttl=3600,
             status='active'
         )

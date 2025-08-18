@@ -7,44 +7,33 @@ from cryptography.x509.oid import NameOID
 
 class SSLService:
     def __init__(self):
-        self.certbot_path = '/usr/bin/certbot'
-        self.certificates_dir = '/etc/letsencrypt/live'
-        self.nginx_config_dir = '/etc/nginx/sites-available'
+        # Allow overrides via environment for flexibility across systems
+        self.certbot_path = os.getenv('CERTBOT_PATH', '/usr/bin/certbot')
+        self.certificates_dir = os.getenv('LE_LIVE_DIR', '/etc/letsencrypt/live')
+        self.nginx_config_dir = os.getenv('NGINX_SITES_AVAILABLE', '/etc/nginx/sites-available')
+        self.certbot_email = os.getenv('CERTBOT_EMAIL')  # Optional
+        self.certbot_staging = os.getenv('CERTBOT_STAGING', 'false').lower() in ('1', 'true', 'yes')
+        # DNS-01 support
+        self.certbot_auth_method = os.getenv('CERTBOT_AUTH_METHOD', '').lower()  # '', 'webroot', 'nginx', 'dns'
+        self.certbot_dns_plugin = os.getenv('CERTBOT_DNS_PLUGIN')  # e.g. 'dns-cloudflare', 'dns-digitalocean', 'dns-google', 'dns-route53'
+        self.certbot_dns_credentials = os.getenv('CERTBOT_DNS_CREDENTIALS')  # path to credentials file for the dns plugin
+        self.certbot_dns_propagation_seconds = os.getenv('CERTBOT_DNS_PROPAGATION_SECONDS')  # string seconds
 
     def issue_certificate(self, domain, user_id=None, document_root=None):
         """Issue a new SSL certificate using Let's Encrypt"""
         try:
-            # Use certbot with webroot method if document_root is provided
+            # Ensure webroot exists if provided
+            if document_root and not os.path.isdir(document_root):
+                raise Exception(f'Document root does not exist: {document_root}')
+
+            # Prepare ACME challenge dir for webroot
             if document_root:
-                # Create .well-known directory for ACME challenge
                 well_known_dir = os.path.join(document_root, '.well-known', 'acme-challenge')
                 os.makedirs(well_known_dir, exist_ok=True)
-                
-                command = [
-                    self.certbot_path,
-                    'certonly',
-                    '--webroot',
-                    '--webroot-path', document_root,
-                    '--non-interactive',
-                    '--agree-tos',
-                    '-d', domain,
-                    '--keep-until-expiring',
-                    '--expand'
-                ]
-            else:
-                # Fallback to nginx plugin
-                command = [
-                    self.certbot_path,
-                    'certonly',
-                    '--nginx',  # Use Nginx plugin
-                    '--non-interactive',
-                    '--agree-tos',
-                    '-d', domain,
-                    '--keep-until-expiring',
-                    '--expand'
-                ]
-            
-            subprocess.run(command, check=True, capture_output=True, text=True)
+
+            command = self._build_certbot_command(domain, document_root=document_root)
+
+            result = subprocess.run(command, check=True, capture_output=True, text=True)
             
             # Get certificate paths
             cert_path = os.path.join(self.certificates_dir, domain, 'fullchain.pem')
@@ -66,6 +55,10 @@ class SSLService:
                 'valid_until': cert_data.not_valid_after
             }
             
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.strip() if e.stderr else ''
+            stdout = e.stdout.strip() if e.stdout else ''
+            raise Exception(f'Certbot failed (issue). Exit {e.returncode}. Stderr: {stderr}. Stdout: {stdout}')
         except Exception as e:
             raise Exception(f'Failed to issue certificate: {str(e)}')
 
@@ -73,14 +66,10 @@ class SSLService:
         """Renew an SSL certificate"""
         try:
             # Run certbot to renew certificate
-            command = [
-                self.certbot_path,
-                'renew',
-                '--cert-name', domain,
-                '--force-renewal'
-            ]
-            
-            subprocess.run(command, check=True, capture_output=True, text=True)
+            command = [self.certbot_path, 'renew', '--cert-name', domain, '--force-renewal']
+            if self.certbot_staging:
+                command.append('--staging')
+            result = subprocess.run(command, check=True, capture_output=True, text=True)
             
             # Get certificate paths
             cert_path = os.path.join(self.certificates_dir, domain, 'fullchain.pem')
@@ -96,6 +85,10 @@ class SSLService:
                 'valid_until': cert_data.not_valid_after
             }
             
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.strip() if e.stderr else ''
+            stdout = e.stdout.strip() if e.stdout else ''
+            raise Exception(f'Certbot failed (renew). Exit {e.returncode}. Stderr: {stderr}. Stdout: {stdout}')
         except Exception as e:
             raise Exception(f'Failed to renew certificate: {str(e)}')
 
@@ -252,9 +245,55 @@ server {{
             subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
             
         except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to configure Nginx SSL: {str(e)}')
+            stderr = e.stderr.decode('utf-8', errors='ignore') if isinstance(e.stderr, (bytes, bytearray)) else (e.stderr or '')
+            raise Exception(f'Failed to configure Nginx SSL: {stderr}')
         except Exception as e:
             raise Exception(f'Failed to configure Nginx SSL: {str(e)}')
+
+    def _build_certbot_command(self, domain: str, document_root: str = None):
+        """Build certbot command with proper flags and environment options."""
+        base_cmd = [self.certbot_path, 'certonly']
+
+        # Decide authenticator
+        use_dns = False
+        if self.certbot_auth_method == 'dns' or (self.certbot_dns_plugin and self.certbot_dns_plugin.startswith('dns-')):
+            use_dns = True
+
+        if use_dns:
+            plugin = self.certbot_dns_plugin
+            if not plugin:
+                raise Exception('DNS auth selected but CERTBOT_DNS_PLUGIN is not set (e.g. dns-cloudflare)')
+            base_cmd += [f'--{plugin}']
+
+            # Many plugins support credentials & propagation flags in a consistent naming scheme
+            cred_flag = f'--{plugin}-credentials'
+            prop_flag = f'--{plugin}-propagation-seconds'
+
+            # Route53 is special; skip credentials flag if not provided
+            if self.certbot_dns_credentials and plugin != 'dns-route53':
+                base_cmd += [cred_flag, self.certbot_dns_credentials]
+            if self.certbot_dns_propagation_seconds:
+                base_cmd += [prop_flag, str(self.certbot_dns_propagation_seconds)]
+
+        else:
+            # Fallback order: webroot if provided, else nginx plugin
+            if document_root:
+                base_cmd += ['--webroot', '--webroot-path', document_root]
+            else:
+                base_cmd += ['--nginx']
+
+        base_cmd += ['--non-interactive', '--agree-tos', '-d', domain, '--keep-until-expiring', '--expand']
+
+        if self.certbot_email:
+            base_cmd += ['--email', self.certbot_email]
+        else:
+            # For non-interactive mode without email, allow unsafe registration (testing/dev)
+            base_cmd.append('--register-unsafely-without-email')
+
+        if self.certbot_staging:
+            base_cmd.append('--staging')
+
+        return base_cmd
 
     def _get_issuer(self, cert_data):
         """Get certificate issuer name"""

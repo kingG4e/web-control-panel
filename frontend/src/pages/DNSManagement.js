@@ -48,7 +48,15 @@ const DNSManagement = () => {
     record_type: 'A',
     content: '',
     ttl: 3600,
-    priority: null
+    priority: null,
+    // SOA helpers
+    soa_mname: '',
+    soa_rname: '',
+    soa_serial: '',
+    soa_refresh: 3600,
+    soa_retry: 1800,
+    soa_expire: 1209600,
+    soa_minimum: 300
   });
 
   const recordTypes = [
@@ -59,8 +67,43 @@ const DNSManagement = () => {
     { value: 'NS', label: 'NS - Name Server', description: 'Authoritative name server' },
     { value: 'TXT', label: 'TXT - Text Record', description: 'Text information' },
     { value: 'SPF', label: 'SPF - Sender Policy Framework', description: 'Email authentication' },
-    { value: 'DKIM', label: 'DKIM - DomainKeys Identified Mail', description: 'Email signing' }
+    { value: 'DKIM', label: 'DKIM - DomainKeys Identified Mail', description: 'Email signing' },
+    { value: 'PTR', label: 'PTR - Pointer Record', description: 'Reverse DNS lookup' },
+    { value: 'SRV', label: 'SRV - Service Record', description: 'Service location specification' },
+    { value: 'CAA', label: 'CAA - Certificate Authority Authorization', description: 'SSL certificate authority authorization' },
+    { value: 'SOA', label: 'SOA - Start of Authority', description: 'Zone authority information' }
   ];
+
+  // Helpers for SOA
+  const buildSoaContent = (data) => {
+    const m = data.soa_mname || `ns1.${selectedDomain?.domain}.`;
+    const r = data.soa_rname || `admin.${selectedDomain?.domain}.`;
+    const serial = (data.soa_serial && `${data.soa_serial}`) || dnsZone?.serial || '';
+    const refresh = data.soa_refresh || 3600;
+    const retry = data.soa_retry || 1800;
+    const expire = data.soa_expire || 1209600;
+    const minimum = data.soa_minimum || 300;
+    return `${m} ${r} ( ${serial} ${refresh} ${retry} ${expire} ${minimum} )`;
+  };
+
+  const parseSoaContent = (content) => {
+    try {
+      const cleaned = (content || '').replace('(', ' ').replace(')', ' ');
+      const parts = cleaned.split(/\s+/).filter(Boolean);
+      const [mname, rname, serial, refresh, retry, expire, minimum] = parts;
+      return {
+        soa_mname: mname || '',
+        soa_rname: rname || '',
+        soa_serial: serial || '',
+        soa_refresh: refresh ? parseInt(refresh) : 3600,
+        soa_retry: retry ? parseInt(retry) : 1800,
+        soa_expire: expire ? parseInt(expire) : 1209600,
+        soa_minimum: minimum ? parseInt(minimum) : 300
+      };
+    } catch (e) {
+      return {};
+    }
+  };
 
   useEffect(() => {
     fetchDomains();
@@ -144,12 +187,18 @@ const DNSManagement = () => {
     try {
       setActionLoading(prev => ({ ...prev, form: true }));
       
-      if (editingRecord) {
+      const payload = { ...recordFormData };
+      if (payload.record_type === 'SOA') {
+        payload.name = payload.name || '@';
+        payload.content = buildSoaContent(payload);
+      }
+
+      if (editingRecord && editingRecord.id) {
         // Update existing record
-        await dns.updateRecord(dnsZone.id, editingRecord.id, recordFormData);
+        await dns.updateRecord(dnsZone.id, editingRecord.id, payload);
       } else {
         // Create new record
-        await dns.createRecord(dnsZone.id, recordFormData);
+        await dns.createRecord(dnsZone.id, payload);
       }
       
       await fetchDnsRecords();
@@ -166,13 +215,19 @@ const DNSManagement = () => {
 
   const handleEditRecord = (record) => {
     setEditingRecord(record);
-    setRecordFormData({
+    const base = {
       name: record.name,
       record_type: record.record_type,
       content: record.content,
       ttl: record.ttl,
       priority: record.priority
-    });
+    };
+    if (record.record_type === 'SOA') {
+      const parsed = parseSoaContent(record.content);
+      setRecordFormData({ ...recordFormData, ...base, ...parsed });
+    } else {
+      setRecordFormData({ ...recordFormData, ...base });
+    }
     setShowRecordForm(true);
   };
 
@@ -257,7 +312,11 @@ const DNSManagement = () => {
       NS: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
       TXT: 'bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300',
       SPF: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
-      DKIM: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300'
+      DKIM: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300',
+      PTR: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
+      SRV: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+      CAA: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+      SOA: 'bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300'
     };
     return colors[type] || 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300';
   };
@@ -617,26 +676,81 @@ const DNSManagement = () => {
                   </p>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                    Content
-                  </label>
-                  <input
-                    type="text"
-                    value={recordFormData.content}
-                    onChange={(e) => setRecordFormData({ ...recordFormData, content: e.target.value })}
-                    placeholder={
-                      recordFormData.record_type === 'A' ? '192.168.1.1' :
-                      recordFormData.record_type === 'AAAA' ? '2001:db8::1' :
-                      recordFormData.record_type === 'CNAME' ? 'example.com' :
-                      recordFormData.record_type === 'MX' ? 'mail.example.com' :
-                      recordFormData.record_type === 'TXT' ? 'v=spf1 include:_spf.google.com ~all' :
-                      'Record content'
-                    }
-                    className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
-                    required
-                  />
-                </div>
+                {recordFormData.record_type !== 'SOA' ? (
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Content
+                    </label>
+                    <input
+                      type="text"
+                      value={recordFormData.content}
+                      onChange={(e) => setRecordFormData({ ...recordFormData, content: e.target.value })}
+                      placeholder={
+                        recordFormData.record_type === 'A' ? '192.168.1.1' :
+                        recordFormData.record_type === 'AAAA' ? '2001:db8::1' :
+                        recordFormData.record_type === 'CNAME' ? 'example.com' :
+                        recordFormData.record_type === 'MX' ? 'mail.example.com' :
+                        recordFormData.record_type === 'NS' ? 'ns1.example.com' :
+                        recordFormData.record_type === 'TXT' ? 'v=spf1 include:_spf.google.com ~all' :
+                        recordFormData.record_type === 'SPF' ? 'v=spf1 include:_spf.google.com ~all' :
+                        recordFormData.record_type === 'DKIM' ? 'v=DKIM1; k=rsa; p=...' :
+                        recordFormData.record_type === 'PTR' ? 'example.com' :
+                        recordFormData.record_type === 'SRV' ? '10 5 80 target.example.com' :
+                        recordFormData.record_type === 'CAA' ? '0 issue "letsencrypt.org"' :
+                        'Record content'
+                      }
+                      className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                      required
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Primary NS (mname)</label>
+                        <input
+                          type="text"
+                          value={recordFormData.soa_mname}
+                          onChange={(e) => setRecordFormData({ ...recordFormData, soa_mname: e.target.value })}
+                          placeholder={`ns1.${selectedDomain?.domain}.`}
+                          className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Admin Email (rname)</label>
+                        <input
+                          type="text"
+                          value={recordFormData.soa_rname}
+                          onChange={(e) => setRecordFormData({ ...recordFormData, soa_rname: e.target.value })}
+                          placeholder={`admin.${selectedDomain?.domain}.`}
+                          className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Serial</label>
+                        <input type="text" value={recordFormData.soa_serial} onChange={(e)=>setRecordFormData({ ...recordFormData, soa_serial: e.target.value })} className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"/>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Refresh</label>
+                        <input type="number" value={recordFormData.soa_refresh} onChange={(e)=>setRecordFormData({ ...recordFormData, soa_refresh: parseInt(e.target.value||'0') })} className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"/>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Retry</label>
+                        <input type="number" value={recordFormData.soa_retry} onChange={(e)=>setRecordFormData({ ...recordFormData, soa_retry: parseInt(e.target.value||'0') })} className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"/>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Expire</label>
+                        <input type="number" value={recordFormData.soa_expire} onChange={(e)=>setRecordFormData({ ...recordFormData, soa_expire: parseInt(e.target.value||'0') })} className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"/>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Minimum TTL</label>
+                        <input type="number" value={recordFormData.soa_minimum} onChange={(e)=>setRecordFormData({ ...recordFormData, soa_minimum: parseInt(e.target.value||'0') })} className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"/>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -653,7 +767,7 @@ const DNSManagement = () => {
                     />
                   </div>
 
-                  {recordFormData.record_type === 'MX' && (
+                  {(recordFormData.record_type === 'MX' || recordFormData.record_type === 'SRV') && (
                     <div>
                       <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
                         Priority
@@ -667,6 +781,9 @@ const DNSManagement = () => {
                         className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--input-bg)] text-[var(--primary-text)] focus:ring-2 focus:ring-[var(--accent-color)] focus:border-transparent"
                         required
                       />
+                      <p className="text-xs text-[var(--tertiary-text)] mt-1">
+                        {recordFormData.record_type === 'MX' ? 'Lower values have higher priority' : 'Service priority (lower = higher priority)'}
+                      </p>
                     </div>
                   )}
                 </div>

@@ -63,6 +63,17 @@ api.interceptors.response.use(
             window.location.href = '/login';
         }
 
+        // Surface backend error message (if provided) instead of generic 500
+        const serverErrorMessage = error.response?.data?.error || error.response?.data?.message;
+        if (serverErrorMessage) {
+            const normalized = typeof serverErrorMessage === 'string'
+                ? serverErrorMessage
+                : JSON.stringify(serverErrorMessage);
+            const enhanced = new Error(normalized);
+            enhanced.status = error.response?.status;
+            return Promise.reject(enhanced);
+        }
+
         return Promise.reject(error);
     }
 );

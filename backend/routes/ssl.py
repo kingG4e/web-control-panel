@@ -30,6 +30,8 @@ def create_certificate(current_user):
     # Validate required fields
     if 'domain' not in data:
         return jsonify({'error': 'Missing required field: domain'}), 400
+    if not isinstance(data['domain'], str) or not data['domain'].strip():
+        return jsonify({'error': 'Invalid domain value'}), 400
     
     try:
         # Check if certificate already exists
@@ -39,7 +41,7 @@ def create_certificate(current_user):
         
         # Get document root for the domain
         document_root = None
-        if 'document_root' in data:
+        if 'document_root' in data and data['document_root']:
             document_root = data['document_root']
         else:
             # Try to get document root from virtual host
@@ -47,6 +49,19 @@ def create_certificate(current_user):
             virtual_host = VirtualHost.query.filter_by(domain=data['domain']).first()
             if virtual_host:
                 document_root = virtual_host.document_root
+            else:
+                # Without a known document_root, webroot method can't work reliably
+                # The service will fallback to nginx plugin, but that requires plugin installed
+                # We prefer explicit failure to guide configuration
+                return jsonify({'error': 'Document root not provided and virtual host not found for this domain'}), 400
+
+        # Validate document root exists
+        try:
+            import os as _os
+            if not _os.path.isdir(document_root):
+                return jsonify({'error': f'Document root not found: {document_root}'}), 400
+        except Exception:
+            return jsonify({'error': f'Cannot access document root: {document_root}'}), 400
         
         # Issue certificate using SSL service
         cert_info = ssl_service.issue_certificate(
@@ -76,6 +91,20 @@ def create_certificate(current_user):
         
         db.session.add(certificate)
         db.session.add(log)
+
+        # Best-effort: configure Nginx SSL for the domain
+        try:
+            ssl_service.configure_nginx_ssl(
+                domain=data['domain'],
+                certificate_path=cert_info['certificate_path'],
+                private_key_path=cert_info['private_key_path'],
+                document_root=document_root,
+            )
+        except Exception as e:
+            # Do not fail the API if Nginx configuration fails; certificate was issued successfully
+            # You may log this error for later inspection
+            print(f"Warning: Nginx SSL configuration failed for {data['domain']}: {str(e)}")
+
         db.session.commit()
         
         return jsonify(certificate.to_dict()), 201
