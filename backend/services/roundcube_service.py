@@ -15,6 +15,10 @@ class RoundcubeService:
             # Windows simulation mode
             self.roundcube_path = os.path.join(os.environ.get('TEMP', 'C:\\temp'), 'roundcube_simulation')
             self.config_path = os.path.join(self.roundcube_path, 'config')
+            # Allow overriding Roundcube URL/base via environment variables
+            # RC_WEBMAIL_URL takes precedence over RC_BASE_PATH
+            self.rc_webmail_url = os.environ.get('RC_WEBMAIL_URL')
+            self.rc_base_path = os.environ.get('RC_BASE_PATH', 'roundcube')
             os.makedirs(self.config_path, exist_ok=True)
             print("[SIMULATION] Roundcube service running in Windows simulation mode")
         else:
@@ -42,15 +46,20 @@ class RoundcubeService:
         if self.is_windows:
             return "http://localhost/roundcube"  # Simulation
         
-        # Try to detect the web server configuration
-        nginx_sites = '/etc/nginx/sites-available'
+        # If explicit URL is configured, use it directly
+        if self.rc_webmail_url:
+            # If email/domain specific, caller will append query params
+            return self.rc_webmail_url.rstrip('/')
+        
+        # Determine base path (default: /roundcube). Allow custom base path from env
+        base_path = (self.rc_base_path or 'roundcube').strip('/')
         
         # Default URLs to try
         possible_urls = [
-            f"https://{domain}/roundcube" if domain else None,
-            f"http://{domain}/roundcube" if domain else None,
-            "https://localhost/roundcube",
-            "http://localhost/roundcube",
+            f"https://{domain}/{base_path}" if domain else None,
+            f"http://{domain}/{base_path}" if domain else None,
+            f"https://localhost/{base_path}",
+            f"http://localhost/{base_path}",
             "https://webmail.localhost",
             "http://webmail.localhost"
         ]

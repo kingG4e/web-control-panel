@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { email } from '../services/api';
+import { email, roundcube } from '../services/api';
 
 // Inline SVG Icons
 const ArrowLeftIcon = ({ className, style }) => (
@@ -321,9 +321,8 @@ const EmailSettings = () => {
   };
 
   const handleRoundcubeAccess = (account) => {
-    // Open Roundcube webmail in new tab/window
-    const roundcubeUrl = `http://${window.location.hostname}/roundcube/?_user=${account.email}`;
-    window.open(roundcubeUrl, '_blank');
+    const redirect = roundcube.redirectUrl({ email: account.email, domain: selectedDomain?.domain });
+    window.open(redirect, '_blank', 'noopener');
   };
 
   const formatQuotaUsage = (used, total) => {

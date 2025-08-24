@@ -372,6 +372,28 @@ export const email = {
     }
 };
 
+// Roundcube / Webmail API
+export const roundcube = {
+    status: async () => {
+        const response = await api.get('/roundcube/status');
+        return response.data;
+    },
+    webmailUrl: async ({ email, domain } = {}) => {
+        const params = {};
+        if (email) params.email = email;
+        if (domain) params.domain = domain;
+        const response = await api.get('/roundcube/webmail-url', { params });
+        return response.data;
+    },
+    redirectUrl: ({ email, domain } = {}) => {
+        const params = new URLSearchParams();
+        if (email) params.set('email', email);
+        if (domain) params.set('domain', domain);
+        const qs = params.toString();
+        return `${API_URL}/roundcube/webmail-redirect${qs ? `?${qs}` : ''}`;
+    },
+};
+
 // Database API
 export const database = {
     getDatabases: async () => {
