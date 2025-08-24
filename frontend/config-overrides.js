@@ -75,3 +75,22 @@ module.exports = function override(config, env) {
 
   return config;
 };
+
+// Allow custom hostnames to access CRA dev server to avoid "Invalid Host header"
+module.exports.devServer = function(configFunction) {
+  return function(proxy, allowedHost) {
+    const config = configFunction(proxy, allowedHost);
+    // Whitelist expected hostnames. Use 'all' if you want to allow any host.
+    const allowed = process.env.CRA_ALLOWED_HOSTS;
+    if (allowed && allowed.length > 0) {
+      // comma-separated -> array
+      config.allowedHosts = allowed.split(',').map(h => h.trim());
+    } else {
+      // Default: allow the current domain as served via reverse proxy or custom DNS
+      config.allowedHosts = 'all';
+    }
+    // Listen on all interfaces by default for LAN/domain access
+    config.host = process.env.HOST || '0.0.0.0';
+    return config;
+  };
+};
