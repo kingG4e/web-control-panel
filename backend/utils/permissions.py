@@ -20,6 +20,13 @@ def check_virtual_host_permission(action='read'):
             if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
                 return f(current_user, *args, **kwargs)
             
+            # Restrict creation to admins/root only
+            if action == 'create':
+                return jsonify({
+                    'success': False,
+                    'error': 'Access denied. Only administrators can create virtual hosts.'
+                }), 403
+
             # For specific virtual host operations (update, delete, read by ID)
             if 'id' in kwargs:
                 virtual_host_id = kwargs['id']
@@ -38,7 +45,7 @@ def check_virtual_host_permission(action='read'):
                         'error': 'Access denied. You can only manage your own virtual hosts.'
                     }), 403
             
-            # For create and list operations, regular users can proceed
+            # For list operations, regular users can proceed
             return f(current_user, *args, **kwargs)
         
         return decorated_function

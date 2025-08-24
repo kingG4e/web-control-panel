@@ -92,6 +92,20 @@ const menuGroups = [
         ]
     },
     {
+        title: 'Admin',
+        items: [
+            {
+                name: 'Signup Approvals',
+                path: '/admin/approvals',
+                icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                )
+            }
+        ]
+    },
+    {
         title: 'System Settings',
         items: [
             {
@@ -100,6 +114,15 @@ const menuGroups = [
                 icon: (
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                )
+            },
+            {
+                name: 'Quota Management',
+                path: '/admin/quota',
+                icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                     </svg>
                 )
             },
@@ -116,20 +139,53 @@ const menuGroups = [
     }
 ];
 
-const Sidebar = ({ isOpen, setIsOpen, isMobile }) => {
+const Sidebar = ({ isOpen, setIsOpen, isMobile, isPendingUser }) => {
   const { user } = useAuth();
   const isAdmin = user && (user.is_admin || user.role === 'admin' || user.username === 'root');
-
-  // Filter out Users and Groups for non-admins
-  const filteredGroups = menuGroups.map(group => {
+  
+  // Status menu for pending users
+  const statusMenuGroups = [
+    {
+      title: 'System',
+      items: [
+        {
+          name: 'Dashboard',
+          path: '/dashboard',
+          icon: (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+          )
+        },
+        {
+          name: 'My Requests',
+          path: '/my-requests',
+          icon: (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          )
+        }
+      ]
+    }
+  ];
+  
+  // Filter menu groups based on user type
+  const filteredGroups = isPendingUser ? statusMenuGroups : menuGroups.map(group => {
     if (group.title === 'System Settings' && !isAdmin) {
       return {
         ...group,
-        items: group.items.filter(item => item.path !== '/users')
+        items: group.items.filter(item => !['/users', '/admin/quota'].includes(item.path))
       };
+    }
+    if (group.title === 'Admin' && !isAdmin) {
+      return { ...group, items: [] };
     }
     return group;
   });
+
+  // Hide any empty groups (e.g., Admin for non-admin users)
+  const visibleGroups = filteredGroups.filter(group => Array.isArray(group.items) && group.items.length > 0);
 
   return (
         <aside 
@@ -166,7 +222,7 @@ const Sidebar = ({ isOpen, setIsOpen, isMobile }) => {
 
             {/* Navigation */}
             <nav className="flex-1 py-4 overflow-y-auto">
-                {filteredGroups.map((group, groupIndex) => (
+                {visibleGroups.map((group, groupIndex) => (
                     <div key={group.title} className={`px-3 ${groupIndex > 0 ? 'mt-6' : ''}`}>
                         <h2 className={`mb-2 px-3 text-xs font-semibold text-[var(--tertiary-text)] uppercase tracking-wider transition-opacity duration-300 ${!isOpen || (!isMobile && !isOpen) ? 'opacity-0' : 'opacity-100'} ${!isMobile && !isOpen ? 'hidden' : ''}`}>
                             {group.title}

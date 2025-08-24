@@ -9,6 +9,7 @@ from flask_cors import CORS
 from models.database import db, init_db
 from utils.logger import setup_logger
 from config import Config
+from sqlalchemy import inspect, text
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -142,6 +143,8 @@ def create_app(config_class=Config) -> Flask:
     from routes.roundcube import roundcube_bp
     from routes.user import user_bp
     from routes.database import database_bp
+    from routes.signup import signup_bp
+    from routes.quota import quota_bp
     
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -153,12 +156,19 @@ def create_app(config_class=Config) -> Flask:
     app.register_blueprint(roundcube_bp)
     app.register_blueprint(user_bp)
     app.register_blueprint(database_bp)
+    app.register_blueprint(signup_bp)
+    app.register_blueprint(quota_bp)
     
     # Create database tables
     with app.app_context():
         try:
             db.create_all()
             logger.info("Database tables created successfully")
+            # Lightweight migration: ensure new columns exist
+            try:
+                _ensure_schema_migrations()
+            except Exception as mig_e:
+                logger.warning(f"Schema migration check failed: {mig_e}")
         except Exception as e:
             logger.error(f"Error creating database tables: {e}")
             raise
@@ -168,6 +178,61 @@ def create_app(config_class=Config) -> Flask:
     register_error_handlers(app)
     
     return app
+
+def _ensure_schema_migrations() -> None:
+    """Best-effort schema migrations for SQLite without Alembic.
+    Adds missing columns/indexes introduced after initial release.
+    """
+    try:
+        inspector = inspect(db.engine)
+        tables = inspector.get_table_names()
+        if 'signup_request' in tables:
+            columns = {col['name'] for col in inspector.get_columns('signup_request')}
+            # Add domain column if missing (nullable to allow SQLite ALTER)
+            if 'domain' not in columns:
+                with db.engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE signup_request ADD COLUMN domain VARCHAR(255)"))
+                    # Best-effort unique index (SQLite allows duplicates before index creation may fail if duplicates exist)
+                    try:
+                        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_signup_request_domain ON signup_request (domain)"))
+                    except Exception:
+                        pass
+            # Add email column if missing
+            if 'email' not in columns:
+                with db.engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE signup_request ADD COLUMN email VARCHAR(120)"))
+        # Ensure signup_meta table exists (for new flow)
+        if 'signup_meta' not in tables:
+            # Create via SQL to avoid importing models here
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    """
+CREATE TABLE IF NOT EXISTS signup_meta (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    domain VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255),
+    server_password_enc TEXT,
+    options_json JSON,
+    storage_quota_mb INTEGER,
+    status VARCHAR(20) DEFAULT 'pending',
+    admin_comment VARCHAR(255),
+    approved_by INTEGER,
+    approved_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+                    """
+                ))
+        else:
+            # Lightweight migration: add full_name column if missing
+            meta_columns = {col['name'] for col in inspector.get_columns('signup_meta')}
+            if 'full_name' not in meta_columns:
+                with db.engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE signup_meta ADD COLUMN full_name VARCHAR(255)"))
+    except Exception as e:
+        # Do not block app start; log only
+        logger.warning(f"Ensure schema migrations failed: {e}")
 
 def register_routes(app: Flask) -> None:
     """Register application routes."""

@@ -134,6 +134,40 @@ export const auth = {
     }
 };
 
+// Signup Requests API
+export const signup = {
+    submit: async (data) => {
+        const response = await api.post('/signup', data);
+        return response.data;
+    },
+    list: async (status) => {
+        const params = {};
+        if (status) params.status = status;
+        const response = await api.get('/signup', { params });
+        return response.data;
+    },
+    approve: async (id, data) => {
+        const response = await api.post(`/signup/${id}/approve`, data || {});
+        return response.data;
+    },
+    reject: async (id, comment) => {
+        const response = await api.post(`/signup/${id}/reject`, { comment });
+        return response.data;
+    },
+    status: async (username) => {
+        const response = await api.get('/signup/status', { params: { username } });
+        return response.data;
+    },
+    myRequests: async () => {
+        const response = await api.get('/signup/my-requests');
+        return response.data;
+    },
+    submitAdditional: async (data) => {
+        const response = await api.post('/signup/additional', data);
+        return response.data;
+    }
+};
+
 // Users API
 export const users = {
     getAll: async () => {

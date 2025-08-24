@@ -6,6 +6,7 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorAlert from '../components/common/ErrorAlert';
 import { useAuth } from '../contexts/AuthContext';
 import { users } from '../services/api';
+import QuotaDashboard from '../components/QuotaDashboard';
 import {
   PlusIcon,
   ArrowPathIcon,
@@ -48,6 +49,7 @@ const UserSettings = () => {
   const [targetUser, setTargetUser] = useState(null);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [permUser, setPermUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('users'); // 'users' or 'quota'
 
   // Form data
   const initialForm = {
@@ -253,109 +255,140 @@ const UserSettings = () => {
         </div>
       )}
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-        <StatBox title="Total Users" value={stats.total} icon={UserGroupIcon} />
-        <StatBox title="Active Users" value={stats.active} icon={CheckCircleIcon} accent="text-green-500" />
-        <StatBox title="Admins" value={stats.admins} icon={KeyIcon} accent="text-blue-500" />
-        <StatBox title="Inactive Users" value={stats.inactive} icon={UserIcon} accent="text-red-500" />
+      {/* Tab Navigation */}
+      <div className="flex space-x-1 mb-6">
+        <button
+          onClick={() => setActiveTab('users')}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+            activeTab === 'users'
+              ? 'bg-[var(--accent-color)] text-white'
+              : 'text-[var(--secondary-text)] hover:text-[var(--primary-text)] hover:bg-[var(--hover-bg)]'
+          }`}
+        >
+          User Management
+        </button>
+        <button
+          onClick={() => setActiveTab('quota')}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+            activeTab === 'quota'
+              ? 'bg-[var(--accent-color)] text-white'
+              : 'text-[var(--secondary-text)] hover:text-[var(--primary-text)] hover:bg-[var(--hover-bg)]'
+          }`}
+        >
+          Quota Dashboard
+        </button>
       </div>
 
-      {/* User Management Section */}
-      <>
-        {/* Toolbar */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-            <input
-              type="text"
-              placeholder="Search..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="input-field w-full sm:w-64"
-            />
-            <select
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              className="input-field w-full sm:w-40"
-            >
-              <option value="">All Roles</option>
-              {availableRoles.map((r) => (
-                <option key={r} value={r}>
-                  {r.charAt(0).toUpperCase() + r.slice(1)}
-                </option>
-              ))}
-            </select>
-            {(searchTerm || roleFilter) && (
-              <Button variant="ghost" size="sm" onClick={() => { setSearchTerm(''); setRoleFilter(''); }}>
-                Clear
-              </Button>
-            )}
+            {/* Tab Content */}
+      {activeTab === 'users' ? (
+        <>
+          {/* Statistics Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+            <StatBox title="Total Users" value={stats.total} icon={UserGroupIcon} />
+            <StatBox title="Active Users" value={stats.active} icon={CheckCircleIcon} accent="text-green-500" />
+            <StatBox title="Admins" value={stats.admins} icon={KeyIcon} accent="text-blue-500" />
+            <StatBox title="Inactive Users" value={stats.inactive} icon={UserIcon} accent="text-red-500" />
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" icon={<ArrowPathIcon className="w-4 h-4" />} onClick={fetchUsers}>
-              Refresh
-            </Button>
-            {/* <Button variant="primary" size="sm" icon={<PlusIcon className="w-4 h-4" />} onClick={() => setShowUserModal(true)}>
-              New User
-            </Button> */}
-          </div>
-        </div>
 
-        {/* User Table */}
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-[var(--table-header-bg)] border-b border-[var(--border-color)]">
-                <tr>
-                  <th className="px-6 py-3 text-left font-semibold">User</th>
-                  <th className="px-6 py-3 text-left font-semibold">Email</th>
-                  <th className="px-6 py-3 text-left font-semibold">Role</th>
-                  <th className="px-6 py-3 text-left font-semibold">Status</th>
-                  <th className="px-6 py-3 text-left font-semibold">Last Login</th>
-                  <th className="px-6 py-3 text-left font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-color)]">
-                {filteredUsers.length === 0 ? (
-                  <tr>
-                    <td colSpan="6" className="px-6 py-8 text-center text-[var(--secondary-text)]">
-                      {userList.length === 0 ? 'No users found.' : 'No users match your search.'}
-                    </td>
-                  </tr>
-                ) : (
-                  filteredUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-[var(--hover-bg)]">
-                      <td className="px-6 py-4 flex items-center gap-2">
-                        <UserIcon className="w-5 h-5 text-[var(--accent-color)]" />
-                        <span>{u.username}</span>
-                      </td>
-                      <td className="px-6 py-4">{u.email}</td>
-                      <td className="px-6 py-4"><RoleBadge role={u.role} /></td>
-                      <td className="px-6 py-4"><StatusBadge active={u.is_active !== false} /></td>
-                      <td className="px-6 py-4 text-[var(--secondary-text)]">{formatDate(u.last_login)}</td>
-                      <td className="px-6 py-4 flex gap-3">
-                        <button title="Edit" onClick={() => { setEditingUser(u); setFormData({ ...initialForm, ...u, password: '', confirm_password: '' }); setShowUserModal(true); }} className="text-[var(--secondary-text)] hover:text-[var(--accent-color)]">
-                          <PencilIcon className="w-5 h-5" />
-                        </button>
-                        {u.username !== 'root' && (
-                          <>
-                            <button title="Permissions" onClick={() => openPermissionModal(u)} className="text-[var(--secondary-text)] hover:text-[var(--accent-color)]">
-                              <KeyIcon className="w-5 h-5" />
-                            </button>
-                            <button title="Delete" onClick={() => { setTargetUser(u); setShowDeleteConfirm(true); }} className="text-[var(--danger-color)] hover:text-[var(--danger-color)]/80">
-                              <TrashIcon className="w-5 h-5" />
-                            </button>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+          {/* User Management Section */}
+          <>
+            {/* Toolbar */}
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="input-field w-full sm:w-64"
+                />
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                  className="input-field w-full sm:w-40"
+                >
+                  <option value="">All Roles</option>
+                  {availableRoles.map((r) => (
+                    <option key={r} value={r}>
+                      {r.charAt(0).toUpperCase() + r.slice(1)}
+                    </option>
+                  ))}
+                </select>
+                {(searchTerm || roleFilter) && (
+                  <Button variant="ghost" size="sm" onClick={() => { setSearchTerm(''); setRoleFilter(''); }}>
+                    Clear
+                  </Button>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      </>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" icon={<ArrowPathIcon className="w-4 h-4" />} onClick={fetchUsers}>
+                  Refresh
+                </Button>
+                {/* <Button variant="primary" size="sm" icon={<PlusIcon className="w-4 h-4" />} onClick={() => setShowUserModal(true)}>
+                  New User
+                </Button> */}
+              </div>
+            </div>
+
+            {/* User Table */}
+            <Card>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-[var(--table-header-bg)] border-b border-[var(--border-color)]">
+                    <tr>
+                      <th className="px-6 py-3 text-left font-semibold">User</th>
+                      <th className="px-6 py-3 text-left font-semibold">Email</th>
+                      <th className="px-6 py-3 text-left font-semibold">Role</th>
+                      <th className="px-6 py-3 text-left font-semibold">Status</th>
+                      <th className="px-6 py-3 text-left font-semibold">Last Login</th>
+                      <th className="px-6 py-3 text-left font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-color)]">
+                    {filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" className="px-6 py-8 text-center text-[var(--secondary-text)]">
+                          {userList.length === 0 ? 'No users found.' : 'No users match your search.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredUsers.map((u) => (
+                        <tr key={u.id} className="hover:bg-[var(--hover-bg)]">
+                          <td className="px-6 py-4 flex items-center gap-2">
+                            <UserIcon className="w-5 h-5 text-[var(--accent-color)]" />
+                            <span>{u.username}</span>
+                          </td>
+                          <td className="px-6 py-4">{u.email}</td>
+                          <td className="px-6 py-4"><RoleBadge role={u.role} /></td>
+                          <td className="px-6 py-4"><StatusBadge active={u.is_active !== false} /></td>
+                          <td className="px-6 py-4 text-[var(--secondary-text)]">{formatDate(u.last_login)}</td>
+                          <td className="px-6 py-4 flex gap-3">
+                            <button title="Edit" onClick={() => { setEditingUser(u); setFormData({ ...initialForm, ...u, password: '', confirm_password: '' }); setShowUserModal(true); }} className="text-[var(--secondary-text)] hover:text-[var(--accent-color)]">
+                              <PencilIcon className="w-5 h-5" />
+                            </button>
+                            {u.username !== 'root' && (
+                              <>
+                                <button title="Permissions" onClick={() => openPermissionModal(u)} className="text-[var(--secondary-text)] hover:text-[var(--accent-color)]">
+                                  <KeyIcon className="w-5 h-5" />
+                                </button>
+                                <button title="Delete" onClick={() => { setTargetUser(u); setShowDeleteConfirm(true); }} className="text-[var(--danger-color)] hover:text-[var(--danger-color)]/80">
+                                  <TrashIcon className="w-5 h-5" />
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </>
+        </>
+      ) : (
+        <QuotaDashboard />
+      )}
 
       {/* User Modal */}
       {showUserModal && (

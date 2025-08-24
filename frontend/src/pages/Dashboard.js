@@ -127,6 +127,7 @@ const StopIcon = ({ className, style }) => (
 
 const Dashboard = () => {
   const { user } = useAuth();
+  const isPendingOnly = user && user.role === 'user' && !user.is_admin && user.username !== 'root' && user.is_active === false;
   const [dashboardData, setDashboardData] = useState({
     stats: {
       virtualHosts: 0,
@@ -388,6 +389,8 @@ const Dashboard = () => {
     );
   }
 
+
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--primary-bg)' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
@@ -458,6 +461,21 @@ const Dashboard = () => {
                 onClick={() => window.location.href = '/admin/virtual-hosts'}
               >
                 All Virtual Hosts
+              </button>
+              <button
+                style={{
+                  backgroundColor: '#10b981',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer'
+                }}
+                onClick={() => window.location.href = '/admin/approvals'}
+              >
+                Signup Approvals
               </button>
             </div>
           </div>

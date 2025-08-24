@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { CheckCircleIcon } from '@heroicons/react/24/outline';
 
@@ -181,6 +181,10 @@ const Login = () => {
                 <p className="text-center text-sm text-[var(--tertiary-text)]">
                     © 2024 Control Panel. All rights reserved.
                 </p>
+                <div className="text-center text-sm mt-2">
+                    <span className="text-[var(--secondary-text)]">Don't have an account? </span>
+                    <Link to="/signup" className="text-blue-500 hover:underline">Sign up</Link>
+                </div>
             </div>
         </div>
     );

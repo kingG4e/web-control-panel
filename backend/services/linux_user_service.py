@@ -178,109 +178,93 @@ class LinuxUserService:
             print(f"Warning: Could not set permissions: {e}")
     
     def _create_default_files(self, public_html_dir: str, domain: str, username: str):
-        """สร้างไฟล์เริ่มต้น"""
+        """สร้างไฟล์เริ่มต้น (index.html แบบเรียบง่าย)"""
         try:
-            # สร้าง index.html
+            # สร้าง index.html (โทนเรียบง่าย เหมาะกับสภาพแวดล้อมมหาวิทยาลัย โทนสีฟ้า)
             index_content = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome to {domain}</title>
+    <title>Welcome • {domain}</title>
     <style>
+        :root {{
+            --primary: #1e3a8a; /* blue-900 */
+            --primary-600: #2563eb; /* blue-600 */
+            --text: #0f172a; /* slate-900 */
+            --muted: #475569; /* slate-600 */
+            --bg: #f8fafc; /* slate-50 */
+            --card: #ffffff;
+            --border: #e2e8f0; /* slate-200 */
+        }}
+        * {{ box-sizing: border-box; }}
         body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
             margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #333;
-            min-height: 100vh;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+            color: var(--text);
+            background: var(--bg);
             display: flex;
+            min-height: 100vh;
             align-items: center;
             justify-content: center;
+            padding: 24px;
         }}
-        .container {{
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            text-align: center;
-            max-width: 600px;
-            width: 90%;
+        .card {{
+            background: var(--card);
+            width: 100%;
+            max-width: 720px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
         }}
         h1 {{
-            color: #4CAF50;
-            margin-bottom: 20px;
-            font-size: 2.5em;
+            margin: 0 0 8px 0;
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary);
         }}
-        .info {{
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 5px;
-            margin: 20px 0;
-            border-left: 4px solid #4CAF50;
+        p {{
+            margin: 0 0 16px 0;
+            color: var(--muted);
         }}
-        .info-item {{
-            margin: 10px 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px 16px;
+            margin-top: 16px;
         }}
-        .label {{
-            font-weight: bold;
-            color: #666;
+        .label {{ color: var(--muted); }}
+        .value {{ font-weight: 600; }}
+        .hint {{
+            margin-top: 20px;
+            font-size: 14px;
+            color: var(--muted);
+            border-top: 1px solid var(--border);
+            padding-top: 12px;
         }}
-        .value {{
-            color: #333;
-            font-family: monospace;
-            background: #e9ecef;
-            padding: 2px 8px;
-            border-radius: 3px;
-        }}
-        .success-icon {{
-            font-size: 4em;
-            color: #4CAF50;
-            margin-bottom: 20px;
+        @media (max-width: 560px) {{
+            .grid {{ grid-template-columns: 1fr; }}
         }}
     </style>
-</head>
+    </head>
 <body>
-    <div class="container">
-        <div class="success-icon">🎉</div>
-        <h1>Welcome to {domain}</h1>
-        <p>Your virtual host is working perfectly!</p>
-        
-        <div class="info">
-            <h3>Site Information</h3>
-            <div class="info-item">
-                <span class="label">Domain:</span>
-                <span class="value">{domain}</span>
-            </div>
-            <div class="info-item">
-                <span class="label">Linux User:</span>
-                <span class="value">{username}</span>
-            </div>
-            <div class="info-item">
-                <span class="label">Document Root:</span>
-                <span class="value">/home/{username}/public_html</span>
-            </div>
-            <div class="info-item">
-                <span class="label">PHP Version:</span>
-                <span class="value"><?php echo phpversion(); ?></span>
-            </div>
-            <div class="info-item">
-                <span class="label">Current Time:</span>
-                <span class="value"><?php echo date('Y-m-d H:i:s'); ?></span>
-            </div>
+    <main class="card" role="main">
+        <h1>Site is ready</h1>
+        <p>ยินดีต้อนรับสู่ {domain}</p>
+        <div class="grid" aria-label="Site information">
+            <div class="label">Domain</div>
+            <div class="value">{domain}</div>
+            <div class="label">Linux User</div>
+            <div class="value">{username}</div>
+            <div class="label">Document Root</div>
+            <div class="value">/home/{username}/public_html</div>
         </div>
-        
-        <p><strong>You can now upload your website files to this directory!</strong></p>
-    </div>
+        <p class="hint">อัปโหลดไฟล์เว็บไซต์ของคุณไปที่โฟลเดอร์ด้านบนเพื่อเริ่มต้นใช้งาน</p>
+    </main>
 </body>
 </html>"""
-            
-            with open(os.path.join(public_html_dir, 'index.php'), 'w', encoding='utf-8') as f:
+
+            with open(os.path.join(public_html_dir, 'index.html'), 'w', encoding='utf-8') as f:
                 f.write(index_content)
             
             # สร้าง .htaccess สำหรับ security
@@ -312,7 +296,7 @@ php_flag log_errors On
                 user_info = pwd.getpwnam(username)
                 www_data_info = grp.getgrnam(self.web_group)
                 
-                for filename in ['index.php', '.htaccess']:
+                for filename in ['index.html', '.htaccess']:
                     filepath = os.path.join(public_html_dir, filename)
                     os.chown(filepath, user_info.pw_uid, www_data_info.gr_gid)
                     os.chmod(filepath, 0o644)

@@ -3,28 +3,62 @@ from models.dns import DNSZone, DNSRecord, db
 from services.bind_service import BindService
 from datetime import datetime
 import os
-from utils.auth import permission_required, admin_required
+from utils.auth import permission_required, admin_required, token_required
 from sqlalchemy.orm import joinedload
+from models.user import DomainPermission
 
 dns_bp = Blueprint('dns', __name__)
 bind_service = BindService()
 
 @dns_bp.route('/api/dns/zones', methods=['GET'])
-@permission_required('dns', 'read')
+@token_required
 def get_zones(current_user):
-    zones = DNSZone.query.all()
+    # Admins can see all zones
+    if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
+        zones = DNSZone.query.all()
+        return jsonify([zone.to_dict() for zone in zones])
+
+    # Otherwise, filter zones by domain permissions (dns)
+    permitted_domains = [
+        perm.domain
+        for perm in DomainPermission.query.filter_by(user_id=current_user.id, can_manage_dns=True).all()
+    ]
+    if not permitted_domains:
+        return jsonify([])
+
+    zones = DNSZone.query.filter(DNSZone.domain_name.in_(permitted_domains)).all()
     return jsonify([zone.to_dict() for zone in zones])
 
 @dns_bp.route('/api/dns/zones/<int:id>', methods=['GET'])
-@permission_required('dns', 'read')
+@token_required
 def get_zone(current_user, id):
     zone = DNSZone.query.get_or_404(id)
+    # Admins can access any zone
+    if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
+        return jsonify(zone.to_dict())
+    # Check domain permission for dns
+    has_perm = DomainPermission.query.filter_by(
+        user_id=current_user.id,
+        domain=zone.domain_name,
+        can_manage_dns=True
+    ).first() is not None
+    if not has_perm:
+        return jsonify({'success': False, 'error': 'Permission denied'}), 403
     return jsonify(zone.to_dict())
 
 @dns_bp.route('/api/dns/zones/<int:zone_id>/records', methods=['GET'])
-@permission_required('dns', 'read')
+@token_required
 def get_records(current_user, zone_id):
     zone = DNSZone.query.get_or_404(zone_id)
+    # Admins can access any zone records
+    if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+        has_perm = DomainPermission.query.filter_by(
+            user_id=current_user.id,
+            domain=zone.domain_name,
+            can_manage_dns=True
+        ).first() is not None
+        if not has_perm:
+            return jsonify({'success': False, 'error': 'Permission denied'}), 403
     # Prefer reading from actual zone file so UI reflects real state
     file_records = bind_service.read_zone_records(zone.domain_name)
     if file_records:
@@ -73,14 +107,13 @@ def create_zone(current_user):
         # Create base records in DB so UI reflects the zone template
         nameserver_ip = data.get('nameserver_ip', '127.0.0.1')
         default_ip = nameserver_ip or '127.0.0.1'
+        # Create only essential records automatically
         base_records = [
-            DNSRecord(zone_id=zone.id, name='@',   record_type='NS',    content=f"ns1.{zone.domain_name}.", ttl=3600, status='active'),
-            DNSRecord(zone_id=zone.id, name='ns1', record_type='A',     content=default_ip,                   ttl=3600, status='active'),
-            DNSRecord(zone_id=zone.id, name='@',   record_type='A',     content=default_ip,                   ttl=3600, status='active'),
-            DNSRecord(zone_id=zone.id, name='www', record_type='CNAME', content=f"{zone.domain_name}.",      ttl=3600, status='active')
+            DNSRecord(zone_id=zone.id, name='@',   record_type='NS', content=f"ns1.{zone.domain_name}.", ttl=3600, status='active'),
+            DNSRecord(zone_id=zone.id, name='ns1', record_type='A',  content=default_ip,                  ttl=3600, status='active')
         ]
-        # Optional MX/mail records if requested
-        if data.get('with_mail', True):
+        # Optional MX/mail records if explicitly requested
+        if data.get('with_mail', False):
             base_records.extend([
                 DNSRecord(zone_id=zone.id, name='@',    record_type='MX', content=f"mail.{zone.domain_name}.", priority=10, ttl=3600, status='active'),
                 DNSRecord(zone_id=zone.id, name='mail', record_type='A',  content=default_ip,                            ttl=3600, status='active')
@@ -217,9 +250,18 @@ def delete_zone(current_user, id):
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/zones/<int:id>/zonefile', methods=['GET'])
-@permission_required('dns', 'read')
+@token_required
 def get_zone_file(current_user, id):
     zone = DNSZone.query.get_or_404(id)
+    # Admins can access any zone file
+    if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+        has_perm = DomainPermission.query.filter_by(
+            user_id=current_user.id,
+            domain=zone.domain_name,
+            can_manage_dns=True
+        ).first() is not None
+        if not has_perm:
+            return jsonify({'success': False, 'error': 'Permission denied'}), 403
     
     try:
         zone_file_path = os.path.join(bind_service.zones_dir, f'db.{zone.domain_name}')

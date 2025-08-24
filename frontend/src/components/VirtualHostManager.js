@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import PageLayout from './layout/PageLayout';
 import { virtualHosts, ssl } from '../services/api';
@@ -6,6 +7,8 @@ import BaseModal from './modals/BaseModal';
 
 const VirtualHostManager = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user && (user.is_admin || user.role === 'admin' || user.username === 'root');
   const [hosts, setHosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -45,6 +48,10 @@ const VirtualHostManager = () => {
 
   const handleSettings = (host) => {
     navigate(`/virtual-hosts/${host.id}/edit`);
+  };
+
+  const handleViewDetails = (host) => {
+    navigate(`/virtual-hosts/${host.id}`);
   };
 
   const handleViewSite = (host) => {
@@ -190,19 +197,21 @@ const VirtualHostManager = () => {
       title="Virtual Hosts"
       description="Manage your virtual hosts and domains"
       actions={
-        <button
-          onClick={() => navigate('/virtual-hosts/new')}
-          className="flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-200 hover:scale-105"
-          style={{ 
-            backgroundColor: 'var(--accent-color)', 
-            color: 'white' 
-          }}
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          <span>Create Virtual Host</span>
-        </button>
+        isAdmin ? (
+          <button
+            onClick={() => navigate('/virtual-hosts/new')}
+            className="flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-200 hover:scale-105"
+            style={{ 
+              backgroundColor: 'var(--accent-color)', 
+              color: 'white' 
+            }}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            <span>Create Virtual Host</span>
+          </button>
+        ) : null
       }
     >
       <div className="space-y-6">
@@ -322,7 +331,12 @@ const VirtualHostManager = () => {
               <div className="mb-4" style={{ color: 'var(--secondary-text)' }}>
                 {searchTerm || filterStatus !== 'all' ? 'No virtual hosts match your search criteria' : 'No virtual hosts found'}
               </div>
-              {!searchTerm && filterStatus === 'all' && (
+              {!isAdmin && (
+                <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>
+                  Contact administrator to create a virtual host.
+                </div>
+              )}
+              {isAdmin && !searchTerm && filterStatus === 'all' && (
               <button
                 onClick={() => navigate('/virtual-hosts/new')}
                   className="inline-flex items-center px-4 py-2 rounded-lg transition-all duration-200 hover:scale-105"
@@ -423,6 +437,21 @@ const VirtualHostManager = () => {
                     </div>
                   </div>
                   <div className="flex space-x-2">
+                    <button
+                      onClick={() => handleViewDetails(host)}
+                      className="flex items-center space-x-1 px-3 py-1 text-sm rounded transition-all duration-200 hover:scale-105"
+                      style={{ 
+                        backgroundColor: 'var(--secondary-bg)', 
+                        color: 'var(--secondary-text)',
+                        border: '1px solid var(--border-color)'
+                      }}
+                      title="View Details"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </button>
                     <button
                       onClick={() => handleSettings(host)}
                       className="flex items-center space-x-1 px-3 py-1 text-sm rounded transition-all duration-200 hover:scale-105"

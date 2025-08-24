@@ -743,6 +743,25 @@ def delete_system_user(current_user, username):
         if not success:
             return jsonify({'success': False, 'error': message}), 400
 
+        # 3. Also remove corresponding application user record and related domain permissions if exists
+        try:
+            app_user = User.query.filter_by(username=username).first()
+            if app_user:
+                # Domain permissions and other relationships should be removed via cascades, but ensure explicit cleanup if needed
+                try:
+                    # Remove domain permissions explicitly if model doesn't cascade
+                    from models.user import DomainPermission
+                    DomainPermission.query.filter_by(user_id=app_user.id).delete(synchronize_session=False)
+                except Exception:
+                    pass
+
+                db.session.delete(app_user)
+                db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            # Not fatal to system deletion; include warning in response
+            return jsonify({'success': True, 'message': message, 'warning': f"User record cleanup warning: {str(e)}"}), 200
+
         return jsonify({'success': True, 'message': message}), 200
 
     except Exception as e:

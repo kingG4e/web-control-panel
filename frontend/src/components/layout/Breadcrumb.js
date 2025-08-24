@@ -9,6 +9,8 @@ const Breadcrumb = () => {
   const routeNames = {
     'dashboard': 'Dashboard',
     'virtual-hosts': 'Virtual Hosts',
+    'new': 'Create',
+    'edit': 'Edit',
     'dns': 'DNS Management',
     'email': 'Email Settings',
     'database': 'Database',
@@ -16,6 +18,14 @@ const Breadcrumb = () => {
     'ssl': 'SSL Settings',
     'settings': 'Account Settings',
 
+  };
+
+  const getDisplayName = (segment) => {
+    if (routeNames[segment]) return routeNames[segment];
+    // If segment is a numeric id or UUID-like, display generic label
+    const isNumericId = /^\d+$/.test(segment);
+    if (isNumericId) return 'Detail';
+    return segment;
   };
 
   return (
@@ -37,14 +47,14 @@ const Breadcrumb = () => {
                 <span className="mx-2 text-[var(--secondary-text)]">/</span>
                 {isLast ? (
                   <span className="text-[var(--primary-text)] font-medium">
-                    {routeNames[name] || name}
+                    {getDisplayName(name)}
                   </span>
                 ) : (
                   <Link
                     to={routeTo}
                     className="text-[var(--primary-text)] hover:text-[var(--accent-color)]"
                   >
-                    {routeNames[name] || name}
+                    {getDisplayName(name)}
                   </Link>
                 )}
               </React.Fragment>

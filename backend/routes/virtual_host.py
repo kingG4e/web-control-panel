@@ -11,6 +11,7 @@ from services.bind_service import BindService
 from services.email_service import EmailService
 from services.mysql_service import MySQLService
 from services.ssl_service import SSLService
+from services.quota_service import QuotaService
 from utils.auth import token_required
 from utils.permissions import (
     check_virtual_host_permission, 
@@ -34,6 +35,7 @@ bind_service = BindService()
 email_service = EmailService()
 mysql_service = MySQLService()
 ssl_service = SSLService()
+quota_service = QuotaService()
 
 def _generate_secure_password(length=12):
     """Generate a secure random password"""
@@ -458,6 +460,17 @@ def create_virtual_host(current_user):
         # Create cgi-bin folder
         if _create_cgi_bin_folder(home_directory):
             response_data['services_created'].append('CGI-bin folder')
+
+        # Best-effort: set storage quota if provided
+        if 'storage_quota_mb' in data and data['storage_quota_mb']:
+            try:
+                quota_val = int(data['storage_quota_mb'])
+                if quota_val > 0:
+                    applied = quota_service.set_user_quota(linux_username, quota_val)
+                    if applied:
+                        response_data['services_created'].append(f'Quota {quota_val}MB')
+            except Exception as e:
+                print(f"Quota set skipped: {e}")
         
         # สร้าง virtual host record เพื่อเตรียมไว้ (ยังไม่ commit)
         virtual_host = VirtualHost(
@@ -1254,6 +1267,17 @@ def create_virtual_host_for_existing_user(current_user):
         db.session.flush()  # Get ID without committing
         created_resources['virtual_host_id'] = virtual_host.id
         
+        # Best-effort: set storage quota if provided (apply to existing Linux user)
+        if 'storage_quota_mb' in data and data['storage_quota_mb']:
+            try:
+                quota_val = int(data['storage_quota_mb'])
+                if quota_val > 0:
+                    applied = quota_service.set_user_quota(linux_username, quota_val)
+                    if applied:
+                        response_data['services_created'].append(f'Quota {quota_val}MB')
+            except Exception as e:
+                print(f"Quota set skipped: {e}")
+
         # ขั้นตอนที่ 1: สร้าง Nginx VirtualHost + DNS zone
         print("Step 1: Creating Nginx VirtualHost + DNS zone...")
         

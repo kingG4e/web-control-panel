@@ -7,8 +7,7 @@ from .virtual_host import VirtualHost, VirtualHostAlias
 from .database import Database
 from .dns import DNSRecord
 from .email import EmailAccount
-from .ssl_certificate import SSLCertificate
-from .ssl import SSLCertificate as SSLCert, SSLCertificateLog
+from .ssl_certificate import SSLCertificate, SSLCertificateLog
 
 # Make sure all models are available
 __all__ = [
@@ -20,6 +19,5 @@ __all__ = [
     'DNSRecord',
     'EmailAccount',
     'SSLCertificate',
-    'SSLCert',
     'SSLCertificateLog'
 ] 
