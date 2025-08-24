@@ -47,6 +47,7 @@ def user_or_admin_required(f):
 
 # User Management Routes
 @user_bp.route('/api/users', methods=['GET'])
+@token_required
 @admin_required
 def get_users(current_user):
     """Return only Linux system users (no database users)."""
@@ -78,12 +79,14 @@ def get_users(current_user):
         return jsonify([])
 
 @user_bp.route('/api/users/<int:id>', methods=['GET'])
+@token_required
 @admin_required
 def get_user(current_user, id):
     user = User.query.get_or_404(id)
     return jsonify(user.to_dict())
 
 @user_bp.route('/api/users', methods=['POST'])
+@token_required
 @admin_required
 def create_user(current_user):
     data = request.get_json()
@@ -108,6 +111,7 @@ def create_user(current_user):
         return jsonify({'error': str(e)}), 500
 
 @user_bp.route('/api/users/<int:id>', methods=['PUT'])
+@token_required
 @admin_required
 def update_user(current_user, id):
     data = request.get_json()
@@ -121,6 +125,7 @@ def update_user(current_user, id):
         return jsonify({'error': str(e)}), 500
 
 @user_bp.route('/api/users/<int:id>', methods=['DELETE'])
+@token_required
 @admin_required
 def delete_user(current_user, id):
     if user_service.delete_user(id):
@@ -337,12 +342,14 @@ def delete_account(current_user, id):
 
 # Role Management Routes
 @user_bp.route('/api/roles', methods=['GET'])
+@token_required
 @admin_required
 def get_roles(current_user):
     roles = Role.query.all()
     return jsonify([role.to_dict() for role in roles])
 
 @user_bp.route('/api/roles', methods=['POST'])
+@token_required
 @admin_required
 def create_role(current_user):
     data = request.get_json()
@@ -357,6 +364,7 @@ def create_role(current_user):
         return jsonify({'error': str(e)}), 500
 
 @user_bp.route('/api/roles/<int:id>', methods=['PUT'])
+@token_required
 @admin_required
 def update_role(current_user, id):
     data = request.get_json()
@@ -370,6 +378,7 @@ def update_role(current_user, id):
         return jsonify({'error': str(e)}), 500
 
 @user_bp.route('/api/roles/<int:id>', methods=['DELETE'])
+@token_required
 @admin_required
 def delete_role(current_user, id):
     if user_service.delete_role(id):
@@ -378,12 +387,14 @@ def delete_role(current_user, id):
 
 # Permission Management Routes
 @user_bp.route('/api/permissions', methods=['GET'])
+@token_required
 @admin_required
 def get_permissions(current_user):
     permissions = Permission.query.all()
     return jsonify([perm.to_dict() for perm in permissions])
 
 @user_bp.route('/api/permissions', methods=['POST'])
+@token_required
 @admin_required
 def create_permission(current_user):
     data = request.get_json()
@@ -401,12 +412,14 @@ def create_permission(current_user):
 
 # Domain Permission Routes
 @user_bp.route('/api/users/<int:id>/permissions', methods=['GET'])
+@token_required
 @admin_required
 def get_user_permissions(current_user, id):
     permissions = user_service.get_user_permissions(id)
     return jsonify(permissions)
 
 @user_bp.route('/api/users/<int:id>/domain-permissions', methods=['POST'])
+@token_required
 @admin_required
 def set_domain_permissions(current_user, id):
     data = request.get_json()
@@ -423,6 +436,7 @@ def set_domain_permissions(current_user, id):
         return jsonify({'error': str(e)}), 500
 
 @user_bp.route('/api/users/<int:id>/domain-permissions/<domain>', methods=['DELETE'])
+@token_required
 @admin_required
 def remove_domain_permissions(current_user, id, domain):
     if user_service.remove_domain_permissions(id, domain):
@@ -431,6 +445,7 @@ def remove_domain_permissions(current_user, id, domain):
 
 # User Statistics Route
 @user_bp.route('/api/users/stats', methods=['GET'])
+@token_required
 @admin_required
 def get_user_stats(current_user):
     try:
@@ -643,6 +658,7 @@ def get_account_details(current_user):
 
 # New route: Delete Linux system user directly by username (no DB interaction)
 @user_bp.route('/api/system-users/<string:username>', methods=['DELETE'])
+@token_required
 @admin_required
 def delete_system_user(current_user, username):
     """Fully delete a Linux system user **and** all related resources (vhosts, dns, mail, db, ftp, ssl)."""

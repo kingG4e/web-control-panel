@@ -19,7 +19,7 @@ import {
   InformationCircleIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { system } from '../services/api';
+import { system, virtualHosts as vhostApi } from '../services/api';
 
 // Inline SVG Icons
 const ServerIconSVG = ({ className, style }) => (
@@ -171,6 +171,21 @@ const Dashboard = () => {
         newData.stats = statsResult.value.data;
       } else if (statsResult.status === 'rejected') {
         console.error('Failed to fetch stats:', statsResult.reason);
+      }
+
+      // Fallback: if virtualHosts is 0, try to compute from list API
+      try {
+        if (!newData.stats || !Number.isFinite(newData.stats.virtualHosts) || newData.stats.virtualHosts === 0) {
+          const vhosts = await vhostApi.getAll().catch(() => []);
+          if (Array.isArray(vhosts)) {
+            newData.stats = {
+              ...newData.stats,
+              virtualHosts: vhosts.length || 0
+            };
+          }
+        }
+      } catch (e) {
+        // ignore fallback errors
       }
 
       // Handle system status

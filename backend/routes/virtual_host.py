@@ -530,20 +530,9 @@ def create_virtual_host(current_user):
         except Exception as e:
             print(f"Warning: Email domain creation failed: {e}")
             response_data['errors'].append(f"Email domain creation failed: {str(e)}")
-            # Rollback the current transaction and start fresh
-            db.session.rollback()
-            # Re-add the virtual host since rollback removed it
-            virtual_host = VirtualHost(
-                domain=domain,
-                document_root=doc_root,
-                linux_username=linux_username,
-                server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
-                php_version=data.get('php_version', '8.1'),
-                user_id=current_user.id
-            )
-            db.session.add(virtual_host)
-            db.session.flush()
-            created_resources['virtual_host_id'] = virtual_host.id
+            # ไม่ต้อง rollback ที่นี่ เพราะจะทำให้ virtual host record หายไป
+            # ให้ดำเนินการขั้นตอนต่อไป และ commit ทุกอย่างในขั้นตอนสุดท้าย
+            print(f"Continuing with other services despite email creation failure")
         
         response_data['steps_completed'].append('3. Maildir + email mapping created')
         
@@ -1321,20 +1310,9 @@ def create_virtual_host_for_existing_user(current_user):
         except Exception as e:
             print(f"Warning: Email domain creation failed: {e}")
             response_data['errors'].append(f"Email domain creation failed: {str(e)}")
-            # Rollback the current transaction and start fresh
-            db.session.rollback()
-            # Re-add the virtual host since rollback removed it
-            virtual_host = VirtualHost(
-                domain=domain,
-                document_root=doc_root,
-                linux_username=linux_username,
-                server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
-                php_version=data.get('php_version', '8.1'),
-                user_id=current_user.id
-            )
-            db.session.add(virtual_host)
-            db.session.flush()
-            created_resources['virtual_host_id'] = virtual_host.id
+            # ไม่ต้อง rollback ที่นี่ เพราะจะทำให้ virtual host record หายไป
+            # ให้ดำเนินการขั้นตอนต่อไป และ commit ทุกอย่างในขั้นตอนสุดท้าย
+            print(f"Continuing with other services despite email creation failure")
         
         response_data['steps_completed'].append('2. Maildir + email mapping created')
         
@@ -1428,7 +1406,12 @@ def create_virtual_host_for_existing_user(current_user):
         # Cleanup database records
         if created_resources.get('virtual_host_id'):
             try:
-                db.session.rollback()
+                # ไม่ต้อง rollback ที่นี่ เพราะจะทำให้ virtual host record หายไป
+                # ให้ลบ virtual host record โดยตรงแทน
+                temp_vh = VirtualHost.query.get(created_resources['virtual_host_id'])
+                if temp_vh:
+                    db.session.delete(temp_vh)
+                    db.session.commit()
             except Exception as cleanup_e:
                 cleanup_errors.append(f"Database cleanup: {str(cleanup_e)}")
         

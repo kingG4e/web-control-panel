@@ -7,11 +7,29 @@ from utils.auth import permission_required
 ssl_bp = Blueprint('ssl', __name__)
 ssl_service = SSLService()
 
+
+def _is_admin(user):
+    return bool(getattr(user, 'is_admin', False) or getattr(user, 'role', '') == 'admin' or getattr(user, 'username', '') == 'root')
+
+
+def _user_domains(current_user):
+    from models.virtual_host import VirtualHost
+    if _is_admin(current_user):
+        return None  # Admin sees all domains
+    vhosts = VirtualHost.query.filter(
+        (VirtualHost.user_id == current_user.id) | (VirtualHost.linux_username == current_user.username)
+    ).all()
+    return [vh.domain for vh in vhosts]
+
 @ssl_bp.route('/api/ssl/certificates', methods=['GET'])
 @permission_required('ssl', 'read')
 def get_certificates(current_user):
     try:
-        certificates = SSLCertificate.query.all()
+        domains = _user_domains(current_user)
+        if domains is None:
+            certificates = SSLCertificate.query.all()
+        else:
+            certificates = SSLCertificate.query.filter(SSLCertificate.domain.in_(domains)).all()
         return jsonify([cert.to_dict() for cert in certificates])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -20,6 +38,9 @@ def get_certificates(current_user):
 @permission_required('ssl', 'read')
 def get_certificate(current_user, id):
     certificate = SSLCertificate.query.get_or_404(id)
+    domains = _user_domains(current_user)
+    if domains is not None and certificate.domain not in domains:
+        return jsonify({'error': 'Access denied'}), 403
     return jsonify(certificate.to_dict())
 
 @ssl_bp.route('/api/ssl/certificates', methods=['POST'])
@@ -32,6 +53,11 @@ def create_certificate(current_user):
         return jsonify({'error': 'Missing required field: domain'}), 400
     if not isinstance(data['domain'], str) or not data['domain'].strip():
         return jsonify({'error': 'Invalid domain value'}), 400
+    
+    # Ownership check: domain must belong to the user (by vhost)
+    domains = _user_domains(current_user)
+    if domains is not None and data['domain'] not in domains:
+        return jsonify({'error': 'Access denied'}), 403
     
     try:
         # Check if certificate already exists
@@ -50,9 +76,6 @@ def create_certificate(current_user):
             if virtual_host:
                 document_root = virtual_host.document_root
             else:
-                # Without a known document_root, webroot method can't work reliably
-                # The service will fallback to nginx plugin, but that requires plugin installed
-                # We prefer explicit failure to guide configuration
                 return jsonify({'error': 'Document root not provided and virtual host not found for this domain'}), 400
 
         # Validate document root exists
@@ -91,7 +114,7 @@ def create_certificate(current_user):
         
         db.session.add(certificate)
         db.session.add(log)
-
+        
         # Best-effort: configure Nginx SSL for the domain
         try:
             ssl_service.configure_nginx_ssl(
@@ -101,10 +124,8 @@ def create_certificate(current_user):
                 document_root=document_root,
             )
         except Exception as e:
-            # Do not fail the API if Nginx configuration fails; certificate was issued successfully
-            # You may log this error for later inspection
             print(f"Warning: Nginx SSL configuration failed for {data['domain']}: {str(e)}")
-
+        
         db.session.commit()
         
         return jsonify(certificate.to_dict()), 201
@@ -117,6 +138,9 @@ def create_certificate(current_user):
 @permission_required('ssl', 'update')
 def renew_certificate(current_user, id):
     certificate = SSLCertificate.query.get_or_404(id)
+    domains = _user_domains(current_user)
+    if domains is not None and certificate.domain not in domains:
+        return jsonify({'error': 'Access denied'}), 403
     
     try:
         # Renew certificate
@@ -149,9 +173,9 @@ def renew_certificate(current_user, id):
 def delete_certificate(current_user, id):
     try:
         certificate = SSLCertificate.query.get_or_404(id)
-        
-        # For development/testing - just delete the record
-        # In production, this would call ssl_service.revoke_certificate()
+        domains = _user_domains(current_user)
+        if domains is not None and certificate.domain not in domains:
+            return jsonify({'error': 'Access denied'}), 403
         
         # Delete related logs first to avoid foreign key constraint issues
         SSLCertificateLog.query.filter_by(certificate_id=id).delete()
@@ -170,4 +194,7 @@ def delete_certificate(current_user, id):
 @permission_required('ssl', 'read')
 def get_certificate_logs(current_user, id):
     certificate = SSLCertificate.query.get_or_404(id)
+    domains = _user_domains(current_user)
+    if domains is not None and certificate.domain not in domains:
+        return jsonify({'error': 'Access denied'}), 403
     return jsonify([log.to_dict() for log in certificate.logs])

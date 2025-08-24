@@ -243,7 +243,9 @@ def register_routes(app: Flask) -> None:
                     'GET /api/system/backup': 'List backups (Admin only)',
                     'POST /api/system/backup': 'Create full system backup (Admin only)',
                     'DELETE /api/system/backup/{id}': 'Delete backup (Admin only)',
-                    'POST /api/system/backup/cleanup': 'Cleanup old backups (Admin only)'
+                    'POST /api/system/backup/cleanup': 'Cleanup old backups (Admin only)',
+                    'GET /api/dashboard/stats': 'Get dashboard statistics for current user',
+                    'GET /api/dashboard/debug-user-data': 'Debug user data and relationships'
                 },
                 'files': {
                     'GET /api/files': 'List files',

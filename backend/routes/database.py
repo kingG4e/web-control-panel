@@ -5,14 +5,19 @@ from services.phpmyadmin_service import PhpMyAdminService
 from datetime import datetime
 from sqlalchemy.orm import joinedload
 from sqlalchemy import desc
-from utils.auth import permission_required, admin_required
+from utils.auth import token_required, admin_required
+
+
+def _is_admin(user):
+    return bool(getattr(user, 'is_admin', False) or getattr(user, 'role', '') == 'admin' or getattr(user, 'username', '') == 'root')
+
 
 database_bp = Blueprint('database', __name__)
 mysql_service = MySQLService()
 phpmyadmin_service = PhpMyAdminService()
 
 @database_bp.route('/api/databases', methods=['GET'])
-@permission_required('database', 'read')
+@token_required
 def get_databases(current_user):
     try:
         # Get pagination parameters
@@ -25,6 +30,10 @@ def get_databases(current_user):
             joinedload(Database.users),
             joinedload(Database.backups)
         )
+        
+        # Non-admins see only their own databases
+        if not _is_admin(current_user):
+            query = query.filter(Database.owner_id == current_user.id)
         
         # Apply search filter if provided
         if search:
@@ -56,7 +65,7 @@ def get_databases(current_user):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>', methods=['GET'])
-@permission_required('database', 'read')
+@token_required
 def get_database(current_user, id):
     # Use eager loading for single database
     database = Database.query.options(
@@ -67,13 +76,17 @@ def get_database(current_user, id):
     if not database:
         return jsonify({'error': 'Database not found'}), 404
     
+    # Ownership check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
     return jsonify({
         'success': True,
         'data': database.to_dict()
     })
 
 @database_bp.route('/api/databases/<int:id>/users', methods=['GET'])
-@permission_required('database', 'read')
+@token_required
 def get_database_users(current_user, id):
     try:
         # Get pagination parameters
@@ -82,6 +95,10 @@ def get_database_users(current_user, id):
         
         # Verify database exists
         database = Database.query.get_or_404(id)
+        
+        # Ownership check
+        if not _is_admin(current_user) and database.owner_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
         
         # Get paginated users
         paginated = DatabaseUser.query.filter_by(database_id=id).order_by(
@@ -111,7 +128,7 @@ def get_database_users(current_user, id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>/backups', methods=['GET'])
-@permission_required('database', 'read')
+@token_required
 def get_database_backups(current_user, id):
     try:
         # Get pagination parameters
@@ -120,6 +137,10 @@ def get_database_backups(current_user, id):
         
         # Verify database exists
         database = Database.query.get_or_404(id)
+        
+        # Ownership check
+        if not _is_admin(current_user) and database.owner_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
         
         # Get paginated backups
         paginated = DatabaseBackup.query.filter_by(database_id=id).order_by(
@@ -149,7 +170,7 @@ def get_database_backups(current_user, id):
         }), 500
 
 @database_bp.route('/api/databases', methods=['POST'])
-@permission_required('database', 'create')
+@token_required
 def create_database(current_user):
     data = request.get_json()
     
@@ -170,13 +191,16 @@ def create_database(current_user):
         # Get database size
         size = mysql_service.get_database_size(data['name'])
         
+        # Determine owner: non-admins are always the owner; admins can set owner_id
+        owner_id = data.get('owner_id') if _is_admin(current_user) and data.get('owner_id') else current_user.id
+        
         # Create database record
         database = Database(
             name=data['name'],
             charset=data.get('charset', 'utf8mb4'),
             collation=data.get('collation', 'utf8mb4_unicode_ci'),
             size=size,
-            owner_id=data.get('owner_id')
+            owner_id=owner_id
         )
         
         db.session.add(database)
@@ -194,9 +218,14 @@ def create_database(current_user):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>', methods=['PUT'])
-@permission_required('database', 'update')
+@token_required
 def update_database(current_user, id):
     database = Database.query.get_or_404(id)
+    
+    # Ownership check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
     data = request.get_json()
     
     try:
@@ -224,9 +253,13 @@ def update_database(current_user, id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>', methods=['DELETE'])
-@permission_required('database', 'delete')
+@token_required
 def delete_database(current_user, id):
     database = Database.query.get_or_404(id)
+    
+    # Ownership check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
     
     try:
         # Delete database in MySQL
@@ -248,9 +281,14 @@ def delete_database(current_user, id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>/users', methods=['POST'])
-@permission_required('database', 'create')
+@token_required
 def create_database_user(current_user, id):
     database = Database.query.get_or_404(id)
+    
+    # Ownership check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
     data = request.get_json()
     
     # Validate required fields
@@ -293,8 +331,14 @@ def create_database_user(current_user, id):
         }), 500
 
 @database_bp.route('/api/databases/<int:db_id>/users/<int:user_id>', methods=['DELETE'])
-@permission_required('database', 'delete')
+@token_required
 def delete_database_user(current_user, db_id, user_id):
+    database = Database.query.get_or_404(db_id)
+    
+    # Ownership check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
     user = DatabaseUser.query.filter_by(id=user_id, database_id=db_id).first_or_404()
     
     try:
@@ -317,9 +361,14 @@ def delete_database_user(current_user, db_id, user_id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>/backups', methods=['POST'])
-@permission_required('database', 'create')
+@token_required
 def create_database_backup(current_user, id):
     database = Database.query.get_or_404(id)
+    
+    # Ownership check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
     data = request.get_json()
     
     try:
@@ -346,9 +395,14 @@ def create_database_backup(current_user, id):
         return jsonify({'error': str(e)}), 500
 
 @database_bp.route('/api/databases/<int:id>/backups/<int:backup_id>/restore', methods=['POST'])
-@permission_required('database', 'update')
+@token_required
 def restore_database_backup(current_user, id, backup_id):
     database = Database.query.get_or_404(id)
+    
+    # Ownership check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
     backup = DatabaseBackup.query.get_or_404(backup_id)
     
     if backup.database_id != id:
@@ -359,7 +413,7 @@ def restore_database_backup(current_user, id, backup_id):
         mysql_service.restore_backup(database.name, backup.filename)
         return jsonify({'message': 'Database restored successfully'})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500 
+        return jsonify({'error': str(e)}), 500
 
 @database_bp.route('/api/mysql-root-connect', methods=['POST'])
 @admin_required
@@ -384,12 +438,16 @@ def mysql_root_connect(current_user):
         return jsonify({'success': False, 'error': str(e)})
 
 @database_bp.route('/api/databases/<int:id>/phpmyadmin', methods=['GET'])
-@permission_required('database', 'read')
+@token_required
 def get_phpmyadmin_url(current_user, id):
     """Get phpMyAdmin URL for specific database"""
     try:
         # Get database info
         database = Database.query.get_or_404(id)
+        
+        # Ownership check
+        if not _is_admin(current_user) and database.owner_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
         
         # Check if phpMyAdmin is available
         if not phpmyadmin_service.is_installed():
@@ -429,12 +487,16 @@ def get_phpmyadmin_url(current_user, id):
         }), 500
 
 @database_bp.route('/api/databases/<int:id>/phpmyadmin/auto-login', methods=['POST'])
-@permission_required('database', 'read')
+@token_required
 def get_phpmyadmin_auto_login(current_user, id):
     """Get phpMyAdmin auto-login URL for specific database"""
     try:
         # Get database info
         database = Database.query.get_or_404(id)
+        
+        # Ownership check
+        if not _is_admin(current_user) and database.owner_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
         
         # Check if phpMyAdmin is available
         if not phpmyadmin_service.is_installed():
@@ -480,7 +542,7 @@ def get_phpmyadmin_auto_login(current_user, id):
         }), 500
 
 @database_bp.route('/api/phpmyadmin/status', methods=['GET'])
-@permission_required('database', 'read')
+@token_required
 def get_phpmyadmin_status(current_user):
     """Check phpMyAdmin installation status"""
     try:

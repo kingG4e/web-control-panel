@@ -4,6 +4,7 @@ from models.virtual_host import VirtualHost
 from services.email_service import EmailService
 from utils.auth import token_required
 from datetime import datetime
+from sqlalchemy import or_
 
 email_bp = Blueprint('email', __name__)
 email_service = EmailService()
@@ -11,22 +12,65 @@ email_service = EmailService()
 @email_bp.route('/api/email/domains', methods=['GET'])
 @token_required
 def get_domains(current_user):
-    """Get all email domains for the current user"""
+    """Get all email-capable domains for the current user.
+    Returns existing EmailDomain records if present; otherwise returns
+    stub entries for each VirtualHost accessible by the user so the UI can
+    manage email even before a domain record exists.
+    Access rules:
+      - Admins see all virtual hosts
+      - Regular users see VHosts they created (user_id) OR whose linux_username equals their username
+    """
     try:
-        # Get user's virtual hosts
-        virtual_hosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
+        # Determine accessible virtual hosts
+        is_admin = (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root')
+        if is_admin:
+            virtual_hosts = VirtualHost.query.all()
+        else:
+            virtual_hosts = VirtualHost.query.filter(
+                or_(
+                    VirtualHost.user_id == current_user.id,
+                    VirtualHost.linux_username == current_user.username
+                )
+            ).all()
+        
         domain_names = [vh.domain for vh in virtual_hosts]
+        domain_name_to_vh = {vh.domain: vh for vh in virtual_hosts}
         
-        # Get email domains for these virtual hosts
-        email_domains = EmailDomain.query.filter(EmailDomain.domain.in_(domain_names)).all()
+        # Fetch existing EmailDomain rows for these domains
+        email_domains = []
+        if domain_names:
+            email_domains = EmailDomain.query.filter(EmailDomain.domain.in_(domain_names)).all()
+        existing_domains_by_name = {ed.domain: ed for ed in email_domains}
         
-        # Include accounts for each domain
         result = []
+        
+        # 1) Include existing EmailDomain data (with accounts/forwarders)
         for domain in email_domains:
             domain_dict = domain.to_dict()
+            # Ensure virtual_host_id is set (older rows may be null)
+            if not domain_dict.get('virtual_host_id') and domain.domain in domain_name_to_vh:
+                domain_dict['virtual_host_id'] = domain_name_to_vh[domain.domain].id
+            # Add accounts explicitly
             domain_dict['accounts'] = [account.to_dict() for account in domain.accounts]
+            domain_dict.setdefault('forwarders', [fwd.to_dict() for fwd in domain.forwarders])
             result.append(domain_dict)
         
+        # 2) Add stub entries for VirtualHosts that don't have EmailDomain yet
+        for vh in virtual_hosts:
+            if vh.domain not in existing_domains_by_name:
+                result.append({
+                    'id': None,
+                    'domain': vh.domain,
+                    'virtual_host_id': vh.id,
+                    'status': 'active',
+                    'created_at': vh.created_at.isoformat() if vh.created_at else None,
+                    'updated_at': vh.updated_at.isoformat() if vh.updated_at else None,
+                    'accounts': [],
+                    'forwarders': []
+                })
+        
+        # Sort for stable UI (by domain)
+        result.sort(key=lambda d: d.get('domain', ''))
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500

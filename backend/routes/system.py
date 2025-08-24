@@ -4,6 +4,11 @@ from utils.auth import token_required, admin_required
 from utils.rate_limiter import rate_limit, check_rate_limit_status, reset_rate_limit
 from services.sync_check_service import SyncCheckService
 from services.backup_service import BackupService
+from models.virtual_host import VirtualHost
+from models.database import Database
+from models.email import EmailAccount
+from models.dns import DNSRecord
+from models.ssl_certificate import SSLCertificate
 import platform
 import time
 import subprocess
@@ -294,83 +299,92 @@ def get_dashboard_stats(current_user):
         # Check if user is admin
         is_admin = current_user.role == 'admin' or current_user.is_admin
         
-        # Try to import models and count safely
+        # Count virtual hosts
         try:
-            from models.virtual_host import VirtualHost
             if is_admin:
-                # Admin sees all virtual hosts
                 virtual_hosts_count = VirtualHost.query.count()
             else:
-                # Regular users see only their own virtual hosts
                 virtual_hosts_count = VirtualHost.query.filter_by(user_id=current_user.id).count()
         except Exception as e:
-            print(f"Dashboard: Error counting virtual hosts: {e}")  # Keep - error
+            print(f"Dashboard: Error counting virtual hosts: {e}")
             virtual_hosts_count = 0
         
+        # Count databases
         try:
-            from models.database import Database
             if is_admin:
                 databases_count = Database.query.count()
             else:
-                # Filter by user if Database model has user_id field
-                try:
-                    databases_count = Database.query.filter_by(user_id=current_user.id).count()
-                except:
-                    # If no user_id field, regular users see 0
-                    databases_count = 0
+                # Database model uses 'owner_id' not 'user_id'
+                databases_count = Database.query.filter_by(owner_id=current_user.id).count()
         except Exception as e:
-            print(f"Dashboard: Error counting databases: {e}")  # Keep - error
+            print(f"Dashboard: Error counting databases: {e}")
             databases_count = 0
         
+        # Count email accounts
         try:
-            from models.email import EmailAccount
             if is_admin:
                 email_accounts_count = EmailAccount.query.count()
             else:
-                # Filter by user if EmailAccount model has user_id field
-                try:
-                    email_accounts_count = EmailAccount.query.filter_by(user_id=current_user.id).count()
-                except:
-                    # If no user_id field, regular users see 0
-                    email_accounts_count = 0
+                # Email accounts are linked to virtual hosts through email domains
+                user_vhosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
+                user_vhost_ids = [vh.id for vh in user_vhosts]
+                
+                # Count email accounts in user's virtual host domains
+                email_accounts_count = EmailAccount.query.join(EmailDomain).filter(
+                    EmailDomain.virtual_host_id.in_(user_vhost_ids)
+                ).count()
         except Exception as e:
-            print(f"Dashboard: Error counting email accounts: {e}")  # Keep - error
+            print(f"Dashboard: Error counting email accounts: {e}")
             email_accounts_count = 0
         
+        # Count DNS records
         try:
-            from models.dns import DNSRecord
             if is_admin:
                 dns_records_count = DNSRecord.query.count()
             else:
-                # Filter by user if DNSRecord model has user_id field
-                try:
-                    dns_records_count = DNSRecord.query.filter_by(user_id=current_user.id).count()
-                except:
-                    # If no user_id field, regular users see 0
-                    dns_records_count = 0
+                # DNS records are linked to virtual hosts through DNS zones
+                user_vhosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
+                user_domains = [vh.domain for vh in user_vhosts]
+                
+                # Count DNS records in user's virtual host domains
+                dns_records_count = DNSRecord.query.join(DNSZone).filter(
+                    DNSZone.domain_name.in_(user_domains)
+                ).count()
         except Exception as e:
-            print(f"Dashboard: Error counting DNS records: {e}")  # Keep - error
+            print(f"Dashboard: Error counting DNS records: {e}")
             dns_records_count = 0
         
+        # Count SSL certificates
         try:
-            from models.ssl_certificate import SSLCertificate
             if is_admin:
                 ssl_certificates_count = SSLCertificate.query.count()
             else:
-                # Filter by user - SSL certificates are usually tied to virtual hosts
-                try:
-                    # Count SSL certificates for user's virtual hosts
-                    from models.virtual_host import VirtualHost
-                    user_vhosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
-                    user_domains = [vh.domain for vh in user_vhosts]
-                    ssl_certificates_count = SSLCertificate.query.filter(SSLCertificate.domain.in_(user_domains)).count()
-                except:
-                    ssl_certificates_count = 0
+                # SSL certificates are linked to virtual hosts by domain
+                user_vhosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
+                user_domains = [vh.domain for vh in user_vhosts]
+                
+                # Count SSL certificates for user's virtual host domains
+                ssl_certificates_count = SSLCertificate.query.filter(
+                    SSLCertificate.domain.in_(user_domains)
+                ).count()
         except Exception as e:
-            print(f"Dashboard: Error counting SSL certificates: {e}")  # Keep - error
+            print(f"Dashboard: Error counting SSL certificates: {e}")
             ssl_certificates_count = 0
         
         ftp_accounts_count = 0  # FTP removed from system
+        
+        # Debug logging for non-admin users
+        if not is_admin:
+            print(f"Dashboard Debug - User {current_user.username} (ID: {current_user.id}):")
+            print(f"  - Virtual Hosts: {virtual_hosts_count}")
+            print(f"  - Databases: {databases_count}")
+            print(f"  - Email Accounts: {email_accounts_count}")
+            print(f"  - DNS Records: {dns_records_count}")
+            print(f"  - SSL Certificates: {ssl_certificates_count}")
+            
+            # Additional debug info
+            user_vhosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
+            print(f"  - User's Virtual Hosts: {[vh.domain for vh in user_vhosts]}")
         
         result = {
             'success': True,
@@ -381,14 +395,14 @@ def get_dashboard_stats(current_user):
                 'dnsRecords': dns_records_count,
                 'sslCertificates': ssl_certificates_count,
                 'ftpAccounts': ftp_accounts_count,
-                'isAdmin': is_admin  # Include admin status for frontend
+                'isAdmin': is_admin
             }
         }
         
         return jsonify(result)
         
     except Exception as e:
-        print(f"Dashboard stats error: {e}")  # Keep - error
+        print(f"Dashboard stats error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @system_bp.route('/api/system/logs/<service>')
@@ -1018,3 +1032,200 @@ def get_system_metrics(current_user):
             'success': False,
             'error': str(e)
         }), 500 
+
+@system_bp.route('/api/dashboard/debug-user-data')
+@token_required
+def debug_user_data(current_user):
+    """Debug endpoint to check user's data and relationships"""
+    try:
+        from models.virtual_host import VirtualHost
+        from models.database import Database
+        from models.email import EmailAccount, EmailDomain
+        from models.dns import DNSRecord, DNSZone
+        from models.ssl_certificate import SSLCertificate
+        
+        # Get user's virtual hosts
+        user_vhosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
+        user_vhost_data = []
+        
+        for vh in user_vhosts:
+            vh_info = {
+                'id': vh.id,
+                'domain': vh.domain,
+                'linux_username': vh.linux_username,
+                'document_root': vh.document_root,
+                'status': vh.status,
+                'created_at': vh.created_at.isoformat() if vh.created_at else None
+            }
+            
+            # Get related email domains
+            email_domains = EmailDomain.query.filter_by(virtual_host_id=vh.id).all()
+            vh_info['email_domains'] = [ed.domain for ed in email_domains]
+            
+            # Get related email accounts
+            email_accounts = []
+            for ed in email_domains:
+                accounts = EmailAccount.query.filter_by(domain_id=ed.id).all()
+                email_accounts.extend([ea.username for ea in accounts])
+            vh_info['email_accounts'] = email_accounts
+            
+            # Get related DNS zones
+            dns_zones = DNSZone.query.filter_by(domain_name=vh.domain).all()
+            vh_info['dns_zones'] = [dz.domain_name for dz in dns_zones]
+            
+            # Get related DNS records
+            dns_records = []
+            for dz in dns_zones:
+                records = DNSRecord.query.filter_by(zone_id=dz.id).all()
+                dns_records.extend([f"{dr.name} ({dr.record_type})" for dr in records])
+            vh_info['dns_records'] = dns_records
+            
+            # Get related SSL certificates
+            ssl_certs = SSLCertificate.query.filter_by(domain=vh.domain).all()
+            vh_info['ssl_certificates'] = [sc.domain for sc in ssl_certs]
+            
+            user_vhost_data.append(vh_info)
+        
+        # Get user's databases
+        user_databases = Database.query.filter_by(owner_id=current_user.id).all()
+        database_data = [{
+            'id': db.id,
+            'name': db.name,
+            'status': db.status,
+            'created_at': db.created_at.isoformat() if db.created_at else None
+        } for db in user_databases]
+        
+        debug_info = {
+            'user': {
+                'id': current_user.id,
+                'username': current_user.username,
+                'email': current_user.email,
+                'role': current_user.role,
+                'is_admin': current_user.is_admin
+            },
+            'virtual_hosts': user_vhost_data,
+            'databases': database_data,
+            'counts': {
+                'virtual_hosts': len(user_vhost_data),
+                'databases': len(database_data),
+                'email_accounts': sum(len(vh['email_accounts']) for vh in user_vhost_data),
+                'dns_records': sum(len(vh['dns_records']) for vh in user_vhost_data),
+                'ssl_certificates': sum(len(vh['ssl_certificates']) for vh in user_vhost_data)
+            }
+        }
+        
+        return jsonify({
+            'success': True,
+            'data': debug_info
+        })
+        
+    except Exception as e:
+        print(f"Debug user data error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500 
+
+@system_bp.route('/api/dashboard/debug-stats')
+@token_required
+def get_dashboard_debug_stats(current_user):
+    """Debug endpoint to check dashboard statistics"""
+    try:
+        # Check if user is admin
+        is_admin = current_user.role == 'admin' or current_user.is_admin
+        
+        # Get all virtual hosts for debugging
+        all_vhosts = VirtualHost.query.all()
+        user_vhosts = VirtualHost.query.filter_by(user_id=current_user.id).all()
+        
+        # Get user info
+        user_info = {
+            'id': current_user.id,
+            'username': current_user.username,
+            'role': current_user.role,
+            'is_admin': current_user.is_admin
+        }
+        
+        # Debug information
+        debug_info = {
+            'user_info': user_info,
+            'total_vhosts': len(all_vhosts),
+            'user_vhosts': len(user_vhosts),
+            'all_vhosts_details': [
+                {
+                    'id': vh.id,
+                    'domain': vh.domain,
+                    'user_id': vh.user_id,
+                    'linux_username': vh.linux_username,
+                    'status': vh.status
+                } for vh in all_vhosts
+            ],
+            'user_vhosts_details': [
+                {
+                    'id': vh.id,
+                    'domain': vh.domain,
+                    'user_id': vh.user_id,
+                    'linux_username': vh.linux_username,
+                    'status': vh.status
+                } for vh in user_vhosts
+            ]
+        }
+        
+        return jsonify({
+            'success': True,
+            'debug_info': debug_info
+        })
+        
+    except Exception as e:
+        print(f"Dashboard debug error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500 
+
+@system_bp.route('/api/dashboard/test-counts')
+@token_required
+def test_dashboard_counts(current_user):
+    """Test endpoint to verify database counts"""
+    try:
+        # Test direct database queries
+        from sqlalchemy import text
+        
+        # Get database connection
+        db = current_app.db
+        
+        # Test 1: Count virtual hosts directly
+        result = db.session.execute(text("SELECT COUNT(*) as count FROM virtual_host"))
+        total_vhosts = result.scalar()
+        
+        # Test 2: Count user's virtual hosts directly
+        result = db.session.execute(
+            text("SELECT COUNT(*) as count FROM virtual_host WHERE user_id = :user_id"),
+            {"user_id": current_user.id}
+        )
+        user_vhosts_count = result.scalar()
+        
+        # Test 3: Get sample virtual host data
+        result = db.session.execute(
+            text("SELECT id, domain, user_id, linux_username FROM virtual_host LIMIT 5")
+        )
+        sample_vhosts = [dict(row) for row in result]
+        
+        # Test 4: Check if user exists in virtual_host table
+        result = db.session.execute(
+            text("SELECT COUNT(*) as count FROM virtual_host WHERE user_id = :user_id"),
+            {"user_id": current_user.id}
+        )
+        user_exists = result.scalar() > 0
+        
+        test_results = {
+            'total_vhosts_in_db': total_vhosts,
+            'user_vhosts_count': user_vhosts_count,
+            'user_exists_in_vhost_table': user_exists,
+            'current_user_id': current_user.id,
+            'sample_vhosts': sample_vhosts,
+            'sql_queries_working': True
+        }
+        
+        return jsonify({
+            'success': True,
+            'test_results': test_results
+        })
+        
+    except Exception as e:
+        print(f"Test counts error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500 

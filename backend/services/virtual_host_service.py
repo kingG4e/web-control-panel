@@ -139,6 +139,13 @@ class VirtualHostService(BaseService):
     location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
+    
+    # Serve ACME challenge files for Let's Encrypt HTTP-01 validation
+    location ^~ /.well-known/acme-challenge/ {{
+        default_type "text/plain";
+        alias {virtual_host.document_root}/.well-known/acme-challenge/;
+        try_files $uri =404;
+    }}
 """
         
         # Add PHP configuration if specified
