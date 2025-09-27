@@ -26,6 +26,9 @@ class Config:
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or SECRET_KEY
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=30)
+    JWT_TOKEN_LOCATION = ['headers']
+    JWT_HEADER_NAME = 'Authorization'
+    JWT_HEADER_TYPE = 'Bearer'
     
     # CORS Configuration
     CORS_ORIGINS = [
@@ -39,17 +42,37 @@ class Config:
         "http://172.16.0.0/12"
     ]
     
+    # Remote Hosts Configuration
+    USE_REMOTE_DNS = os.environ.get('USE_REMOTE_DNS', 'False').lower() == 'true'
+    USE_REMOTE_MAIL = os.environ.get('USE_REMOTE_MAIL', 'False').lower() == 'true'
+    USE_REMOTE_DATABASE = os.environ.get('USE_REMOTE_DATABASE', 'False').lower() == 'true'
+
+    REMOTE_DNS_SERVER = os.environ.get('REMOTE_DNS_SERVER')
+    REMOTE_DNS_PORT = int(os.environ.get('REMOTE_DNS_PORT') or 53)
+    REMOTE_DNS_KEY_PATH = os.environ.get('REMOTE_DNS_KEY_PATH')
+
+    REMOTE_MAIL_SERVER = os.environ.get('REMOTE_MAIL_SERVER')
+    REMOTE_MAIL_PORT = int(os.environ.get('REMOTE_MAIL_PORT') or 587)
+    REMOTE_MAIL_USER = os.environ.get('REMOTE_MAIL_USER')
+    REMOTE_MAIL_PASSWORD = os.environ.get('REMOTE_MAIL_PASSWORD')
+
+    REMOTE_DATABASE_SERVER = os.environ.get('REMOTE_DATABASE_SERVER')
+    REMOTE_DATABASE_PORT = int(os.environ.get('REMOTE_DATABASE_PORT') or 3306)
+    REMOTE_DATABASE_USER = os.environ.get('REMOTE_DATABASE_USER')
+    REMOTE_DATABASE_PASSWORD = os.environ.get('REMOTE_DATABASE_PASSWORD')
+    REMOTE_DATABASE_NAME = os.environ.get('REMOTE_DATABASE_NAME')
+
     # File Upload Configuration
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
     UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER') or 'uploads'
     ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'zip', 'tar', 'gz'}
     
     # Email Configuration
-    MAIL_SERVER = os.environ.get('MAIL_SERVER') or 'localhost'
-    MAIL_PORT = int(os.environ.get('MAIL_PORT') or 587)
+    MAIL_SERVER = os.environ.get('REMOTE_MAIL_SERVER') if USE_REMOTE_MAIL else (os.environ.get('MAIL_SERVER') or 'localhost')
+    MAIL_PORT = int(os.environ.get('REMOTE_MAIL_PORT') or 587) if USE_REMOTE_MAIL else (int(os.environ.get('MAIL_PORT') or 587))
     MAIL_USE_TLS = os.environ.get('MAIL_USE_TLS', 'True').lower() == 'true'
-    MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
-    MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
+    MAIL_USERNAME = os.environ.get('REMOTE_MAIL_USER') if USE_REMOTE_MAIL else (os.environ.get('MAIL_USERNAME'))
+    MAIL_PASSWORD = os.environ.get('REMOTE_MAIL_PASSWORD') if USE_REMOTE_MAIL else (os.environ.get('MAIL_PASSWORD'))
     MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER') or 'noreply@localhost'
     
     # SSL Configuration
@@ -68,11 +91,14 @@ class Config:
     BIND_RELOAD_COMMAND = os.environ.get('BIND_RELOAD_COMMAND') or 'systemctl reload bind9'
     BIND_DEV_MODE = os.environ.get('BIND9_DEV_MODE', 'False').lower() == 'true'
     
+    # DNS Defaults
+    DNS_DEFAULT_IP = os.environ.get('DNS_DEFAULT_IP') or os.environ.get('SERVER_PUBLIC_IP') or '127.0.0.1'
+    
     # MySQL Configuration
-    MYSQL_HOST = os.environ.get('MYSQL_HOST') or 'localhost'
-    MYSQL_PORT = int(os.environ.get('MYSQL_PORT') or 3306)
-    MYSQL_USER = os.environ.get('MYSQL_USER') or 'root'
-    MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD') or ''
+    MYSQL_HOST = os.environ.get('REMOTE_DATABASE_SERVER') if USE_REMOTE_DATABASE else (os.environ.get('MYSQL_HOST') or 'localhost')
+    MYSQL_PORT = int(os.environ.get('REMOTE_DATABASE_PORT') or 3306) if USE_REMOTE_DATABASE else (int(os.environ.get('MYSQL_PORT') or 3306))
+    MYSQL_USER = os.environ.get('REMOTE_DATABASE_USER') if USE_REMOTE_DATABASE else (os.environ.get('MYSQL_USER') or 'root')
+    MYSQL_PASSWORD = os.environ.get('REMOTE_DATABASE_PASSWORD') if USE_REMOTE_DATABASE else (os.environ.get('MYSQL_PASSWORD') or '')
     MYSQL_ROOT_PASSWORD = os.environ.get('MYSQL_ROOT_PASSWORD') or ''
     
     # phpMyAdmin Configuration

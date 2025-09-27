@@ -9,9 +9,19 @@ export const quotaApi = {
     },
 
     // Get quota usage for all users (admin only)
-    getAllUsersQuotaUsage: async () => {
-        const response = await api.get('/quota/usage');
-        return response.data;
+    getAllUsersQuotaUsage: async (forceRefresh = false) => {
+        const params = forceRefresh ? { refresh: 'true' } : {};
+        try {
+            const response = await api.get('/quota/usage', { params, timeout: 45000 });
+            return response.data;
+        } catch (err) {
+            // Retry once with a higher timeout if the first attempt timed out
+            if (err.code === 'ECONNABORTED' || /timeout/i.test(err.message || '')) {
+                const response = await api.get('/quota/usage', { params, timeout: 70000 });
+                return response.data;
+            }
+            throw err;
+        }
     },
 
     // Get quota alerts
@@ -34,9 +44,12 @@ export const quotaApi = {
         return response.data;
     },
 
-    // Get quota statistics (admin only)
-    getQuotaStatistics: async () => {
-        const response = await api.get('/quota/stats');
+    // Set quota for a specific user (admin only)
+    setUserQuota: async (username, softLimitMb, hardLimitMb) => {
+        const response = await api.post(`/quota/set/${username}`, {
+            soft_limit_mb: softLimitMb,
+            hard_limit_mb: hardLimitMb,
+        });
         return response.data;
     }
 };

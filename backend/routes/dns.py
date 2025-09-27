@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify
 from models.dns import DNSZone, DNSRecord, db
 from services.bind_service import BindService
+from config import Config
+from utils.settings_util import get_dns_default_ip
 from datetime import datetime
 import os
 from utils.auth import permission_required, admin_required, token_required
@@ -105,8 +107,8 @@ def create_zone(current_user):
         db.session.flush()
 
         # Create base records in DB so UI reflects the zone template
-        nameserver_ip = data.get('nameserver_ip', '127.0.0.1')
-        default_ip = nameserver_ip or '127.0.0.1'
+        nameserver_ip = data.get('nameserver_ip') or get_dns_default_ip()
+        default_ip = nameserver_ip
         # Create only essential records automatically
         base_records = [
             DNSRecord(zone_id=zone.id, name='@',   record_type='NS', content=f"ns1.{zone.domain_name}.", ttl=3600, status='active'),
@@ -162,7 +164,7 @@ def add_record(current_user, id):
         zone = DNSZone.query.options(joinedload(DNSZone.records)).get(zone.id)
 
         # Update zone file
-        bind_service.update_zone(zone, nameserver_ip=data.get('nameserver_ip', '127.0.0.1'))
+        bind_service.update_zone(zone, nameserver_ip=(data.get('nameserver_ip') or get_dns_default_ip()))
 
         return jsonify(record.to_dict()), 201
     except Exception as e:
@@ -199,7 +201,7 @@ def update_record(current_user, zone_id, record_id):
         zone = DNSZone.query.options(joinedload(DNSZone.records)).get(zone.id)
 
         # Update zone file
-        bind_service.update_zone(zone, nameserver_ip=data.get('nameserver_ip', '127.0.0.1'))
+        bind_service.update_zone(zone, nameserver_ip=(data.get('nameserver_ip') or get_dns_default_ip()))
         
         return jsonify(record.to_dict())
     except Exception as e:
@@ -224,7 +226,7 @@ def delete_record(current_user, zone_id, record_id):
         zone = DNSZone.query.options(joinedload(DNSZone.records)).get(zone.id)
 
         # Update zone file
-        bind_service.update_zone(zone, nameserver_ip='127.0.0.1')
+        bind_service.update_zone(zone, nameserver_ip=get_dns_default_ip())
         
         return '', 204
     except Exception as e:

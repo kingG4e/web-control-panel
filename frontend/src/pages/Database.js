@@ -4,9 +4,10 @@ import PageLayout from '../components/layout/PageLayout';
 import Button from '../components/ui/Button';
 import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
 import Table, { TableHeader, TableBody, TableRow, TableCell, TableHeaderCell } from '../components/ui/Table';
+import BaseModal from '../components/modals/BaseModal';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
-import { database as dbApi, virtualHosts } from '../services/api';
+import api, { database as dbApi, virtualHosts } from '../services/api';
 import {
   PlusIcon,
   PencilIcon,
@@ -29,7 +30,8 @@ import {
   LockOpenIcon,
   EyeSlashIcon,
   CheckCircleIcon,
-  XCircleIcon
+  XCircleIcon,
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 
 // Debounce utility function
@@ -97,6 +99,11 @@ const Database = () => {
   const [mysqlStatus, setMysqlStatus] = useState(null); // 'success' | 'error' | null
   const [mysqlError, setMysqlError] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [dbToDelete, setDbToDelete] = useState(null); // For delete confirmation
+
+  const [allDbUsers, setAllDbUsers] = useState([]);
+  const [userSelectionMode, setUserSelectionMode] = useState('create'); // 'create' or 'existing'
+  const [selectedDbUserId, setSelectedDbUserId] = useState('');
 
   // Debounced search function
   const debouncedSearch = useCallback(
@@ -144,6 +151,24 @@ const Database = () => {
     }
   }, [user]);
 
+  // Fetch all DB users when the form is opened
+  useEffect(() => {
+    if (showForm && user?.role === 'admin') {
+      const fetchAllUsers = async () => {
+        try {
+          const res = await dbApi.getAllUsers();
+          if (res.success) {
+            setAllDbUsers(res.data);
+          }
+        } catch (err) {
+          console.error("Failed to fetch database users:", err);
+        }
+      };
+      fetchAllUsers();
+    }
+  }, [showForm, user]);
+
+
   const fetchUserData = async () => {
     setLoading(true);
     setError(null);
@@ -166,27 +191,10 @@ const Database = () => {
         databaseList = allDatabases;
       }
       
-      // Filter databases based on user ownership or domain association
-      let filteredDatabases = [];
-      
-      if (user.role === 'admin') {
-        // Admins can see all databases
-        filteredDatabases = databaseList;
-      } else {
-        // Regular users can only see databases associated with their domains
-        const userDomainNames = userVirtualHosts.map(vh => vh.domain);
-        filteredDatabases = databaseList.filter(db => {
-          // Check if database belongs to user's domains
-          return userDomainNames.some(domain => 
-            db.name.includes(domain.replace(/\./g, '_')) || 
-            db.associated_domain === domain ||
-            db.owner_id === user.id
-          );
-        });
-      }
-      
-      setUserDatabases(filteredDatabases);
-      setDatabases(filteredDatabases);
+      // The backend now correctly filters databases for the current user.
+      // No additional frontend filtering is needed.
+      setUserDatabases(databaseList);
+      setDatabases(databaseList);
     } catch (err) {
       setError('Failed to fetch databases. Please ensure you have proper permissions and the database service is running.');
       console.error(err);
@@ -213,19 +221,48 @@ const Database = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError(null);
     try {
-      // Add user_id and domain association to form data
-      const submitData = {
-        ...formData,
-        user_id: user.id,
-        associated_domain: formData.domain || null
-      };
-
       if (editingDb) {
-        // console.log("Updating (not implemented yet)");
+        const updatedData = {
+          charset: formData.charset,
+          collation: formData.collation,
+          associated_domain: formData.domain || null
+        };
+        await dbApi.updateDatabase(editingDb.id, updatedData);
+
       } else {
-        await dbApi.createDatabase(submitData);
+        // 1. Create the database first
+        const dbData = {
+          name: formData.name,
+          charset: formData.charset,
+          collation: formData.collation,
+          owner_id: user.id,
+          associated_domain: formData.domain || null,
+        };
+        const newDbResponse = await dbApi.createDatabase(dbData);
+
+        if (newDbResponse.success && newDbResponse.data) {
+          const newDb = newDbResponse.data;
+          
+          // 2. Associate user with the new database
+          if (userSelectionMode === 'create' && formData.username && formData.password) {
+            // Create a new user and associate
+            await dbApi.createUser(newDb.id, {
+              username: formData.username,
+              password: formData.password,
+            });
+          } else if (userSelectionMode === 'existing' && selectedDbUserId) {
+            // Associate an existing user
+            await dbApi.associateUser(newDb.id, selectedDbUserId);
+          }
+
+        } else {
+          throw new Error(newDbResponse.error || 'Failed to create database.');
+        }
       }
+
+      // Reset form and refetch data
       setShowForm(false);
       setEditingDb(null);
       setFormData({
@@ -254,7 +291,7 @@ const Database = () => {
       fetchUserData();
     } catch (err) {
       console.error('Failed to save database:', err);
-      setError(err.response?.data?.error || 'Failed to save database');
+      setError(err.message || err.response?.data?.error || 'Failed to save database');
     }
   };
 
@@ -292,26 +329,28 @@ const Database = () => {
     setShowForm(true);
   };
 
-  const handleDelete = async (dbId) => {
-    const database = userDatabases.find(db => db.id === dbId);
-    
-    // Check if user has permission to delete this database
-    if (!canDeleteDatabase(database)) {
+  const handleDeleteRequest = (db) => {
+    if (!canDeleteDatabase(db)) {
       setError('You do not have permission to delete this database.');
       return;
     }
+    setDbToDelete(db);
+  };
 
-    if (!window.confirm('Are you sure you want to delete this database? This action cannot be undone.')) {
-      return;
-    }
+  const confirmDelete = async () => {
+    if (!dbToDelete) return;
+
     try {
-      await dbApi.deleteDatabase(dbId);
+      await dbApi.deleteDatabase(dbToDelete.id);
+      setDbToDelete(null);
       fetchUserData();
     } catch (err) {
       console.error('Failed to delete database:', err);
       setError(err.response?.data?.error || 'Failed to delete database');
+      setDbToDelete(null); // Close modal on error
     }
   };
+
 
   // ฟังก์ชันสำหรับเชื่อมต่อ MySQL ด้วย root password
   const handleRootConnect = async (e) => {
@@ -320,12 +359,8 @@ const Database = () => {
     setMysqlStatus(null);
     setMysqlError('');
     try {
-      const res = await fetch('/api/mysql-root-connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: rootPassword })
-      });
-      const data = await res.json();
+      const res = await api.post('/mysql-root-connect', { password: rootPassword });
+      const data = res.data;
       if (data.success) {
         setMysqlStatus('success');
         setMysqlError('');
@@ -344,8 +379,8 @@ const Database = () => {
   // ฟังก์ชันสำหรับเปิด phpMyAdmin
   const handleViewPhpMyAdmin = async (database) => {
     try {
-      const res = await fetch(`/api/databases/${database.id}/phpmyadmin`);
-      const data = await res.json();
+      const res = await api.get(`/databases/${database.id}/phpmyadmin`);
+      const data = res.data;
       
       if (data.success) {
         // เปิด phpMyAdmin ในแท็บใหม่
@@ -708,7 +743,7 @@ const Database = () => {
                         )}
                         {canDeleteDatabase(db) ? (
                           <button 
-                            onClick={() => handleDelete(db.id)}
+                            onClick={() => handleDeleteRequest(db)}
                             className="p-1 hover:bg-red-50 rounded transition-colors"
                             title="Delete Database"
                           >
@@ -837,457 +872,483 @@ const Database = () => {
         </div>
 
         {/* Database Form Modal */}
-        {showForm && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[120] overflow-y-auto">
-            <div className="min-h-full flex items-center justify-center p-4">
-              <div className="bg-[var(--card-bg)] p-6 rounded-xl border border-[var(--border-color)] w-full max-w-2xl my-8 max-h-[90vh] overflow-y-auto">
-                <h2 className="text-xl font-bold text-[var(--primary-text)] mb-6">
-                  {editingDb ? 'Edit Database' : 'Create Database'}
-                </h2>
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  {/* Basic Settings */}
+        <BaseModal
+          isOpen={showForm}
+          onClose={() => {
+            setShowForm(false);
+            setEditingDb(null);
+          }}
+          title={editingDb ? 'Edit Database' : 'Create Database'}
+          footer={
+            <div className="flex justify-end space-x-3">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowForm(false);
+                  setEditingDb(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleSubmit}
+              >
+                {editingDb ? 'Save Changes' : 'Create Database'}
+              </Button>
+            </div>
+          }
+        >
+          <form onSubmit={handleSubmit} className="space-y-6 p-6">
+              {/* Basic Settings */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                    Database Name
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    className="input-field"
+                    placeholder="my_database"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                    Database Type
+                  </label>
+                  <select
+                    value={formData.type}
+                    onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                    className="input-field"
+                  >
+                    <option value="mysql">MySQL</option>
+                    <option value="postgresql">PostgreSQL</option>
+                    <option value="mariadb">MariaDB</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Domain Selection */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                  Associated Domain
+                </label>
+                <select
+                  value={formData.domain}
+                  onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+                  className="input-field"
+                  required={user?.role !== 'admin'}
+                >
+                  <option value="">Select a domain</option>
+                  {userDomains.map(domain => (
+                    <option key={domain.id} value={domain.domain}>
+                      {domain.domain}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-[var(--secondary-text)] mt-1">
+                  Database will be associated with this domain
+                </p>
+              </div>
+
+              {/* --- Authentication Section --- */}
+              <div className="border border-[var(--border-color)] rounded-lg p-4">
+                <h3 className="text-lg font-medium text-[var(--primary-text)] mb-4 flex items-center">
+                  <KeyIcon className="w-5 h-5 mr-2" />
+                  Authentication
+                </h3>
+
+                {/* User selection mode */}
+                <div className="flex items-center space-x-4 mb-4">
+                  <label className="flex items-center">
+                    <input 
+                      type="radio" 
+                      name="userSelectionMode" 
+                      value="create" 
+                      checked={userSelectionMode === 'create'}
+                      onChange={() => setUserSelectionMode('create')}
+                      className="form-radio"
+                    />
+                    <span className="ml-2 text-sm">Create New User</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input 
+                      type="radio" 
+                      name="userSelectionMode" 
+                      value="existing" 
+                      checked={userSelectionMode === 'existing'}
+                      onChange={() => setUserSelectionMode('existing')}
+                      className="form-radio"
+                      disabled={allDbUsers.length === 0}
+                    />
+                    <span className="ml-2 text-sm">Use Existing User</span>
+                  </label>
+                </div>
+
+                {userSelectionMode === 'create' ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                        Database Name
+                        Database User
                       </label>
                       <input
                         type="text"
-                        value={formData.name}
-                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        value={formData.username}
+                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                         className="input-field"
-                        placeholder="my_database"
+                        placeholder="database_user"
                         required
                       />
                     </div>
-                    
                     <div>
                       <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                        Database Type
+                        Password
                       </label>
-                      <select
-                        value={formData.type}
-                        onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                        className="input-field"
-                      >
-                        <option value="mysql">MySQL</option>
-                        <option value="postgresql">PostgreSQL</option>
-                        <option value="mariadb">MariaDB</option>
-                      </select>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={formData.password}
+                          onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                          className="input-field pr-10"
+                          placeholder={editingDb ? 'Leave blank to keep current password' : 'Enter password'}
+                          required={!editingDb}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 transform -translate-y-1/2"
+                        >
+                          {showPassword ? (
+                            <EyeSlashIcon className="w-4 h-4 text-[var(--text-secondary)]" />
+                          ) : (
+                            <EyeIcon className="w-4 h-4 text-[var(--text-secondary)]" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
-
-                  {/* Domain Selection */}
+                ) : (
                   <div>
                     <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                      Associated Domain
+                      Select User
                     </label>
                     <select
-                      value={formData.domain}
-                      onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+                      value={selectedDbUserId}
+                      onChange={(e) => setSelectedDbUserId(e.target.value)}
                       className="input-field"
-                      required={user?.role !== 'admin'}
+                      required
                     >
-                      <option value="">Select a domain</option>
-                      {userDomains.map(domain => (
-                        <option key={domain.id} value={domain.domain}>
-                          {domain.domain}
-                        </option>
+                      <option value="">-- Choose a user --</option>
+                      {allDbUsers.map(user => (
+                        <option key={user.id} value={user.id}>{user.username}</option>
                       ))}
                     </select>
-                    <p className="text-xs text-[var(--secondary-text)] mt-1">
-                      Database will be associated with this domain
-                    </p>
                   </div>
+                )}
+              </div>
 
-                  {/* Connection Settings */}
-                  <div className="border border-[var(--border-color)] rounded-lg p-4">
-                    <h3 className="text-lg font-medium text-[var(--primary-text)] mb-4 flex items-center">
-                      <ServerIcon className="w-5 h-5 mr-2" />
-                      Connection Settings
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                          Host
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.host}
-                          onChange={(e) => setFormData({ ...formData, host: e.target.value })}
-                          className="input-field"
-                          placeholder="localhost"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                          Port
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.port}
-                          onChange={(e) => setFormData({ ...formData, port: e.target.value })}
-                          className="input-field"
-                          placeholder="3306"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                          Auth Plugin
-                        </label>
-                        <select
-                          value={formData.auth_plugin}
-                          onChange={(e) => setFormData({ ...formData, auth_plugin: e.target.value })}
-                          className="input-field"
-                        >
-                          <option value="mysql_native_password">mysql_native_password</option>
-                          <option value="caching_sha2_password">caching_sha2_password</option>
-                          <option value="mysql_clear_password">mysql_clear_password</option>
-                        </select>
-                      </div>
+              {/* Encryption & Security */}
+              <div className="border border-[var(--border-color)] rounded-lg p-4">
+                <h3 className="text-lg font-medium text-[var(--primary-text)] mb-4 flex items-center">
+                  <ShieldCheckIcon className="w-5 h-5 mr-2" />
+                  Encryption & Security
+                </h3>
+                
+                {/* SSL/TLS Settings */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-sm font-medium text-[var(--secondary-text)]">
+                        Use SSL/TLS Encryption
+                      </label>
+                      <p className="text-xs text-[var(--text-secondary)]">
+                        Encrypt database connections for security
+                      </p>
                     </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.use_ssl}
+                        onChange={(e) => setFormData({ ...formData, use_ssl: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
                   </div>
 
-                  {/* Authentication */}
-                  <div className="border border-[var(--border-color)] rounded-lg p-4">
-                    <h3 className="text-lg font-medium text-[var(--primary-text)] mb-4 flex items-center">
-                      <KeyIcon className="w-5 h-5 mr-2" />
-                      Authentication
-                    </h3>
+                  {formData.use_ssl && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                          Database User
+                          SSL Mode
                         </label>
-                        <input
-                          type="text"
-                          value={formData.username}
-                          onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                        <select
+                          value={formData.ssl_mode}
+                          onChange={(e) => setFormData({ ...formData, ssl_mode: e.target.value })}
                           className="input-field"
-                          placeholder="database_user"
-                          required
+                        >
+                          <option value="DISABLED">DISABLED</option>
+                          <option value="PREFERRED">PREFERRED</option>
+                          <option value="REQUIRED">REQUIRED</option>
+                          <option value="VERIFY_CA">VERIFY_CA</option>
+                          <option value="VERIFY_IDENTITY">VERIFY_IDENTITY</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="ssl_verify_cert"
+                          checked={formData.ssl_verify_cert}
+                          onChange={(e) => setFormData({ ...formData, ssl_verify_cert: e.target.checked })}
+                          className="rounded border-[var(--border-color)]"
                         />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                          Password
+                        <label htmlFor="ssl_verify_cert" className="ml-2 text-sm text-[var(--secondary-text)]">
+                          Verify SSL Certificate
                         </label>
-                        <div className="relative">
-                          <input
-                            type={showPassword ? "text" : "password"}
-                            value={formData.password}
-                            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                            className="input-field pr-10"
-                            placeholder={editingDb ? 'Leave blank to keep current password' : 'Enter password'}
-                            required={!editingDb}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPassword(!showPassword)}
-                            className="absolute right-3 top-1/2 transform -translate-y-1/2"
-                          >
-                            {showPassword ? (
-                              <EyeSlashIcon className="w-4 h-4 text-[var(--text-secondary)]" />
-                            ) : (
-                              <EyeIcon className="w-4 h-4 text-[var(--text-secondary)]" />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Encryption & Security */}
-                  <div className="border border-[var(--border-color)] rounded-lg p-4">
-                    <h3 className="text-lg font-medium text-[var(--primary-text)] mb-4 flex items-center">
-                      <ShieldCheckIcon className="w-5 h-5 mr-2" />
-                      Encryption & Security
-                    </h3>
-                    
-                    {/* SSL/TLS Settings */}
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <label className="text-sm font-medium text-[var(--secondary-text)]">
-                            Use SSL/TLS Encryption
-                          </label>
-                          <p className="text-xs text-[var(--text-secondary)]">
-                            Encrypt database connections for security
-                          </p>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={formData.use_ssl}
-                            onChange={(e) => setFormData({ ...formData, use_ssl: e.target.checked })}
-                            className="sr-only peer"
-                          />
-                          <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                        </label>
-                      </div>
-
-                      {formData.use_ssl && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                              SSL Mode
-                            </label>
-                            <select
-                              value={formData.ssl_mode}
-                              onChange={(e) => setFormData({ ...formData, ssl_mode: e.target.value })}
-                              className="input-field"
-                            >
-                              <option value="DISABLED">DISABLED</option>
-                              <option value="PREFERRED">PREFERRED</option>
-                              <option value="REQUIRED">REQUIRED</option>
-                              <option value="VERIFY_CA">VERIFY_CA</option>
-                              <option value="VERIFY_IDENTITY">VERIFY_IDENTITY</option>
-                            </select>
-                          </div>
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              id="ssl_verify_cert"
-                              checked={formData.ssl_verify_cert}
-                              onChange={(e) => setFormData({ ...formData, ssl_verify_cert: e.target.checked })}
-                              className="rounded border-[var(--border-color)]"
-                            />
-                            <label htmlFor="ssl_verify_cert" className="ml-2 text-sm text-[var(--secondary-text)]">
-                              Verify SSL Certificate
-                            </label>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* SSL Certificate Files */}
-                      {formData.use_ssl && ['VERIFY_CA', 'VERIFY_IDENTITY'].includes(formData.ssl_mode) && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                              CA Certificate
-                            </label>
-                            <input
-                              type="text"
-                              value={formData.ssl_ca}
-                              onChange={(e) => setFormData({ ...formData, ssl_ca: e.target.value })}
-                              className="input-field"
-                              placeholder="/path/to/ca-cert.pem"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                              Client Certificate
-                            </label>
-                            <input
-                              type="text"
-                              value={formData.ssl_cert}
-                              onChange={(e) => setFormData({ ...formData, ssl_cert: e.target.value })}
-                              className="input-field"
-                              placeholder="/path/to/client-cert.pem"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                              Client Key
-                            </label>
-                            <input
-                              type="text"
-                              value={formData.ssl_key}
-                              onChange={(e) => setFormData({ ...formData, ssl_key: e.target.value })}
-                              className="input-field"
-                              placeholder="/path/to/client-key.pem"
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Advanced Settings Toggle */}
-                  <div className="flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                      className="flex items-center text-[var(--primary)] hover:text-[var(--primary-dark)] transition-colors"
-                    >
-                      <Cog6ToothIcon className="w-4 h-4 mr-2" />
-                      {showAdvancedSettings ? 'Hide' : 'Show'} Advanced Settings
-                    </button>
-                  </div>
-
-                  {/* Advanced Settings */}
-                  {showAdvancedSettings && (
-                    <div className="border border-[var(--border-color)] rounded-lg p-4 space-y-4">
-                      <h3 className="text-lg font-medium text-[var(--primary-text)] flex items-center">
-                        <CommandLineIcon className="w-5 h-5 mr-2" />
-                        Advanced Settings
-                      </h3>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                            Connection Timeout (seconds)
-                          </label>
-                          <input
-                            type="number"
-                            value={formData.connection_timeout}
-                            onChange={(e) => setFormData({ ...formData, connection_timeout: parseInt(e.target.value) })}
-                            className="input-field"
-                            min="1"
-                            max="300"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                            Max Connections
-                          </label>
-                          <input
-                            type="number"
-                            value={formData.max_connections}
-                            onChange={(e) => setFormData({ ...formData, max_connections: parseInt(e.target.value) })}
-                            className="input-field"
-                            min="1"
-                            max="100"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="flex items-center">
-                          <input
-                            type="checkbox"
-                            id="use_compression"
-                            checked={formData.use_compression}
-                            onChange={(e) => setFormData({ ...formData, use_compression: e.target.checked })}
-                            className="rounded border-[var(--border-color)]"
-                          />
-                          <label htmlFor="use_compression" className="ml-2 text-sm text-[var(--secondary-text)]">
-                            Use Compression
-                          </label>
-                        </div>
-                        <div className="flex items-center">
-                          <input
-                            type="checkbox"
-                            id="use_persistent_connections"
-                            checked={formData.use_persistent_connections}
-                            onChange={(e) => setFormData({ ...formData, use_persistent_connections: e.target.checked })}
-                            className="rounded border-[var(--border-color)]"
-                          />
-                          <label htmlFor="use_persistent_connections" className="ml-2 text-sm text-[var(--secondary-text)]">
-                            Persistent Connections
-                          </label>
-                        </div>
-                        <div className="flex items-center">
-                          <input
-                            type="checkbox"
-                            id="auto_reconnect"
-                            checked={formData.auto_reconnect}
-                            onChange={(e) => setFormData({ ...formData, auto_reconnect: e.target.checked })}
-                            className="rounded border-[var(--border-color)]"
-                          />
-                          <label htmlFor="auto_reconnect" className="ml-2 text-sm text-[var(--secondary-text)]">
-                            Auto Reconnect
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Database Settings */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                            Charset
-                          </label>
-                          <select
-                            value={formData.charset}
-                            onChange={(e) => setFormData({ ...formData, charset: e.target.value })}
-                            className="input-field"
-                          >
-                            <option value="utf8mb4">UTF-8 Unicode (utf8mb4)</option>
-                            <option value="utf8">UTF-8 (utf8)</option>
-                            <option value="latin1">Latin1 (latin1)</option>
-                            <option value="ascii">ASCII (ascii)</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
-                            Collation
-                          </label>
-                          <select
-                            value={formData.collation}
-                            onChange={(e) => setFormData({ ...formData, collation: e.target.value })}
-                            className="input-field"
-                          >
-                            <option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</option>
-                            <option value="utf8mb4_general_ci">utf8mb4_general_ci</option>
-                            <option value="utf8_unicode_ci">utf8_unicode_ci</option>
-                            <option value="utf8_general_ci">utf8_general_ci</option>
-                            <option value="latin1_swedish_ci">latin1_swedish_ci</option>
-                          </select>
-                        </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Security Summary */}
-                  <div className="bg-[var(--secondary-bg)] border border-[var(--border-color)] rounded-lg p-4">
-                    <h3 className="text-lg font-medium text-[var(--primary-text)] mb-3 flex items-center">
-                      <ShieldCheckIcon className="w-5 h-5 mr-2" />
-                      Security Summary
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="flex items-center">
-                        <span className="text-sm text-[var(--secondary-text)] mr-2">SSL/TLS:</span>
-                        {formData.use_ssl ? (
-                          <div className="flex items-center text-green-600">
-                            <CheckCircleIcon className="w-4 h-4 mr-1" />
-                            <span className="text-sm">Enabled ({formData.ssl_mode})</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center text-red-600">
-                            <XCircleIcon className="w-4 h-4 mr-1" />
-                            <span className="text-sm">Disabled</span>
-                          </div>
-                        )}
+                  {/* SSL Certificate Files */}
+                  {formData.use_ssl && ['VERIFY_CA', 'VERIFY_IDENTITY'].includes(formData.ssl_mode) && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                          CA Certificate
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.ssl_ca}
+                          onChange={(e) => setFormData({ ...formData, ssl_ca: e.target.value })}
+                          className="input-field"
+                          placeholder="/path/to/ca-cert.pem"
+                        />
                       </div>
-                      <div className="flex items-center">
-                        <span className="text-sm text-[var(--secondary-text)] mr-2">Certificate Verification:</span>
-                        {formData.use_ssl && formData.ssl_verify_cert ? (
-                          <div className="flex items-center text-green-600">
-                            <CheckCircleIcon className="w-4 h-4 mr-1" />
-                            <span className="text-sm">Enabled</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center text-yellow-600">
-                            <XCircleIcon className="w-4 h-4 mr-1" />
-                            <span className="text-sm">Disabled</span>
-                          </div>
-                        )}
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                          Client Certificate
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.ssl_cert}
+                          onChange={(e) => setFormData({ ...formData, ssl_cert: e.target.value })}
+                          className="input-field"
+                          placeholder="/path/to/client-cert.pem"
+                        />
                       </div>
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                          Client Key
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.ssl_key}
+                          onChange={(e) => setFormData({ ...formData, ssl_key: e.target.value })}
+                          className="input-field"
+                          placeholder="/path/to/client-key.pem"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Advanced Settings Toggle */}
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                  className="flex items-center text-[var(--primary)] hover:text-[var(--primary-dark)] transition-colors"
+                >
+                  <Cog6ToothIcon className="w-4 h-4 mr-2" />
+                  {showAdvancedSettings ? 'Hide' : 'Show'} Advanced Settings
+                </button>
+              </div>
+
+              {/* Advanced Settings */}
+              {showAdvancedSettings && (
+                <div className="border border-[var(--border-color)] rounded-lg p-4 space-y-4">
+                  <h3 className="text-lg font-medium text-[var(--primary-text)] flex items-center">
+                    <CommandLineIcon className="w-5 h-5 mr-2" />
+                    Advanced Settings
+                  </h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                        Connection Timeout (seconds)
+                      </label>
+                      <input
+                        type="number"
+                        value={formData.connection_timeout}
+                        onChange={(e) => setFormData({ ...formData, connection_timeout: parseInt(e.target.value) })}
+                        className="input-field"
+                        min="1"
+                        max="300"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                        Max Connections
+                      </label>
+                      <input
+                        type="number"
+                        value={formData.max_connections}
+                        onChange={(e) => setFormData({ ...formData, max_connections: parseInt(e.target.value) })}
+                        className="input-field"
+                        min="1"
+                        max="100"
+                      />
                     </div>
                   </div>
 
-                  <div className="flex justify-end space-x-3 mt-6">
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setShowForm(false);
-                        setEditingDb(null);
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      variant="primary"
-                      type="submit"
-                    >
-                      {editingDb ? 'Save Changes' : 'Create Database'}
-                    </Button>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="use_compression"
+                        checked={formData.use_compression}
+                        onChange={(e) => setFormData({ ...formData, use_compression: e.target.checked })}
+                        className="rounded border-[var(--border-color)]"
+                      />
+                      <label htmlFor="use_compression" className="ml-2 text-sm text-[var(--secondary-text)]">
+                        Use Compression
+                      </label>
+                    </div>
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="use_persistent_connections"
+                        checked={formData.use_persistent_connections}
+                        onChange={(e) => setFormData({ ...formData, use_persistent_connections: e.target.checked })}
+                        className="rounded border-[var(--border-color)]"
+                      />
+                      <label htmlFor="use_persistent_connections" className="ml-2 text-sm text-[var(--secondary-text)]">
+                        Persistent Connections
+                      </label>
+                    </div>
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="auto_reconnect"
+                        checked={formData.auto_reconnect}
+                        onChange={(e) => setFormData({ ...formData, auto_reconnect: e.target.checked })}
+                        className="rounded border-[var(--border-color)]"
+                      />
+                      <label htmlFor="auto_reconnect" className="ml-2 text-sm text-[var(--secondary-text)]">
+                        Auto Reconnect
+                      </label>
+                    </div>
                   </div>
-                </form>
+
+                  {/* Database Settings */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                        Charset
+                      </label>
+                      <select
+                        value={formData.charset}
+                        onChange={(e) => setFormData({ ...formData, charset: e.target.value })}
+                        className="input-field"
+                      >
+                        <option value="utf8mb4">UTF-8 Unicode (utf8mb4)</option>
+                        <option value="utf8">UTF-8 (utf8)</option>
+                        <option value="latin1">Latin1 (latin1)</option>
+                        <option value="ascii">ASCII (ascii)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                        Collation
+                      </label>
+                      <select
+                        value={formData.collation}
+                        onChange={(e) => setFormData({ ...formData, collation: e.target.value })}
+                        className="input-field"
+                      >
+                        <option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</option>
+                        <option value="utf8mb4_general_ci">utf8mb4_general_ci</option>
+                        <option value="utf8_unicode_ci">utf8_unicode_ci</option>
+                        <option value="utf8_general_ci">utf8_general_ci</option>
+                        <option value="latin1_swedish_ci">latin1_swedish_ci</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Security Summary */}
+              <div className="bg-[var(--secondary-bg)] border border-[var(--border-color)] rounded-lg p-4">
+                <h3 className="text-lg font-medium text-[var(--primary-text)] mb-3 flex items-center">
+                  <ShieldCheckIcon className="w-5 h-5 mr-2" />
+                  Security Summary
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center">
+                    <span className="text-sm text-[var(--secondary-text)] mr-2">SSL/TLS:</span>
+                    {formData.use_ssl ? (
+                      <div className="flex items-center text-green-600">
+                        <CheckCircleIcon className="w-4 h-4 mr-1" />
+                        <span className="text-sm">Enabled ({formData.ssl_mode})</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center text-red-600">
+                        <XCircleIcon className="w-4 h-4 mr-1" />
+                        <span className="text-sm">Disabled</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-sm text-[var(--secondary-text)] mr-2">Certificate Verification:</span>
+                    {formData.use_ssl && formData.ssl_verify_cert ? (
+                      <div className="flex items-center text-green-600">
+                        <CheckCircleIcon className="w-4 h-4 mr-1" />
+                        <span className="text-sm">Enabled</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center text-yellow-600">
+                        <XCircleIcon className="w-4 h-4 mr-1" />
+                        <span className="text-sm">Disabled</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
+          </form>
+        </BaseModal>
+
+        {/* Delete Confirmation Modal */}
+        <BaseModal
+          isOpen={!!dbToDelete}
+          onClose={() => setDbToDelete(null)}
+          title="Confirm Deletion"
+          titleIcon={<ExclamationTriangleIcon className="w-6 h-6 text-red-500" />}
+          footer={
+            <div className="flex justify-end space-x-3">
+              <Button variant="secondary" onClick={() => setDbToDelete(null)}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={confirmDelete}>
+                Delete Database
+              </Button>
             </div>
+          }
+        >
+          <div className="p-6">
+            <p className="text-sm text-[var(--secondary-text)]">
+              Are you sure you want to permanently delete the database{' '}
+              <strong className="text-[var(--primary-text)]">{dbToDelete?.name}</strong>?
+            </p>
+            <p className="text-sm text-[var(--secondary-text)] mt-2">
+              All associated data and database users will be permanently removed. This action cannot be undone.
+            </p>
           </div>
-        )}
+        </BaseModal>
       </div>
     </PageLayout>
   );

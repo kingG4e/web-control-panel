@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 import jwt
 import platform
+# Remove flask_jwt_extended imports from this file to avoid confusion
+# from flask_jwt_extended import create_access_token, get_jwt_identity, decode_token
 
 from models.user import User
 from models.database import db

@@ -1,8 +1,143 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { quotaApi } from '../services/quotaApi';
 import { useAuth } from '../contexts/AuthContext';
+import BaseModal, { ModalSection, ModalButton } from '../components/modals/BaseModal';
+import { UsersIcon, CheckCircleIcon, ExclamationTriangleIcon, NoSymbolIcon as NoEntryIcon } from '@heroicons/react/24/outline';
 
-const QuotaUsageTable = ({ users, onRefresh }) => {
+
+const QuotaEditModal = ({ user, isOpen, onClose, onSave }) => {
+    const [softLimit, setSoftLimit] = useState('');
+    const [hardLimit, setHardLimit] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (user) {
+            setSoftLimit(user.quota_soft_mb || '');
+            setHardLimit(user.quota_hard_mb || '');
+        }
+        setError('');
+    }, [user, isOpen]);
+
+    if (!user) return null;
+
+    const handleSave = async () => {
+        setError('');
+        const soft = parseInt(softLimit, 10);
+        const hard = parseInt(hardLimit, 10);
+
+        if (isNaN(soft) || isNaN(hard) || soft < 0 || hard < 0) {
+            setError('Please enter valid, non-negative numbers for quota limits.');
+            return;
+        }
+
+        if (soft > hard) {
+            setError('Soft limit cannot be greater than hard limit.');
+            return;
+        }
+
+        setLoading(true);
+        try {
+            await onSave(user.username, soft, hard);
+            onClose();
+        } catch (err) {
+            setError(err.response?.data?.error || err.message || 'Failed to save quota.');
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    return (
+        <BaseModal
+            isOpen={isOpen}
+            onClose={onClose}
+            title={`Manage Quota for ${user.username}`}
+            footer={
+                <div className="flex justify-end space-x-2">
+                    <ModalButton variant="secondary" onClick={onClose}>Cancel</ModalButton>
+                    <ModalButton onClick={handleSave} disabled={loading}>
+                        {loading ? 'Saving...' : 'Save Changes'}
+                    </ModalButton>
+                </div>
+            }
+        >
+            <ModalSection>
+                <div className="space-y-4">
+                    {error && (
+                        <div className="p-3 rounded-md" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444' }}>
+                            {error}
+                        </div>
+                    )}
+                    <div>
+                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--primary-text)' }}>
+                            Soft Limit (MB)
+                        </label>
+                        <input
+                            type="number"
+                            value={softLimit}
+                            onChange={(e) => setSoftLimit(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border"
+                            style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                            placeholder="e.g., 2000"
+                        />
+                        <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
+                            User will receive a warning when they exceed this limit.
+                        </p>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--primary-text)' }}>
+                            Hard Limit (MB)
+                        </label>
+                        <input
+                            type="number"
+                            value={hardLimit}
+                            onChange={(e) => setHardLimit(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border"
+                            style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                            placeholder="e.g., 2500"
+                        />
+                         <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
+                            User will be blocked from writing new files when they exceed this limit.
+                        </p>
+                    </div>
+                </div>
+            </ModalSection>
+        </BaseModal>
+    );
+};
+
+const QuotaUsageBar = ({ usage, quota }) => {
+    if (quota === null || quota === undefined || quota <= 0) {
+        return <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>N/A</div>;
+    }
+
+    const percentage = Math.min((usage / quota) * 100, 100);
+    
+    let barColor = 'bg-green-500';
+    if (percentage > 95) barColor = 'bg-red-500';
+    else if (percentage > 80) barColor = 'bg-yellow-500';
+
+    return (
+        <div className="flex items-center space-x-2">
+            <div className="w-2/3">
+                <div className="w-full rounded-full h-2" style={{ backgroundColor: 'var(--secondary-bg)' }}>
+                    <div
+                        className={`h-2 rounded-full transition-all duration-300 ${barColor}`}
+                        style={{ width: `${percentage}%` }}
+                    ></div>
+                </div>
+            </div>
+            <div className="w-1/3 text-right">
+                <span className="text-sm font-medium" style={{ color: 'var(--primary-text)' }}>
+                    {percentage.toFixed(1)}%
+                </span>
+            </div>
+        </div>
+    );
+};
+
+
+const QuotaUsageTable = ({ users, onRefresh, onEditQuota }) => {
     const [sortField, setSortField] = useState('username');
     const [sortDirection, setSortDirection] = useState('asc');
     const [searchTerm, setSearchTerm] = useState('');
@@ -121,6 +256,9 @@ const QuotaUsageTable = ({ users, onRefresh }) => {
                             <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--secondary-text)' }}>
                                 Last Updated
                             </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--secondary-text)' }}>
+                                Actions
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
@@ -138,12 +276,10 @@ const QuotaUsageTable = ({ users, onRefresh }) => {
                                     {user.usage_mb.toFixed(1)}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm border-t" style={{ color: 'var(--primary-text)', borderColor: 'var(--border-color)' }}>
-                                    {user.quota_soft_mb ? user.quota_soft_mb.toFixed(1) : 'No quota'}
+                                    {user.quota_soft_mb ? `${user.quota_soft_mb.toFixed(1)} MB` : <span style={{color: 'var(--secondary-text)'}}>No Quota</span>}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap border-t" style={{ borderColor: 'var(--border-color)' }}>
-                                    <span className={`text-sm font-medium ${getUsageColor(user.quota_usage_percent)}`}>
-                                        {user.quota_usage_percent ? `${user.quota_usage_percent.toFixed(1)}%` : 'N/A'}
-                                    </span>
+                                    <QuotaUsageBar usage={user.usage_mb} quota={user.quota_soft_mb} />
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap border-t" style={{ borderColor: 'var(--border-color)' }}>
                                     {user.quota_usage_percent > 100 ? (
@@ -167,6 +303,15 @@ const QuotaUsageTable = ({ users, onRefresh }) => {
                                 <td className="px-6 py-4 whitespace-nowrap text-sm border-t" style={{ color: 'var(--secondary-text)', borderColor: 'var(--border-color)' }}>
                                     {new Date(user.last_updated).toLocaleString()}
                                 </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm border-t text-center" style={{ borderColor: 'var(--border-color)' }}>
+                                    <button
+                                        onClick={() => onEditQuota(user)}
+                                        className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 text-xs"
+                                        style={{ backgroundColor: 'var(--accent-color)', color: 'white' }}
+                                    >
+                                        <span>Manage</span>
+                                    </button>
+                                </td>
                             </tr>
                         ))}
                     </tbody>
@@ -180,22 +325,42 @@ const QuotaStatistics = ({ stats }) => {
     if (!stats) return null;
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                <div className="text-2xl font-bold" style={{ color: '#60a5fa' }}>{stats.total_users}</div>
-                <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>Total Users</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div className="rounded-xl border p-6 flex items-center" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+                <div className="w-12 h-12 rounded-lg flex items-center justify-center mr-4" style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)' }}>
+                    <UsersIcon className="w-6 h-6" style={{ color: '#3b82f6' }} />
+                </div>
+                <div>
+                    <div className="text-3xl font-bold" style={{ color: '#60a5fa' }}>{stats.total_users || 0}</div>
+                    <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>Total Users</div>
+                </div>
             </div>
-            <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                <div className="text-2xl font-bold" style={{ color: '#22c55e' }}>{stats.users_with_quota}</div>
-                <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>Users with Quota</div>
+            <div className="rounded-xl border p-6 flex items-center" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+                <div className="w-12 h-12 rounded-lg flex items-center justify-center mr-4" style={{ backgroundColor: 'rgba(34, 197, 94, 0.15)' }}>
+                    <CheckCircleIcon className="w-6 h-6" style={{ color: '#22c55e' }} />
+                </div>
+                <div>
+                    <div className="text-3xl font-bold" style={{ color: '#22c55e' }}>{stats.users_with_quota || 0}</div>
+                    <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>Users with Quota</div>
+                </div>
             </div>
-            <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                <div className="text-2xl font-bold" style={{ color: '#f59e0b' }}>{stats.warning_count + stats.critical_count}</div>
-                <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>Warnings</div>
+            <div className="rounded-xl border p-6 flex items-center" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+                <div className="w-12 h-12 rounded-lg flex items-center justify-center mr-4" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)' }}>
+                    <ExclamationTriangleIcon className="w-6 h-6" style={{ color: '#f59e0b' }} />
+                </div>
+                <div>
+                    <div className="text-3xl font-bold" style={{ color: '#f59e0b' }}>{(stats.warning_count || 0) + (stats.critical_count || 0)}</div>
+                    <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>Warnings</div>
+                </div>
             </div>
-            <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                <div className="text-2xl font-bold" style={{ color: '#ef4444' }}>{stats.exceeded_count}</div>
-                <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>Exceeded</div>
+            <div className="rounded-xl border p-6 flex items-center" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+                <div className="w-12 h-12 rounded-lg flex items-center justify-center mr-4" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)' }}>
+                    <NoEntryIcon className="w-6 h-6" style={{ color: '#ef4444' }} />
+                </div>
+                <div>
+                    <div className="text-3xl font-bold" style={{ color: '#ef4444' }}>{stats.exceeded_count || 0}</div>
+                    <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>Exceeded</div>
+                </div>
             </div>
         </div>
     );
@@ -208,16 +373,17 @@ const AdminQuotaManagement = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [refreshInterval, setRefreshInterval] = useState(null);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [selectedUser, setSelectedUser] = useState(null);
 
-    const fetchQuotaData = useCallback(async () => {
+    const fetchQuotaData = useCallback(async (forceRefresh = false) => {
         try {
             setLoading(true);
-            const [usageData, statsData] = await Promise.all([
-                quotaApi.getAllUsersQuotaUsage(),
-                quotaApi.getQuotaStatistics()
-            ]);
-            setQuotaData(usageData);
-            setStats(statsData);
+            const data = await quotaApi.getAllUsersQuotaUsage(forceRefresh);
+            
+            setQuotaData(data);
+            setStats(data.stats);
+            setError(null);
         } catch (err) {
             setError(err.response?.data?.error || err.message);
         } finally {
@@ -225,21 +391,34 @@ const AdminQuotaManagement = () => {
         }
     }, []);
 
-    const startAutoRefresh = useCallback(() => {
-        // Refresh every 60 seconds for admin view
-        const interval = setInterval(fetchQuotaData, 60000);
-        setRefreshInterval(interval);
+    useEffect(() => {
+        const initialFetch = () => fetchQuotaData();
+        initialFetch();
+        
+        // Auto-refresh (without forcing) every 60 seconds
+        const interval = setInterval(() => fetchQuotaData(false), 60000);
+        
         return () => clearInterval(interval);
     }, [fetchQuotaData]);
 
-    useEffect(() => {
-        fetchQuotaData();
-        const cleanup = startAutoRefresh();
-        return cleanup;
-    }, [fetchQuotaData, startAutoRefresh]);
-
     const handleManualRefresh = () => {
-        fetchQuotaData();
+        fetchQuotaData(true);
+    };
+
+    const handleOpenEditModal = (user) => {
+        setSelectedUser(user);
+        setIsEditModalOpen(true);
+    };
+
+    const handleCloseEditModal = () => {
+        setSelectedUser(null);
+        setIsEditModalOpen(false);
+    };
+
+    const handleSaveQuota = async (username, softLimit, hardLimit) => {
+        await quotaApi.setUserQuota(username, softLimit, hardLimit);
+        // Refresh data after saving, and force bypass cache
+        fetchQuotaData(true);
     };
 
     // Check if user is admin
@@ -302,6 +481,7 @@ const AdminQuotaManagement = () => {
                         <QuotaUsageTable 
                             users={quotaData.users} 
                             onRefresh={handleManualRefresh}
+                            onEditQuota={handleOpenEditModal}
                         />
                     </div>
                 )}
@@ -349,6 +529,12 @@ const AdminQuotaManagement = () => {
                     </div>
                 )}
             </div>
+            <QuotaEditModal
+                user={selectedUser}
+                isOpen={isEditModalOpen}
+                onClose={handleCloseEditModal}
+                onSave={handleSaveQuota}
+            />
         </div>
     );
 };

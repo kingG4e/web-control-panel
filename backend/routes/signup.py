@@ -2,7 +2,6 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime
 
 from models.database import db
-from models.signup import SignupRequest
 from models.signup_meta import SignupMeta
 from models.user import User
 from utils.crypto import encrypt_text, decrypt_text
@@ -14,6 +13,10 @@ from services.virtual_host_service import VirtualHostService
 from services.quota_service import QuotaService
 from services.bind_service import BindService
 from models.dns import DNSZone, DNSRecord
+from models.virtual_host import VirtualHost, VirtualHostAlias
+from models.email import EmailDomain
+from config import Config
+from utils.settings_util import get_dns_default_ip
 
 
 signup_bp = Blueprint('signup', __name__)
@@ -40,6 +43,22 @@ def submit_signup_request():
     if linux_service.user_exists(data['username']):
         return jsonify({'error': 'System username already exists'}), 409
 
+    # Normalize and validate domain uniqueness across the system
+    domain = (data.get('domain') or '').strip().lower()
+    if not domain:
+        return jsonify({'error': 'Invalid domain'}), 400
+
+    # Check if domain already exists in VirtualHost, Alias, EmailDomain, DNS Zone or pending signup requests
+    domain_taken = (
+        VirtualHost.query.filter_by(domain=domain).first()
+        or VirtualHostAlias.query.filter_by(domain=domain).first()
+        or EmailDomain.query.filter_by(domain=domain).first()
+        or DNSZone.query.filter_by(domain_name=domain).first()
+        or SignupMeta.query.filter(SignupMeta.domain == domain, SignupMeta.status == 'pending').first()
+    )
+    if domain_taken:
+        return jsonify({'error': 'Domain already exists'}), 409
+
     try:
         # Create a minimal user record now; extra selections go to SignupMeta
         user = User(username=data['username'], email=data.get('email') or None, role='user')
@@ -49,7 +68,7 @@ def submit_signup_request():
 
         meta = SignupMeta(
             user_id=user.id,
-            domain=data['domain'],
+            domain=domain,
             full_name=(data.get('full_name') or None),
             server_password_enc=encrypt_text(data['password']),
             options_json={
@@ -91,6 +110,80 @@ def list_signup_requests(current_user):
         d['email'] = u.email if u else None
         data.append(d)
     return jsonify({'success': True, 'data': data})
+
+
+@signup_bp.route('/api/signup/<int:req_id>', methods=['PUT'])
+@token_required
+@admin_required
+def update_signup_request(current_user, req_id):
+    """Update a pending signup request."""
+    req = SignupMeta.query.get_or_404(req_id)
+    if req.status != 'pending':
+        return jsonify({'error': 'Only pending requests can be edited'}), 400
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    try:
+        user = User.query.get(req.user_id)
+        if not user:
+            return jsonify({'error': 'User not found for this request'}), 404
+
+        # Update user fields if present
+        if 'username' in data and data['username'] != user.username:
+            # Check for username conflicts
+            if User.query.filter(User.username == data['username'], User.id != user.id).first() or \
+               linux_service.user_exists(data['username']):
+                return jsonify({'error': 'Username already exists'}), 409
+            user.username = data['username']
+        
+        if 'email' in data:
+            user.email = data['email']
+
+        # Update meta fields if present
+        if 'domain' in data:
+            new_domain = (data.get('domain') or '').strip().lower()
+            if not new_domain:
+                return jsonify({'error': 'Invalid domain'}), 400
+            if new_domain != (req.domain or '').lower():
+                # Ensure domain is not taken elsewhere or by another pending request
+                domain_taken = (
+                    VirtualHost.query.filter_by(domain=new_domain).first()
+                    or VirtualHostAlias.query.filter_by(domain=new_domain).first()
+                    or EmailDomain.query.filter_by(domain=new_domain).first()
+                    or DNSZone.query.filter_by(domain_name=new_domain).first()
+                    or SignupMeta.query.filter(SignupMeta.id != req.id, SignupMeta.domain == new_domain, SignupMeta.status == 'pending').first()
+                )
+                if domain_taken:
+                    return jsonify({'error': 'Domain already exists'}), 409
+                req.domain = new_domain
+        if 'full_name' in data:
+            req.full_name = data['full_name']
+        if 'storage_quota_mb' in data:
+            req.storage_quota_mb = data['storage_quota_mb']
+        
+        # Update service options in options_json
+        if 'options' in data:
+            options = req.options_json or {}
+            options.update({
+                'want_ssl': bool(data['options'].get('want_ssl', options.get('want_ssl'))),
+                'want_dns': bool(data['options'].get('want_dns', options.get('want_dns'))),
+                'want_email': bool(data['options'].get('want_email', options.get('want_email'))),
+                'want_mysql': bool(data['options'].get('want_mysql', options.get('want_mysql'))),
+            })
+            req.options_json = options
+
+        db.session.commit()
+        
+        # Enrich response with updated user details
+        resp = req.to_dict()
+        resp['username'] = user.username
+        resp['email'] = user.email
+        return jsonify({'success': True, 'data': resp})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @signup_bp.route('/api/signup/status', methods=['GET'])
@@ -139,10 +232,21 @@ def submit_additional_request(current_user):
         if not data.get(field):
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
-    # Check if domain is already used
-    existing_domain = SignupMeta.query.filter_by(domain=data['domain']).first()
-    if existing_domain:
-        return jsonify({'error': 'Domain already requested'}), 409
+    # Normalize and validate domain uniqueness across the system
+    domain = (data.get('domain') or '').strip().lower()
+    if not domain:
+        return jsonify({'error': 'Invalid domain'}), 400
+
+    # Check if domain already used anywhere or in pending requests
+    domain_taken = (
+        VirtualHost.query.filter_by(domain=domain).first()
+        or VirtualHostAlias.query.filter_by(domain=domain).first()
+        or EmailDomain.query.filter_by(domain=domain).first()
+        or DNSZone.query.filter_by(domain_name=domain).first()
+        or SignupMeta.query.filter(SignupMeta.domain == domain, SignupMeta.status == 'pending').first()
+    )
+    if domain_taken:
+        return jsonify({'error': 'Domain already exists'}), 409
     
     try:
         # Generate a server password for this additional request
@@ -150,7 +254,7 @@ def submit_additional_request(current_user):
         
         meta = SignupMeta(
             user_id=current_user.id,
-            domain=data['domain'],
+            domain=domain,
             full_name=(data.get('full_name') or None),
             server_password_enc=encrypt_text(server_password),
             options_json={
@@ -252,7 +356,7 @@ def approve_signup_request(current_user, req_id):
                 db.session.add(zone)
                 db.session.flush()
 
-                default_ip = '127.0.0.1'
+                default_ip = get_dns_default_ip()
                 # Create only essential records automatically
                 base_records = [
                     DNSRecord(zone_id=zone.id, name='@',   record_type='NS',    content=f"ns1.{zone.domain_name}.", ttl=3600, status='active'),
@@ -267,14 +371,22 @@ def approve_signup_request(current_user, req_id):
         except Exception as e:
             req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"DNS zone create failed: {e}"
 
-        # Optional: set storage quota if provided (best-effort)
+        # Optional: set storage quota if provided (best-effort) and record result
         quota_mb = req.storage_quota_mb
         if quota_mb:
             try:
-                quota_service.set_user_quota(user.username, int(quota_mb))
+                applied = quota_service.set_user_quota(user.username, int(quota_mb))
+                if not applied:
+                    req.admin_comment = (
+                        (req.admin_comment + ' | ' if req.admin_comment else '') +
+                        f"Quota tool unavailable or device not found; requested {int(quota_mb)}MB"
+                    )
             except Exception as e:
                 # Not fatal; record comment
-                req.admin_comment = f"Quota set failed: {e}"
+                req.admin_comment = (
+                    (req.admin_comment + ' | ' if req.admin_comment else '') +
+                    f"Quota set failed: {e}"
+                )
 
         # Grant domain-level permissions based on requested options (DNS always granted)
         try:
@@ -307,7 +419,7 @@ def approve_signup_request(current_user, req_id):
 @token_required
 @admin_required
 def reject_signup_request(current_user, req_id):
-    req = SignupRequest.query.get_or_404(req_id)
+    req = SignupMeta.query.get_or_404(req_id)
     if req.status != 'pending':
         return jsonify({'error': 'Request is not pending'}), 400
     data = request.get_json() or {}

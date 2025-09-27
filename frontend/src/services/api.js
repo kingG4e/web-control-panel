@@ -59,19 +59,24 @@ api.interceptors.response.use(
 
         // Handle authentication errors
         if (error.response?.status === 401) {
-            localStorage.removeItem('token');
-            window.location.href = '/login';
+            // Do not redirect for login/register/refresh requests or when already on the login page
+            const isAuthEndpoint = ['/auth/login', '/auth/register', '/auth/refresh'].includes(originalRequest.url);
+            const isOnLoginPage = typeof window !== 'undefined' && window.location?.pathname === '/login';
+            if (!isAuthEndpoint && !isOnLoginPage) {
+                localStorage.removeItem('token');
+                window.location.href = '/login';
+            }
         }
 
-        // Surface backend error message (if provided) instead of generic 500
+        // Surface backend error message (if provided) and preserve original error shape
         const serverErrorMessage = error.response?.data?.error || error.response?.data?.message;
         if (serverErrorMessage) {
             const normalized = typeof serverErrorMessage === 'string'
                 ? serverErrorMessage
                 : JSON.stringify(serverErrorMessage);
-            const enhanced = new Error(normalized);
-            enhanced.status = error.response?.status;
-            return Promise.reject(enhanced);
+            error.message = normalized;
+            error.status = error.response?.status;
+            return Promise.reject(error);
         }
 
         return Promise.reject(error);
@@ -164,6 +169,10 @@ export const signup = {
     },
     submitAdditional: async (data) => {
         const response = await api.post('/signup/additional', data);
+        return response.data;
+    },
+    update: async (id, data) => {
+        const response = await api.put(`/signup/${id}`, data);
         return response.data;
     }
 };
@@ -362,12 +371,14 @@ export const email = {
     },
     
     updateAccount: async (domainId, accountId, data) => {
-        const response = await api.put(`/email/domains/${domainId}/accounts/${accountId}`, data);
+        // Backend update endpoint expects /email/accounts/:id
+        const response = await api.put(`/email/accounts/${accountId}`, data);
         return response.data;
     },
     
     deleteAccount: async (domainId, accountId) => {
-        const response = await api.delete(`/email/domains/${domainId}/accounts/${accountId}`);
+        // Backend delete endpoint expects /email/accounts/:id
+        const response = await api.delete(`/email/accounts/${accountId}`);
         return response.data;
     }
 };
@@ -428,6 +439,22 @@ export const database = {
     
     deleteUser: async (dbId, userId) => {
         const response = await api.delete(`/databases/${dbId}/users/${userId}`);
+        return response.data;
+    },
+    
+    // New function to get all database users
+    getAllUsers: async () => {
+        const response = await api.get('/database-users');
+        return response.data;
+    },
+
+    associateUser: async (dbId, userId) => {
+        const response = await api.post(`/databases/${dbId}/users/${userId}`);
+        return response.data;
+    },
+
+    updateDatabase: async (id, data) => {
+        const response = await api.put(`/databases/${id}`, data);
         return response.data;
     }
 };

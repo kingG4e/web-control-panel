@@ -5,11 +5,13 @@ from typing import Optional
 
 from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
-
+from flask_jwt_extended import JWTManager
+from flask_migrate import Migrate
 from models.database import db, init_db
 from utils.logger import setup_logger
 from config import Config
 from sqlalchemy import inspect, text
+from dotenv import load_dotenv
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -102,6 +104,9 @@ def setup_file_manager_root() -> str:
 
 def create_app(config_class=Config) -> Flask:
     """Application factory pattern."""
+    # Load environment variables from .env file
+    load_dotenv()
+    
     app = Flask(__name__, static_folder='../frontend/build', static_url_path='/')
     
     # Load configuration
@@ -120,10 +125,13 @@ def create_app(config_class=Config) -> Flask:
              "http://0.0.0.0:3000",
              "http://192.168.128.4:3000",
              "http://192.168.1.174:3000"
-         ])
+         ],
+         allow_headers=["Content-Type", "Authorization"])
     
     # Initialize extensions
     init_db(app)
+    JWTManager(app)
+    Migrate(app, db)
     
     # Import models after db is initialized
     from models.user import User
@@ -145,6 +153,7 @@ def create_app(config_class=Config) -> Flask:
     from routes.database import database_bp
     from routes.signup import signup_bp
     from routes.quota import quota_bp
+    from routes.settings import settings_bp
     
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -158,6 +167,7 @@ def create_app(config_class=Config) -> Flask:
     app.register_blueprint(database_bp)
     app.register_blueprint(signup_bp)
     app.register_blueprint(quota_bp)
+    app.register_blueprint(settings_bp)
     
     # Create database tables
     with app.app_context():

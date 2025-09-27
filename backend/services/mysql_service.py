@@ -3,6 +3,15 @@ import subprocess
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
+from utils.validators import is_safe_database_name
+
+ALLOWED_PRIVILEGES = [
+    'ALL PRIVILEGES', 'CREATE', 'DROP', 'DELETE', 'INSERT', 'SELECT', 'UPDATE',
+    'GRANT OPTION', 'EXECUTE', 'PROXY', 'RELOAD', 'SHUTDOWN', 'SHOW DATABASES',
+    'SUPER', 'PROCESS', 'REFERENCES', 'INDEX', 'ALTER', 'CREATE TEMPORARY TABLES',
+    'LOCK TABLES', 'CREATE VIEW', 'SHOW VIEW', 'CREATE ROUTINE', 'ALTER ROUTINE',
+    'EVENT', 'TRIGGER', 'CREATE USER'
+]
 
 class MySQLService:
     def __init__(self):
@@ -10,8 +19,10 @@ class MySQLService:
         self.config = {
             'host': 'localhost',
             'user': 'root',
-            'password': os.getenv('MYSQL_ROOT_PASSWORD', 'Kg_73260')
+            'password': os.getenv('MYSQL_ROOT_PASSWORD')
         }
+        if not self.config['password']:
+            raise Exception("MYSQL_ROOT_PASSWORD environment variable not set.")
 
     def create_database(self, name, charset='utf8mb4', collation='utf8mb4_unicode_ci'):
         """Create a new MySQL database"""
@@ -20,7 +31,9 @@ class MySQLService:
             cursor = conn.cursor()
             
             # Create database with specified charset and collation
-            cursor.execute(f"CREATE DATABASE `{name}` CHARACTER SET {charset} COLLATE {collation}")
+            if not is_safe_database_name(name):
+                raise Exception(f'Invalid database name: {name}')
+            cursor.execute(f"CREATE DATABASE `{name}` CHARACTER SET %s COLLATE %s", (charset, collation))
             
             cursor.close()
             conn.close()
@@ -35,6 +48,8 @@ class MySQLService:
             cursor = conn.cursor()
             
             # Drop database
+            if not is_safe_database_name(name):
+                raise Exception(f'Invalid database name: {name}')
             cursor.execute(f"DROP DATABASE `{name}`")
             
             cursor.close()
@@ -50,7 +65,7 @@ class MySQLService:
             cursor = conn.cursor()
             
             # Create user
-            cursor.execute(f"CREATE USER '{username}'@'{host}' IDENTIFIED BY '{password}'")
+            cursor.execute("CREATE USER %s@%s IDENTIFIED BY %s", (username, host, password))
             
             cursor.close()
             conn.close()
@@ -65,7 +80,7 @@ class MySQLService:
             cursor = conn.cursor()
             
             # Drop user
-            cursor.execute(f"DROP USER '{username}'@'{host}'")
+            cursor.execute("DROP USER %s@%s", (username, host))
             
             cursor.close()
             conn.close()
@@ -78,9 +93,17 @@ class MySQLService:
         try:
             conn = mysql.connector.connect(**self.config)
             cursor = conn.cursor()
+
+            # Validate privileges
+            privileges_list = [p.strip() for p in privileges.upper().split(',')]
+            for p in privileges_list:
+                if p not in ALLOWED_PRIVILEGES:
+                    raise Exception(f"Invalid privilege: {p}")
             
             # Grant privileges
-            cursor.execute(f"GRANT {privileges} ON `{database}`.* TO '{username}'@'{host}'")
+            if not is_safe_database_name(database):
+                raise Exception(f'Invalid database name: {database}')
+            cursor.execute(f"GRANT {privileges} ON `{database}`.* TO %s@%s", (username, host))
             cursor.execute("FLUSH PRIVILEGES")
             
             cursor.close()
@@ -96,7 +119,9 @@ class MySQLService:
             cursor = conn.cursor()
             
             # Revoke privileges
-            cursor.execute(f"REVOKE ALL PRIVILEGES ON `{database}`.* FROM '{username}'@'{host}'")
+            if not is_safe_database_name(database):
+                raise Exception(f'Invalid database name: {database}')
+            cursor.execute(f"REVOKE ALL PRIVILEGES ON `{database}`.* FROM %s@%s", (username, host))
             cursor.execute("FLUSH PRIVILEGES")
             
             cursor.close()
@@ -176,12 +201,14 @@ class MySQLService:
             cursor = conn.cursor()
             
             # Get database size
-            cursor.execute(f"""
+            if not is_safe_database_name(database):
+                raise Exception(f'Invalid database name: {database}')
+            cursor.execute("""
                 SELECT SUM(data_length + index_length) / 1024 / 1024
                 FROM information_schema.tables
-                WHERE table_schema = '{database}'
+                WHERE table_schema = %s
                 GROUP BY table_schema
-            """)
+            """, (database,))
             
             result = cursor.fetchone()
             size = result[0] if result else 0

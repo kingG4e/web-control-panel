@@ -12,6 +12,9 @@ from services.email_service import EmailService
 from services.mysql_service import MySQLService
 from services.ssl_service import SSLService
 from services.quota_service import QuotaService
+from config import Config
+import os
+from utils.settings_util import get_dns_default_ip
 from utils.auth import token_required
 from utils.permissions import (
     check_virtual_host_permission, 
@@ -79,7 +82,7 @@ def _create_dns_zone(domain, linux_username):
     db.session.flush()  # Get the ID
     
     # Create base DNS records so UI reflects the template-generated zone file
-    default_ip = '127.0.0.1'
+    default_ip = get_dns_default_ip()
     records = [
         # NS record
         DNSRecord(
@@ -143,7 +146,7 @@ def _create_dns_zone(domain, linux_username):
     
     # Create BIND zone file (external service - handle errors separately)
     try:
-        bind_service.create_zone(dns_zone, '127.0.0.1')
+        bind_service.create_zone(dns_zone, get_dns_default_ip())
     except Exception as e:
         print(f"Warning: BIND zone file creation failed: {e}")
         # Continue anyway - database records are more important

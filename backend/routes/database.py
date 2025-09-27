@@ -1,11 +1,14 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, current_app
 from models.database import Database, DatabaseUser, DatabaseBackup, db
+from models.virtual_host import VirtualHost
+from models.user import User
 from services.mysql_service import MySQLService
 from services.phpmyadmin_service import PhpMyAdminService
 from datetime import datetime
 from sqlalchemy.orm import joinedload
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 from utils.auth import token_required, admin_required
+from werkzeug.security import generate_password_hash
 
 
 def _is_admin(user):
@@ -31,9 +34,30 @@ def get_databases(current_user):
             joinedload(Database.backups)
         )
         
-        # Non-admins see only their own databases
+        # Non-admins see only their own databases or databases associated with their domains
         if not _is_admin(current_user):
-            query = query.filter(Database.owner_id == current_user.id)
+            current_app.logger.info(f"Filtering databases for non-admin user: {current_user.username} (ID: {current_user.id})")
+            
+            # Find the Linux username associated with the current panel user
+            app_user = User.query.get(current_user.id)
+            if not app_user:
+                 return jsonify({'success': False, 'error': 'User not found'}), 404
+
+            linux_username = app_user.username # Assuming panel username matches linux username
+
+            current_app.logger.info(f"Panel user '{app_user.username}' is associated with Linux user '{linux_username}'")
+
+            # Find domains associated with that Linux user
+            user_domains = [vh.domain for vh in VirtualHost.query.filter_by(linux_username=linux_username).all()]
+            current_app.logger.info(f"Found domains for Linux user '{linux_username}': {user_domains}")
+            
+            # Filter databases where the current user is the direct owner OR the associated domain belongs to their linux user
+            query = query.filter(
+                or_(
+                    Database.owner_id == current_user.id,
+                    Database.associated_domain.in_(user_domains)
+                )
+            )
         
         # Apply search filter if provided
         if search:
@@ -46,6 +70,9 @@ def get_databases(current_user):
             error_out=False
         )
         
+        db_names = [db.name for db in paginated.items]
+        current_app.logger.info(f"Databases returned for user '{current_user.username}': {db_names}")
+
         return jsonify({
             'success': True,
             'data': [db.to_dict() for db in paginated.items],
@@ -236,6 +263,11 @@ def update_database(current_user, id):
             database.collation = data['collation']
         if 'status' in data:
             database.status = data['status']
+        if 'associated_domain' in data:
+            database.associated_domain = data.get('associated_domain') # Can be None
+
+        if _is_admin(current_user) and 'owner_id' in data:
+            database.owner_id = data['owner_id']
         
         database.updated_at = datetime.utcnow()
         
@@ -262,16 +294,58 @@ def delete_database(current_user, id):
         return jsonify({'success': False, 'error': 'Access denied'}), 403
     
     try:
+        # First, delete all associated MySQL users
+        for user in database.users:
+            try:
+                mysql_service.delete_user(user.username, user.host)
+            except Exception as user_del_e:
+                # Log the error but continue, as the database deletion is more critical
+                current_app.logger.warning(f"Could not delete MySQL user '{user.username}@{user.host}': {user_del_e}")
+
         # Delete database in MySQL
         mysql_service.delete_database(database.name)
         
-        # Delete from our database
+        # Delete from our database (cascades will handle users)
         db.session.delete(database)
         db.session.commit()
         
         return jsonify({
             'success': True,
             'message': 'Database deleted successfully'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/databases/<int:db_id>/users/<int:user_id>', methods=['DELETE'])
+@token_required
+def delete_database_user(current_user, db_id, user_id):
+    database = Database.query.get_or_404(db_id)
+    
+    # Ownership check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
+    user = DatabaseUser.query.get_or_404(user_id)
+    
+    # Check if user is actually associated with the database
+    if user not in database.users:
+        return jsonify({'success': False, 'error': 'User is not associated with this database'}), 400
+
+    try:
+        # Revoke privileges from the user for this specific database in MySQL
+        mysql_service.revoke_privileges(user.username, database.name, user.host)
+        
+        # Remove association from our database
+        database.users.remove(user)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'User {user.username} access to database {database.name} has been revoked.'
         })
     except Exception as e:
         db.session.rollback()
@@ -298,61 +372,46 @@ def create_database_user(current_user, id):
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
     try:
-        # Create user in MySQL
-        mysql_service.create_user(
+        # Check if user already exists in our panel's database
+        user = DatabaseUser.query.filter_by(username=data['username']).first()
+
+        if not user:
+            # If user does not exist, create them in MySQL and in our panel's DB
+            mysql_service.create_user(
+                data['username'],
+                data['password'],
+                host=data.get('host', '%')
+            )
+            
+            # Hash password for storage
+            hashed_password = generate_password_hash(data['password'])
+            
+            user = DatabaseUser(
+                username=data['username'],
+                password=hashed_password,
+                host=data.get('host', '%'),
+                privileges=data.get('privileges', 'ALL PRIVILEGES')
+            )
+            db.session.add(user)
+        
+        # Grant privileges for the specific database in MySQL
+        mysql_service.grant_privileges(
             data['username'],
-            data['password'],
             database.name,
-            host=data.get('host', '%'),
-            privileges=data.get('privileges', 'ALL PRIVILEGES')
+            privileges=data.get('privileges', 'ALL PRIVILEGES'),
+            host=data.get('host', '%')
         )
         
-        # Create user record
-        user = DatabaseUser(
-            database_id=id,
-            username=data['username'],
-            password=data['password'],  # Should be hashed in production
-            host=data.get('host', '%'),
-            privileges=data.get('privileges', 'ALL PRIVILEGES')
-        )
+        # Associate user with the database
+        if user not in database.users:
+            database.users.append(user)
         
-        db.session.add(user)
         db.session.commit()
         
         return jsonify({
             'success': True,
             'data': user.to_dict(include_relations=False)
         }), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@database_bp.route('/api/databases/<int:db_id>/users/<int:user_id>', methods=['DELETE'])
-@token_required
-def delete_database_user(current_user, db_id, user_id):
-    database = Database.query.get_or_404(db_id)
-    
-    # Ownership check
-    if not _is_admin(current_user) and database.owner_id != current_user.id:
-        return jsonify({'success': False, 'error': 'Access denied'}), 403
-    
-    user = DatabaseUser.query.filter_by(id=user_id, database_id=db_id).first_or_404()
-    
-    try:
-        # Delete user in MySQL
-        mysql_service.delete_user(user.username, user.host)
-        
-        # Delete from our database
-        db.session.delete(user)
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Database user deleted successfully'
-        })
     except Exception as e:
         db.session.rollback()
         return jsonify({
@@ -416,6 +475,7 @@ def restore_database_backup(current_user, id, backup_id):
         return jsonify({'error': str(e)}), 500
 
 @database_bp.route('/api/mysql-root-connect', methods=['POST'])
+@token_required
 @admin_required
 def mysql_root_connect(current_user):
     data = request.get_json()
@@ -436,6 +496,64 @@ def mysql_root_connect(current_user):
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+@database_bp.route('/api/databases/<int:db_id>/users/<int:user_id>', methods=['POST'])
+@token_required
+def associate_database_user(current_user, db_id, user_id):
+    """Associate an existing user with a database."""
+    database = Database.query.get_or_404(db_id)
+    
+    # Ownership/Admin check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+        
+    user = DatabaseUser.query.get_or_404(user_id)
+    
+    # Check if association already exists
+    if user in database.users:
+        return jsonify({'success': False, 'error': 'User is already associated with this database'}), 400
+        
+    try:
+        # Grant privileges for the specific database in MySQL
+        mysql_service.grant_privileges(
+            user.username,
+            database.name,
+            privileges=user.privileges, # Use user's default privileges
+            host=user.host
+        )
+        
+        # Create the association in our database
+        database.users.append(user)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully associated user {user.username} with database {database.name}'
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@database_bp.route('/api/database-users', methods=['GET'])
+@token_required
+def get_all_database_users(current_user):
+    if not _is_admin(current_user):
+        # Non-admins can't see all database users for security reasons
+        # In a future update, we could show users associated with their owned databases
+        return jsonify({'success': False, 'error': 'Admin privileges required'}), 403
+    
+    try:
+        users = DatabaseUser.query.order_by(DatabaseUser.username).all()
+        return jsonify({
+            'success': True,
+            'data': [user.to_dict(include_relations=False) for user in users]
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 
 @database_bp.route('/api/databases/<int:id>/phpmyadmin', methods=['GET'])
 @token_required
@@ -459,24 +577,29 @@ def get_phpmyadmin_url(current_user, id):
         # Get database user info (first user if multiple)
         db_user = database.users[0] if database.users else None
         
-        if not db_user:
-            return jsonify({
-                'success': False,
-                'error': 'No database user found for this database'
-            }), 400
-        
         # Generate phpMyAdmin URL
-        url = phpmyadmin_service.get_phpmyadmin_url(
-            database_name=database.name,
-            username=db_user.username
-        )
+        if db_user:
+            url = phpmyadmin_service.get_phpmyadmin_url(
+                database_name=database.name,
+                username=db_user.username
+            )
+            need_login = False
+            username = db_user.username
+        else:
+            # Fallback: return URL without username so user can login manually
+            url = phpmyadmin_service.get_phpmyadmin_url(
+                database_name=database.name
+            )
+            need_login = True
+            username = None
         
         return jsonify({
             'success': True,
             'data': {
                 'url': url,
                 'database_name': database.name,
-                'username': db_user.username
+                'username': username,
+                'need_login': need_login
             }
         })
         
@@ -508,15 +631,26 @@ def get_phpmyadmin_auto_login(current_user, id):
         # Get database user info
         db_user = database.users[0] if database.users else None
         
-        if not db_user:
-            return jsonify({
-                'success': False,
-                'error': 'No database user found for this database'
-            }), 400
-        
         # Get password from request (optional - for auto-login)
         data = request.get_json() or {}
         user_password = data.get('password', '')
+        
+        if not db_user or not user_password:
+            # Fallback: return regular URL; caller must login manually
+            url = phpmyadmin_service.get_phpmyadmin_url(
+                database_name=database.name,
+                username=db_user.username if db_user else None
+            )
+            return jsonify({
+                'success': True,
+                'data': {
+                    'url': url,
+                    'database_name': database.name,
+                    'username': db_user.username if db_user else None,
+                    'auto_login': False,
+                    'need_login': True
+                }
+            })
         
         # Generate auto-login URL
         url = phpmyadmin_service.create_auto_login_url(
@@ -531,7 +665,8 @@ def get_phpmyadmin_auto_login(current_user, id):
                 'url': url,
                 'database_name': database.name,
                 'username': db_user.username,
-                'auto_login': True
+                'auto_login': True,
+                'need_login': False
             }
         })
         

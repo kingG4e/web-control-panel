@@ -1,20 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { signup } from '../services/api';
-import BaseModal, { ModalSection, ModalSectionTitle, ModalButton } from '../components/modals/BaseModal';
-
-// Minimal transition styles - only what's needed
-const transitionStyles = `
-  .smooth-transition {
-    transition: all 0.2s ease;
-  }
-`;
-
-// Inject minimal styles
-if (typeof document !== 'undefined') {
-  const styleElement = document.createElement('style');
-  styleElement.textContent = transitionStyles;
-  document.head.appendChild(styleElement);
-}
+import BaseModal, { ModalSection, ModalButton } from '../components/modals/BaseModal';
+import { FaSync, FaSearch, FaCheck, FaTimes, FaSpinner, FaChevronDown, FaEdit } from 'react-icons/fa';
+import { CgSpinner } from 'react-icons/cg';
 
 const AdminApprovals = () => {
   const [items, setItems] = useState([]);
@@ -31,6 +19,10 @@ const AdminApprovals = () => {
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectTargetId, setRejectTargetId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [editFormData, setEditFormData] = useState({});
+
   const rejectTarget = useMemo(() => items.find((i) => i.id === rejectTargetId) || null, [items, rejectTargetId]);
 
   const load = async () => {
@@ -55,7 +47,7 @@ const AdminApprovals = () => {
   useEffect(() => { 
     const loadWithTransition = async () => {
       setIsTransitioning(true);
-      await new Promise(resolve => setTimeout(resolve, 150)); // Small delay for smooth transition
+      await new Promise(resolve => setTimeout(resolve, 150));
       await load();
       setIsTransitioning(false);
     };
@@ -75,6 +67,59 @@ const AdminApprovals = () => {
         next.delete(id);
         return next;
       });
+    }
+  };
+
+  const openEditModal = (item) => {
+    setEditTarget(item);
+    setEditFormData({
+      username: item.username,
+      email: item.email,
+      domain: item.domain,
+      full_name: item.full_name,
+      storage_quota_mb: item.storage_quota_mb,
+      options: {
+          want_ssl: item.want_ssl,
+          want_dns: item.want_dns,
+          want_email: item.want_email,
+          want_mysql: item.want_mysql
+      }
+    });
+    setEditModalOpen(true);
+  };
+
+  const handleEditFormChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    if (name.startsWith('options.')) {
+        const optionName = name.split('.')[1];
+        setEditFormData(prev => ({
+            ...prev,
+            options: { ...prev.options, [optionName]: checked }
+        }));
+    } else {
+        setEditFormData(prev => ({ ...prev, [name]: value }));
+    }
+  };
+
+  const confirmEdit = async (e) => {
+    e.preventDefault();
+    if (!editTarget) return;
+
+    setProcessingIds(prev => new Set([...prev, editTarget.id]));
+    try {
+        const { data } = await signup.update(editTarget.id, editFormData);
+        // Update item in local state to reflect changes immediately
+        setItems(prevItems => prevItems.map(item => item.id === data.id ? data : item));
+        setEditModalOpen(false);
+        setEditTarget(null);
+    } catch (e) {
+        setError(e.message || 'Failed to update request');
+    } finally {
+        setProcessingIds(prev => {
+            const next = new Set(prev);
+            next.delete(editTarget.id);
+            return next;
+        });
     }
   };
 
@@ -129,301 +174,212 @@ const AdminApprovals = () => {
   const endIdx = Math.min(startIdx + pageSize, filteredItems.length);
   const visibleItems = filteredItems.slice(startIdx, endIdx);
 
+  const StatusBadge = ({ status }) => {
+    const statusClasses = {
+      pending: 'badge-warning',
+      approved: 'badge-success',
+      rejected: 'badge-error',
+    };
+    return <span className={`badge ${statusClasses[status] || ''}`}>{status}</span>;
+  };
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--primary-bg)' }}>
-      <div className="max-w-7xl mx-auto p-6">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-semibold mb-2" style={{ color: 'var(--primary-text)' }}>
-            Signup Approvals
-          </h1>
-          <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-            Review and approve system access requests
-          </p>
-        </div>
+    <div className="bg-[var(--primary-bg)] text-[var(--primary-text)] p-0">
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold mb-2 text-[var(--primary-text)]">Signup Approvals</h1>
+        <p className="text-sm text-[var(--secondary-text)]">
+          Review and process system access requests from new users.
+        </p>
+      </div>
 
-        {/* Content */}
-        <div className="space-y-6">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div className="inline-flex rounded-lg border border-[var(--border-color)] bg-[var(--secondary-bg)] p-0.5">
-                {['pending','approved','rejected'].map((key) => {
-                  const labelMap = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' };
-                  const active = filter === key;
-                  return (
-                    <button
-                      key={key}
-                      aria-pressed={active}
-                      onClick={() => { setFilter(key); setPage(1); }}
-                      className={`px-3 py-1.5 text-xs rounded-md transition-colors duration-200
-                        ${active
-                          ? 'bg-[var(--card-bg)] text-[var(--primary-text)] border border-[var(--border-color)] shadow-sm'
-                          : 'text-[var(--secondary-text)] hover:text-[var(--primary-text)]'}
-                        ${isTransitioning && active ? 'opacity-70' : ''}
-                      `}
-                    >
-                      {labelMap[key]}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <div className="flex items-center space-x-2">
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search user, domain, or email"
-                  className="px-3 py-2 rounded-lg border bg-[var(--input-bg)] text-[var(--primary-text)] border-[var(--border-color)]
-                  focus:outline-none focus:ring-2 focus:ring-[var(--accent-color)]/30 focus:border-[var(--accent-color)] placeholder:text-[var(--secondary-text)]"
-                />
-                <select 
-                  value={pageSize} 
-                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                  className="px-3 py-2 rounded-lg border bg-[var(--input-bg)] text-[var(--primary-text)] border-[var(--border-color)] text-sm
-                  focus:outline-none focus:ring-2 focus:ring-[var(--accent-color)]/30 focus:border-[var(--accent-color)]"
+      {/* Controls and Filters */}
+      <div className="card mb-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="inline-flex rounded-lg border border-[var(--border-color)] bg-[var(--secondary-bg)] p-1">
+            {['pending', 'approved', 'rejected'].map((key) => {
+              const labelMap = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' };
+              const active = filter === key;
+              return (
+                <button
+                  key={key}
+                  aria-pressed={active}
+                  onClick={() => { setFilter(key); setPage(1); }}
+                  className={`px-4 py-1.5 text-sm rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[var(--focus-border)] focus:ring-offset-2 focus:ring-offset-[var(--secondary-bg)]
+                    ${active
+                      ? 'bg-[var(--accent-color)] text-white shadow-sm'
+                      : 'text-[var(--secondary-text)] hover:bg-[var(--hover-bg)] hover:text-[var(--primary-text)]'}
+                  `}
                 >
-                  <option value={10}>10/page</option>
-                  <option value={20}>20/page</option>
-                  <option value={50}>50/page</option>
-                </select>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button 
-                  onClick={load}
-                  className="px-3 py-2 border border-[var(--border-color)] rounded-lg hover:bg-[var(--hover-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-color)]/30"
-                >
-                  Refresh
+                  {labelMap[key]}
                 </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-grow">
+              <FaSearch className="absolute top-1/2 left-3 -translate-y-1/2 text-[var(--tertiary-text)]" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search requests..."
+                className="input-field pl-10 w-full"
+              />
+            </div>
+            <button 
+              onClick={load}
+              className="btn-secondary flex items-center gap-2 px-3 py-2"
+              disabled={loading}
+            >
+              <FaSync className={loading ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-[var(--danger-bg)] border border-[var(--error-border)] text-[var(--error-text)] px-4 py-3 rounded-lg flex items-center justify-between mb-6">
+          <span>{String(error)}</span>
+          <button onClick={load} className="btn-secondary border-[var(--error-border)] text-[var(--error-text)] hover:bg-[var(--error-bg)]">
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Loading Skeleton */}
+      {loading ? (
+        <div className="space-y-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="card p-4 animate-pulse">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="w-10 h-10 bg-[var(--border-color)] rounded-full" />
+                  <div>
+                    <div className="h-4 w-48 bg-[var(--border-color)] rounded" />
+                    <div className="mt-2 h-3 w-64 bg-[var(--border-color)] rounded" />
+                  </div>
+                </div>
+                <div className="h-8 w-24 bg-[var(--border-color)] rounded-lg" />
               </div>
             </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          {/* List */}
+          <div className="space-y-4">
+            {visibleItems.map((r) => (
+              <div key={r.id} className="card p-0 overflow-hidden">
+                <div 
+                  className="flex items-center justify-between p-4 cursor-pointer hover:bg-[var(--hover-bg)]"
+                  onClick={() => toggleExpand(r.id)}
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className={`w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-[var(--secondary-bg)]`}>
+                        <span className="text-xl font-bold text-[var(--secondary-text)]">
+                            {r.username ? r.username.charAt(0).toUpperCase() : '?'}
+                        </span>
+                    </div>
+                    <div>
+                      <div className="font-medium text-[var(--primary-text)]">{r.username || 'No Username'}</div>
+                      <div className="text-sm text-[var(--secondary-text)]">{r.domain || 'No domain specified'}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <StatusBadge status={r.status} />
+                    <FaChevronDown className={`text-[var(--secondary-text)] transition-transform duration-300 ${expanded[r.id] ? 'rotate-180' : ''}`} />
+                  </div>
+                </div>
+
+                {expanded[r.id] && (
+                  <div className="border-t border-[var(--border-color)] p-4 bg-[var(--secondary-bg)]">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                      <div><strong className="text-[var(--secondary-text)]">Full Name:</strong> {r.full_name || '-'}</div>
+                      <div><strong className="text-[var(--secondary-text)]">Email:</strong> {r.email || '-'}</div>
+                      <div><strong className="text-[var(--secondary-text)]">Storage:</strong> {r.storage_quota_mb ? `${r.storage_quota_mb} MB` : '-'}</div>
+                      <div><strong className="text-[var(--secondary-text)]">Services:</strong> {['SSL','DNS','Email','MySQL'].filter((_, i) => [r.want_ssl, r.want_dns, r.want_email, r.want_mysql][i]).join(', ') || 'None'}</div>
+                      <div><strong className="text-[var(--secondary-text)]">Submitted:</strong> {r.created_at ? new Date(r.created_at).toLocaleString() : '-'}</div>
+                       {r.approved_at && (
+                        <div><strong className="text-[var(--secondary-text)]">Processed:</strong> {new Date(r.approved_at).toLocaleString()}</div>
+                      )}
+                    </div>
+                    {r.admin_comment && (
+                      <div className="mt-4 pt-4 border-t border-[var(--border-color)]">
+                        <strong className="text-[var(--secondary-text)]">Note:</strong> {r.admin_comment}
+                      </div>
+                    )}
+                    {r.status === 'pending' && (
+                       <div className="mt-4 pt-4 border-t border-[var(--border-color)] flex justify-end gap-3">
+                          <button 
+                            className="flex items-center justify-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-transparent border border-[var(--secondary-text)] text-[var(--secondary-text)] hover:bg-[var(--hover-bg)] transition-colors duration-200"
+                            onClick={(e) => { e.stopPropagation(); openEditModal(r); }}
+                            disabled={processingIds.has(r.id)}
+                           >
+                              <FaEdit /> Edit
+                           </button>
+                          <button 
+                            className="flex items-center justify-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-transparent border border-[var(--danger-color)] text-[var(--danger-color)] hover:bg-[var(--danger-bg)] transition-colors duration-200" 
+                            onClick={(e) => { e.stopPropagation(); openRejectModal(r.id); }}
+                            disabled={processingIds.has(r.id)}
+                          >
+                             <FaTimes /> Reject
+                          </button>
+                           <button 
+                            className="flex items-center justify-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-[var(--success-color)] text-white hover:opacity-90 transition-opacity duration-200"
+                            onClick={(e) => { e.stopPropagation(); onApprove(r.id); }}
+                            disabled={processingIds.has(r.id)}
+                          >
+                            {processingIds.has(r.id) ? (
+                              <>
+                                <CgSpinner className="animate-spin" /> Approving...
+                              </>
+                            ) : (
+                               <><FaCheck/> Approve</>
+                            )}
+                          </button>
+                       </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
 
-          {error && (
-            <div className="p-6 border border-red-300 bg-red-50 text-red-700 rounded-lg flex items-center justify-between">
-              <span className="text-sm">{String(error)}</span>
-              <button 
-                onClick={load} 
-                className="px-3 py-1.5 text-xs rounded border border-red-300 hover:bg-red-100"
+          {filteredItems.length === 0 && (
+            <div className="card text-center py-12">
+              <p className="text-[var(--secondary-text)]">No items match your filters.</p>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between pt-6 text-sm">
+              <button
+                className="btn-secondary"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
               >
-                Retry
+                Previous
+              </button>
+              <div className="text-[var(--secondary-text)]">Page {page} of {pageCount}</div>
+              <button
+                className="btn-secondary"
+                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                disabled={page === pageCount}
+              >
+                Next
               </button>
             </div>
           )}
-
-
-          {loading || isTransitioning ? (
-            <div className="space-y-6" style={{ opacity: isTransitioning ? 0.5 : 1 }}>
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6 animate-pulse">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-4 h-4 bg-[var(--secondary-bg)] rounded" />
-                      <div>
-                        <div className="h-4 w-48 bg-[var(--secondary-bg)] rounded" />
-                        <div className="mt-2 h-3 w-64 bg-[var(--secondary-bg)] rounded" />
-                      </div>
-                    </div>
-                    <div className="h-6 w-24 bg-[var(--secondary-bg)] rounded" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-6 transition-opacity duration-300" style={{ opacity: isTransitioning ? 0.5 : 1 }}>
-              <div className="flex items-center justify-between text-xs text-[var(--secondary-text)] pb-3">
-                <div className="flex items-center gap-2" />
-                <div>
-                  Showing {filteredItems.length === 0 ? 0 : startIdx + 1}-{endIdx} of {filteredItems.length}
-                </div>
-              </div>
-
-              <div className="max-h-[60vh] overflow-y-auto pr-1">
-              {visibleItems.map((r, index) => (
-                <div 
-                  key={r.id} 
-                  className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6 hover:border-[var(--accent-color)]/30 transition-colors duration-200 mb-4"
-                  style={{
-                    opacity: isTransitioning ? 0.5 : 1,
-                    transition: 'opacity 0.3s ease, border-color 0.2s ease'
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className={`w-3 h-3 rounded-full flex-shrink-0
-                        ${r.status === 'pending' ? 'bg-yellow-500' : ''}
-                        ${r.status === 'approved' ? 'bg-green-500' : ''}
-                        ${r.status === 'rejected' ? 'bg-red-500' : ''}
-                      `}></div>
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <h3 className="font-medium text-[var(--primary-text)]">{r.username}</h3>
-                          <span className="text-[var(--secondary-text)]">•</span>
-                          <span className="font-medium text-[var(--primary-text)]">{r.domain || 'No domain'}</span>
-                        </div>
-                        <div className="flex items-center space-x-4 text-xs text-[var(--secondary-text)] mt-1">
-                          {r.full_name && (
-                            <span>{r.full_name}</span>
-                          )}
-                          <span>{r.email || 'No email'}</span>
-                          {(r.want_ssl || r.want_dns || r.want_email || r.want_mysql) && (
-                            <div className="flex space-x-1">
-                              {r.want_ssl && <span className="w-1.5 h-1.5 rounded-full bg-blue-500" title="SSL"></span>}
-                              {r.want_dns && <span className="w-1.5 h-1.5 rounded-full bg-purple-500" title="DNS"></span>}
-                              {r.want_email && <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="Email"></span>}
-                              {r.want_mysql && <span className="w-1.5 h-1.5 rounded-full bg-orange-500" title="MySQL"></span>}
-                            </div>
-                          )}
-                          {r.storage_quota_mb && (
-                            <span>{r.storage_quota_mb} MB</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center space-x-2">
-                      {r.status === 'pending' ? (
-                        <div className="flex space-x-2">
-                          <button 
-                            className="px-3 py-1.5 text-xs bg-green-500 text-white rounded hover:bg-green-600 transition-colors duration-200 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-green-500/30" 
-                            onClick={() => onApprove(r.id)}
-                            disabled={processingIds.has(r.id) || loading}
-                          >
-                            {processingIds.has(r.id) ? (
-                              <span className="flex items-center">
-                                <svg className="animate-spin -ml-1 mr-1 h-3 w-3" fill="none" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                                Approving…
-                              </span>
-                            ) : (
-                              'Approve'
-                            )}
-                          </button>
-                          <button 
-                            className="px-3 py-1.5 text-xs border border-red-500 text-red-500 rounded hover:bg-red-500/10 transition-colors duration-200 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-500/20" 
-                            onClick={() => openRejectModal(r.id)}
-                            disabled={processingIds.has(r.id) || loading}
-                          >
-                            {processingIds.has(r.id) ? (
-                              <span className="flex items-center">
-                                <svg className="animate-spin -ml-1 mr-1 h-3 w-3" fill="none" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                                Rejecting…
-                              </span>
-                            ) : (
-                              'Reject'
-                            )}
-                          </button>
-                        </div>
-                      ) : (
-                        <span className={`px-2 py-1 rounded text-xs font-medium transition-colors duration-200
-                          ${r.status === 'approved' ? 'text-green-600 bg-green-100' : ''}
-                          ${r.status === 'rejected' ? 'text-red-600 bg-red-100' : ''}
-                        `}>
-                          {r.status === 'approved' && 'Approved'}
-                          {r.status === 'rejected' && 'Rejected'}
-                        </span>
-                      )}
-                      <button 
-                        onClick={() => toggleExpand(r.id)} 
-                        className="px-2 py-1 text-xs text-[var(--secondary-text)] hover:text-[var(--primary-text)] inline-flex items-center gap-1 focus:outline-none transition-colors duration-200"
-                      >
-                        <span>{expanded[r.id] ? 'Hide details' : 'Show details'}</span>
-                        <svg 
-                          aria-hidden="true" 
-                          viewBox="0 0 20 20" 
-                          className={`w-3 h-3 transition-transform duration-200 ${expanded[r.id] ? 'rotate-180' : ''}`}
-                        >
-                          <path fill="currentColor" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.17l3.71-2.94a.75.75 0 1 1 .94 1.16l-4.24 3.36a.75.75 0 0 1-.94 0L5.21 8.39a.75.75 0 0 1 .02-1.18Z" />
-                        </svg>
-                      </button>
-                    </div>
-                </div>
-
-                  {expanded[r.id] && (
-                    <div className="mt-3 border-t border-[var(--border-color)] pt-3 transition-opacity duration-200">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                        <div className="p-3 bg-[var(--secondary-bg)] rounded">
-                          <div className="text-[var(--secondary-text)] text-xs mb-1">Username</div>
-                          <div className="text-[var(--primary-text)] break-all">{r.username || '-'}</div>
-                        </div>
-                        <div className="p-3 bg-[var(--secondary-bg)] rounded">
-                          <div className="text-[var(--secondary-text)] text-xs mb-1">Full Name</div>
-                          <div className="text-[var(--primary-text)] break-all">{r.full_name || '-'}</div>
-                        </div>
-                        <div className="p-3 bg-[var(--secondary-bg)] rounded">
-                          <div className="text-[var(--secondary-text)] text-xs mb-1">Domain</div>
-                          <div className="text-[var(--primary-text)] break-all">{r.domain || '-'}</div>
-                        </div>
-                        <div className="p-3 bg-[var(--secondary-bg)] rounded">
-                          <div className="text-[var(--secondary-text)] text-xs mb-1">Services</div>
-                          <div className="text-[var(--primary-text)]">{['SSL','DNS Zone','Email','MySQL'].filter((label, i) => [r.want_ssl, r.want_dns, r.want_email, r.want_mysql][i]).join(', ') || '-'}</div>
-                        </div>
-                        <div className="p-3 bg-[var(--secondary-bg)] rounded">
-                          <div className="text-[var(--secondary-text)] text-xs mb-1">Storage</div>
-                          <div className="text-[var(--primary-text)]">{r.storage_quota_mb ? `${r.storage_quota_mb} MB` : '-'}</div>
-                        </div>
-                      </div>
-                      <div className="mt-3">
-                        <div className="text-xs text-[var(--secondary-text)] mb-2">Timeline</div>
-                        <ol className="text-xs space-y-1 text-[var(--primary-text)]">
-                          <li>Submitted: {r.created_at ? new Date(r.created_at).toLocaleString('en-US') : '-'}</li>
-                          {r.approved_at && (
-                            <li>Processed: {new Date(r.approved_at).toLocaleString('en-US')}</li>
-                          )}
-                        </ol>
-                      </div>
-                      {r.admin_comment && (
-                        <div className="mt-3 p-2 bg-[var(--secondary-bg)] rounded text-xs">
-                          <span className="text-[var(--secondary-text)]">Note: </span>
-                          <span className="text-[var(--primary-text)]">{r.admin_comment}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-              </div>
-            ))}
-              </div>
-
-              {filteredItems.length === 0 && (
-                <div className="p-12 bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl text-[var(--secondary-text)] text-center">
-                  No items match your filters.
-                </div>
-              )}
-
-              {filteredItems.length > 0 && (
-                <div className="flex items-center justify-between pt-4">
-                  <button
-                    className="px-3 py-1.5 text-xs border border-[var(--border-color)] rounded disabled:opacity-50"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  >
-                    Previous
-                  </button>
-                  <div className="text-xs text-[var(--secondary-text)]">Page {page} of {pageCount}</div>
-                  <button
-                    className="px-3 py-1.5 text-xs border border-[var(--border-color)] rounded disabled:opacity-50"
-                    onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-                    disabled={page === pageCount}
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+        </>
+      )}
+      
       {/* Reject Modal */}
       <BaseModal
         isOpen={rejectModalOpen}
         onClose={() => setRejectModalOpen(false)}
-        title="Reject request"
+        title="Reject Request"
         maxWidth="max-w-md"
         footer={(
           <div className="flex justify-end gap-2">
@@ -436,41 +392,101 @@ const AdminApprovals = () => {
             <ModalButton
               variant="danger"
               onClick={confirmReject}
-              disabled={processingIds.has(rejectTargetId) || loading}
+              disabled={processingIds.has(rejectTargetId)}
             >
-              {processingIds.has(rejectTargetId) ? 'Rejecting…' : 'Confirm reject'}
+              {processingIds.has(rejectTargetId) ? 'Rejecting…' : 'Confirm Reject'}
             </ModalButton>
           </div>
         )}
       >
         <ModalSection>
-          <div className="space-y-3">
+          <div className="space-y-4">
             {rejectTarget && (
-              <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                Rejecting <span className="font-medium" style={{ color: 'var(--primary-text)' }}>{rejectTarget.username}</span>
-                {rejectTarget.domain && (
-                  <>
-                    <span className="mx-1">•</span>
-                    <span className="font-medium" style={{ color: 'var(--primary-text)' }}>{rejectTarget.domain}</span>
-                  </>
-                )}
+              <div className="text-sm text-[var(--secondary-text)]">
+                You are about to reject <strong className="text-[var(--primary-text)]">{rejectTarget.username}</strong>'s request.
               </div>
             )}
-            <label className="block text-sm mb-1" style={{ color: 'var(--secondary-text)' }}>
-              Reason (optional)
-            </label>
-            <textarea
-              rows={4}
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="Add a note for the requester..."
-              className="w-full px-3 py-2 rounded-lg border bg-[var(--input-bg)] text-[var(--primary-text)] border-[var(--border-color)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-color)]/30 focus:border-[var(--accent-color)]"
-            />
+            <div>
+              <label htmlFor="rejectReason" className="block text-sm mb-2 text-[var(--secondary-text)]">
+                Reason (optional)
+              </label>
+              <textarea
+                id="rejectReason"
+                rows={4}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Provide a reason for the rejection..."
+                className="input-field w-full"
+              />
+            </div>
           </div>
+        </ModalSection>
+      </BaseModal>
+
+      {/* Edit Modal */}
+      <BaseModal
+        isOpen={editModalOpen}
+        onClose={() => setEditModalOpen(false)}
+        title="Edit Request"
+        maxWidth="max-w-2xl"
+        footer={(
+          <div className="flex justify-end gap-2">
+            <ModalButton variant="secondary" onClick={() => setEditModalOpen(false)}>
+              Cancel
+            </ModalButton>
+            <ModalButton variant="primary" onClick={confirmEdit} disabled={processingIds.has(editTarget?.id)}>
+              {processingIds.has(editTarget?.id) ? 'Saving...' : 'Save Changes'}
+            </ModalButton>
+          </div>
+        )}
+      >
+        <ModalSection>
+            {editTarget && (
+                 <form onSubmit={confirmEdit} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <InputField label="Username" name="username" value={editFormData.username} onChange={handleEditFormChange} />
+                        <InputField label="Domain" name="domain" value={editFormData.domain} onChange={handleEditFormChange} />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <InputField label="Full Name" name="full_name" value={editFormData.full_name} onChange={handleEditFormChange} />
+                        <InputField label="Email" name="email" value={editFormData.email} onChange={handleEditFormChange} type="email" />
+                    </div>
+                    <InputField label="Storage Quota (MB)" name="storage_quota_mb" value={editFormData.storage_quota_mb} onChange={handleEditFormChange} type="number" />
+                    <div className="pt-2">
+                        <label className="block text-sm mb-2 text-[var(--secondary-text)]">Requested Services</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            <CheckboxField label="SSL" name="options.want_ssl" checked={editFormData.options?.want_ssl} onChange={handleEditFormChange} />
+                            <CheckboxField label="DNS" name="options.want_dns" checked={editFormData.options?.want_dns} onChange={handleEditFormChange} />
+                            <CheckboxField label="Email" name="options.want_email" checked={editFormData.options?.want_email} onChange={handleEditFormChange} />
+                            <CheckboxField label="MySQL" name="options.want_mysql" checked={editFormData.options?.want_mysql} onChange={handleEditFormChange} />
+                        </div>
+                    </div>
+                 </form>
+            )}
         </ModalSection>
       </BaseModal>
     </div>
   );
 };
+
+const InputField = ({ label, name, ...props }) => (
+    <div>
+        <label htmlFor={name} className="block text-sm mb-2 text-[var(--secondary-text)]">{label}</label>
+        <input id={name} name={name} {...props} className="input-field w-full" />
+    </div>
+);
+
+const CheckboxField = ({ label, name, checked, onChange }) => (
+    <label className="flex items-center space-x-2 p-2 rounded-md hover:bg-[var(--hover-bg)] cursor-pointer">
+        <input
+            type="checkbox"
+            name={name}
+            checked={!!checked}
+            onChange={onChange}
+            className="form-checkbox h-5 w-5 text-[var(--accent-color)] bg-[var(--input-bg)] border-[var(--border-color)] rounded focus:ring-[var(--focus-border)]"
+        />
+        <span className="text-[var(--primary-text)]">{label}</span>
+    </label>
+);
 
 export default AdminApprovals;

@@ -1,261 +1,108 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { quotaApi } from '../services/quotaApi';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-
-const QuotaUsageBar = ({ usage, quota, label, color = 'blue' }) => {
-    if (!quota || quota <= 0) return <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>No quota set</div>;
-
-    const percentage = Math.min((usage / quota) * 100, 100);
-    const barColor = percentage > 95 ? 'bg-red-500' :
-                    percentage > 80 ? 'bg-yellow-500' :
-                    // fallback to blue; dynamic tailwind color string kept minimal
-                    (color === 'green' ? 'bg-green-500' : 'bg-blue-500');
-
-    return (
-        <div className="space-y-1">
-            <div className="flex justify-between text-sm">
-                <span style={{ color: 'var(--secondary-text)' }}>{label}</span>
-                <span className="font-medium" style={{ color: 'var(--primary-text)' }}>
-                    {usage.toFixed(1)} MB / {quota} MB
-                </span>
-            </div>
-            <div className="w-full rounded-full h-2" style={{ backgroundColor: 'var(--secondary-bg)' }}>
-                <div
-                    className={`h-2 rounded-full transition-all duration-300 ${barColor}`}
-                    style={{ width: `${percentage}%` }}
-                ></div>
-            </div>
-            <div className="text-xs text-right" style={{ color: 'var(--secondary-text)' }}>
-                {percentage.toFixed(1)}% used
-            </div>
-        </div>
-    );
-};
-
-const QuotaAlert = ({ alert, type }) => {
-    const alertVars = {
-        warning: { border: '#facc15', text: '#92400e' },
-        critical: { border: '#fb923c', text: '#7c2d12' },
-        exceeded: { border: '#f87171', text: '#7f1d1d' }
-    };
-    const icon = type === 'warning' ? '⚠️' : type === 'critical' ? '🚨' : '❌';
-    const colors = alertVars[type] || alertVars.warning;
-
-    return (
-        <div className="p-3 rounded-lg border" style={{ backgroundColor: 'var(--card-bg)', borderColor: colors.border }}>
-            <div className="flex items-center space-x-2">
-                <span className="text-lg" style={{ color: colors.text }}>{icon}</span>
-                <div>
-                    <div className="font-medium" style={{ color: 'var(--primary-text)' }}>{alert.username}</div>
-                    <div className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                        {alert.usage_mb.toFixed(1)} MB used
-                        {alert.quota_mb && ` (${((alert.usage_percent || 0).toFixed(1))}% of ${alert.quota_mb} MB)`}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};
+import { quotaApi } from '../services/quotaApi';
+import { FolderIcon } from '@heroicons/react/24/outline';
 
 const QuotaDashboard = () => {
     const { user } = useAuth();
     const [quotaData, setQuotaData] = useState(null);
-    const [alerts, setAlerts] = useState({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [refreshInterval, setRefreshInterval] = useState(null);
-
-    const fetchQuotaData = useCallback(async () => {
-        try {
-            setLoading(true);
-            const data = await quotaApi.getUserQuotaUsage(user.username);
-            setQuotaData(data);
-            
-            // Fetch alerts if admin
-            if (user.is_admin || user.role === 'admin') {
-                const alertsData = await quotaApi.getQuotaAlerts();
-                setAlerts(alertsData.alerts);
-            }
-        } catch (err) {
-            setError(err.response?.data?.error || err.message);
-        } finally {
-            setLoading(false);
-        }
-    }, [user.username, user.is_admin, user.role]);
-
-    const startAutoRefresh = useCallback(() => {
-        // Refresh every 30 seconds
-        const interval = setInterval(fetchQuotaData, 30000);
-        setRefreshInterval(interval);
-        return () => clearInterval(interval);
-    }, [fetchQuotaData]);
 
     useEffect(() => {
-        fetchQuotaData();
-        const cleanup = startAutoRefresh();
-        return cleanup;
-    }, [fetchQuotaData, startAutoRefresh]);
+        const fetchQuota = async () => {
+            if (!user?.username) return;
 
-    const handleManualRefresh = () => {
-        fetchQuotaData();
+            try {
+                setLoading(true);
+                const data = await quotaApi.getUserQuotaUsage(user.username);
+                if (data && data.storage) {
+                    setQuotaData(data.storage);
+                } else {
+                    setError('Quota data is not available.');
+                }
+            } catch (err) {
+                setError(err.response?.data?.error || 'Could not fetch quota information.');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchQuota();
+    }, [user]);
+
+    const getUsageColor = (percentage) => {
+        if (percentage > 95) return '#ef4444'; // red-500
+        if (percentage > 80) return '#f59e0b'; // yellow-500
+        return '#22c55e'; // green-500
     };
 
-    if (loading && !quotaData) {
+    if (loading) {
         return (
-            <div className="min-h-screen" style={{ backgroundColor: 'var(--primary-bg)' }}>
-                <div className="max-w-7xl mx-auto p-6">
-                    <div className="flex items-center justify-center p-8">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: 'var(--accent-color)' }}></div>
-                    </div>
-                </div>
+            <div className="rounded-xl border p-6 h-full flex items-center justify-center" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+                <p style={{ color: 'var(--secondary-text)' }}>Loading Quota...</p>
             </div>
         );
     }
-
-    if (error) {
-        return (
-            <div className="min-h-screen" style={{ backgroundColor: 'var(--primary-bg)' }}>
-                <div className="max-w-7xl mx-auto p-6">
-                    <div className="p-4 border rounded-lg" style={{ backgroundColor: 'var(--card-bg)', borderColor: '#ef4444' }}>
-                        <div style={{ color: '#b91c1c' }}>
-                            <strong>Error:</strong> {error}
-                        </div>
-                        <button
-                            onClick={handleManualRefresh}
-                            className="mt-2 text-sm underline"
-                            style={{ color: '#b91c1c' }}
-                        >
-                            Try again
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
+    
+    // Do not render the card if there is an error or no quota is set
+    if (error || !quotaData || quotaData.quota_soft_mb === null) {
+        return null;
     }
 
-    if (!quotaData) {
-        return (
-            <div className="text-center p-8 text-gray-500">
-                No quota data available
-            </div>
-        );
-    }
-
-    const { storage, email_accounts, summary } = quotaData;
+    const usagePercent = quotaData.quota_usage_percent || 0;
+    const strokeColor = getUsageColor(usagePercent);
 
     return (
-        <div className="min-h-screen" style={{ backgroundColor: 'var(--primary-bg)' }}>
-            <div className="max-w-7xl mx-auto p-6">
-                {/* Header */}
-                <div className="mb-8 flex items-center justify-between">
-                    <div>
-                        <h2 className="text-2xl font-semibold mb-2" style={{ color: 'var(--primary-text)' }}>Quota Dashboard</h2>
-                        <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                            Last updated: {new Date(summary.last_updated).toLocaleString()}
-                        </p>
-                    </div>
-                    <button
-                        onClick={handleManualRefresh}
-                        className="px-3 py-2 text-sm rounded-lg border hover:bg-[var(--hover-bg)] focus:outline-none focus:ring-2"
-                        style={{ color: 'var(--primary-text)', borderColor: 'var(--border-color)' }}
-                    >
-                        Refresh
-                    </button>
-                </div>
-
-                {/* Content */}
-                <div className="space-y-6">
-                    {/* Storage Quota */}
-                    <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                        <h3 className="text-lg font-medium mb-4" style={{ color: 'var(--primary-text)' }}>Storage Usage</h3>
-                        <QuotaUsageBar
-                            usage={storage.usage_mb}
-                            quota={storage.quota_soft_mb}
-                            label="Home Directory"
-                            color="blue"
+        <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+            <div className="flex items-center mb-4">
+                <FolderIcon className="w-6 h-6 mr-3" style={{ color: '#60a5fa' }} />
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--primary-text)' }}>
+                    Disk Quota
+                </h3>
+            </div>
+            <div className="flex items-center justify-center space-x-8">
+                <div className="relative w-32 h-32">
+                    <svg className="w-full h-full" viewBox="0 0 36 36">
+                        <path
+                            d="M18 2.0845
+                            a 15.9155 15.9155 0 0 1 0 31.831
+                            a 15.9155 15.9155 0 0 1 0 -31.831"
+                            fill="none"
+                            stroke="var(--secondary-bg)"
+                            strokeWidth="3"
                         />
-                        <div className="mt-3 text-sm" style={{ color: 'var(--secondary-text)' }}>
-                            <div>Directory: {storage.home_directory}</div>
-                            {storage.quota_hard_mb && (
-                                <div>Hard Limit: {storage.quota_hard_mb} MB</div>
-                            )}
-                        </div>
+                        <path
+                            d="M18 2.0845
+                            a 15.9155 15.9155 0 0 1 0 31.831
+                            a 15.9155 15.9155 0 0 1 0 -31.831"
+                            fill="none"
+                            stroke={strokeColor}
+                            strokeWidth="3"
+                            strokeDasharray={`${usagePercent}, 100`}
+                            strokeLinecap="round"
+                            transform="rotate(90 18 18)"
+                        />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-2xl font-bold" style={{ color: 'var(--primary-text)' }}>
+                            {usagePercent.toFixed(1)}%
+                        </span>
                     </div>
-
-                    {/* Email Quota */}
-                    {email_accounts.length > 0 && (
-                        <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                            <h3 className="text-lg font-medium mb-4" style={{ color: 'var(--primary-text)' }}>Email Accounts</h3>
-                            <div className="space-y-4">
-                                {email_accounts.map((account) => (
-                                    <div key={account.email_account_id} className="border-l-4 pl-4" style={{ borderColor: 'var(--accent-color)' }}>
-                                        <div className="font-medium mb-2" style={{ color: 'var(--primary-text)' }}>{account.email}</div>
-                                        <QuotaUsageBar
-                                            usage={account.usage_mb}
-                                            quota={account.quota_mb}
-                                            label="Mailbox"
-                                            color="green"
-                                        />
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Summary */}
-                    <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                        <h3 className="text-lg font-medium mb-4" style={{ color: 'var(--primary-text)' }}>Summary</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="text-center p-3 rounded-lg" style={{ backgroundColor: 'var(--secondary-bg)' }}>
-                                <div className="text-2xl font-bold" style={{ color: 'var(--accent-color)' }}>
-                                    {summary.total_storage_usage_mb.toFixed(1)}
-                                </div>
-                                <div className="text-sm" style={{ color: 'var(--accent-color)' }}>MB Used</div>
-                            </div>
-                            <div className="text-center p-3 rounded-lg" style={{ backgroundColor: 'var(--secondary-bg)' }}>
-                                <div className="text-2xl font-bold" style={{ color: 'var(--accent-color)' }}>
-                                    {summary.total_email_usage_mb.toFixed(1)}
-                                </div>
-                                <div className="text-sm" style={{ color: 'var(--accent-color)' }}>MB Email</div>
-                            </div>
-                        </div>
+                </div>
+                <div>
+                    <div className="mb-2">
+                        <span className="text-sm" style={{ color: 'var(--secondary-text)' }}>Usage: </span>
+                        <span className="font-medium" style={{ color: 'var(--primary-text)' }}>
+                            {quotaData.usage_mb.toFixed(1)} MB
+                        </span>
                     </div>
-
-                    {/* Alerts (Admin Only) */}
-                    {(user.is_admin || user.role === 'admin') && (
-                        <div className="space-y-4">
-                            {alerts.exceeded && alerts.exceeded.length > 0 && (
-                                <div>
-                                    <h3 className="text-lg font-medium mb-3" style={{ color: 'var(--primary-text)' }}>Quota Exceeded</h3>
-                                    <div className="space-y-2">
-                                        {alerts.exceeded.map((alert, index) => (
-                                            <QuotaAlert key={index} alert={alert} type="exceeded" />
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                            {alerts.critical && alerts.critical.length > 0 && (
-                                <div>
-                                    <h3 className="text-lg font-medium mb-3" style={{ color: 'var(--primary-text)' }}>Critical Usage</h3>
-                                    <div className="space-y-2">
-                                        {alerts.critical.map((alert, index) => (
-                                            <QuotaAlert key={index} alert={alert} type="critical" />
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                            {alerts.warning && alerts.warning.length > 0 && (
-                                <div>
-                                    <h3 className="text-lg font-medium mb-3" style={{ color: 'var(--primary-text)' }}>Warning</h3>
-                                    <div className="space-y-2">
-                                        {alerts.warning.map((alert, index) => (
-                                            <QuotaAlert key={index} alert={alert} type="warning" />
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                    <div>
+                        <span className="text-sm" style={{ color: 'var(--secondary-text)' }}>Quota: </span>
+                        <span className="font-medium" style={{ color: 'var(--primary-text)' }}>
+                            {quotaData.quota_soft_mb.toFixed(1)} MB
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>

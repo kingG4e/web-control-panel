@@ -3,13 +3,16 @@ import subprocess
 from typing import Optional, List, Dict
 from .base_service import BaseService
 from models import VirtualHost, VirtualHostAlias
+from models.email import EmailDomain
 from models.base import db
+from .mail_db_sync_service import MailDBSyncService
 
 class VirtualHostService(BaseService):
     def __init__(self):
         super().__init__(VirtualHost)
         self.nginx_sites_path = '/etc/nginx/sites-available'
         self.nginx_enabled_path = '/etc/nginx/sites-enabled'
+        self.mail_sync = MailDBSyncService()
 
     def create_virtual_host(self, data: Dict) -> VirtualHost:
         try:
@@ -29,7 +32,27 @@ class VirtualHostService(BaseService):
             # Reload Nginx
             self._reload_nginx()
 
-
+            # Ensure EmailDomain exists for this virtual host (mail integration)
+            try:
+                existing = EmailDomain.query.filter_by(domain=virtual_host.domain).first()
+                if not existing:
+                    email_domain = EmailDomain(
+                        domain=virtual_host.domain,
+                        virtual_host_id=virtual_host.id,
+                        status='active'
+                    )
+                    db.session.add(email_domain)
+                    db.session.commit()
+                # Also upsert to server mail DB
+                try:
+                    self.mail_sync.ensure_schema()
+                    self.mail_sync.upsert_domain(virtual_host.domain, 'active')
+                except Exception:
+                    pass
+            except Exception:
+                db.session.rollback()
+                # Non-fatal: email domain creation should not block vhost creation
+                pass
 
             return virtual_host
         except Exception as e:
@@ -62,13 +85,29 @@ class VirtualHostService(BaseService):
             if os.path.exists(config_path):
                 os.remove(config_path)
 
+            # Remove related EmailDomain(s) if safe (no accounts/forwarders)
+            try:
+                related_domains = EmailDomain.query.filter_by(virtual_host_id=virtual_host.id).all()
+                for ed in related_domains:
+                    if not ed.accounts and not ed.forwarders:
+                        db.session.delete(ed)
+                db.session.commit()
+                # Cleanup in server mail DB when empty
+                try:
+                    for ed in related_domains:
+                        self.mail_sync.remove_domain_if_empty(ed.domain)
+                except Exception:
+                    pass
+            except Exception:
+                db.session.rollback()
+                # Non-fatal
+                pass
+
             # Delete the virtual host record
             result = super().delete(id)
 
             # Reload Nginx
             self._reload_nginx()
-
-
 
             return result
         except Exception as e:
@@ -87,6 +126,27 @@ class VirtualHostService(BaseService):
             virtual_host = self.get_by_id(virtual_host_id)
             self._create_nginx_config(virtual_host)
             self._reload_nginx()
+
+            # Ensure EmailDomain exists for alias domain
+            try:
+                existing = EmailDomain.query.filter_by(domain=domain).first()
+                if not existing:
+                    email_domain = EmailDomain(
+                        domain=domain,
+                        virtual_host_id=virtual_host_id,
+                        status='active'
+                    )
+                    db.session.add(email_domain)
+                    db.session.commit()
+                # Also upsert to server mail DB
+                try:
+                    self.mail_sync.ensure_schema()
+                    self.mail_sync.upsert_domain(domain, 'active')
+                except Exception:
+                    pass
+            except Exception:
+                db.session.rollback()
+                pass
 
             return alias
         except Exception as e:
@@ -107,6 +167,22 @@ class VirtualHostService(BaseService):
             virtual_host = self.get_by_id(virtual_host_id)
             self._create_nginx_config(virtual_host)
             self._reload_nginx()
+
+            # Optionally remove EmailDomain for alias domain if no longer referenced
+            try:
+                # Only delete EmailDomain if it points to this vhost and has no accounts/forwarders
+                email_domain = EmailDomain.query.filter_by(domain=alias.domain, virtual_host_id=virtual_host_id).first()
+                if email_domain and not email_domain.accounts and not email_domain.forwarders:
+                    db.session.delete(email_domain)
+                    db.session.commit()
+                # Attempt cleanup in server mail DB if empty
+                try:
+                    self.mail_sync.remove_domain_if_empty(alias.domain)
+                except Exception:
+                    pass
+            except Exception:
+                db.session.rollback()
+                pass
 
             return True
         except Exception as e:
@@ -183,8 +259,32 @@ class VirtualHostService(BaseService):
             os.unlink(target)
 
     def _reload_nginx(self) -> None:
-        subprocess.run(['nginx', '-t'], check=True)  # Test configuration
-        subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+        """Validate configuration and reload Nginx with fallbacks, raising detailed errors on failure."""
+        def _run(cmd):
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            return result.returncode == 0, result.stdout, result.stderr
+
+        # 1. Validate configuration
+        ok, out, err = _run(['nginx', '-t'])
+        if not ok:
+            # Combine stderr and stdout for a comprehensive error message
+            message = (err or '').strip() + ('\\n' + (out or '').strip() if out else '')
+            raise Exception(f"nginx -t failed: {message.strip()}")
+
+        # 2. Attempt to reload using multiple methods
+        errors = []
+        for cmd in [
+            ['systemctl', 'reload', 'nginx'],
+            ['nginx', '-s', 'reload'],
+            ['service', 'nginx', 'reload'],
+        ]:
+            ok, out, err = _run(cmd)
+            if ok:
+                return  # Success
+            errors.append(f"CMD: `{' '.join(cmd)}` | ERR: `{(err or out).strip()}`")
+
+        # 3. If all attempts fail, raise a consolidated error
+        raise Exception("All Nginx reload attempts failed: " + " || ".join(errors))
 
     def get_virtual_hosts_by_user(self, user_id: int) -> List[VirtualHost]:
         """Get all virtual hosts owned by a specific user"""

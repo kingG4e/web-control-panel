@@ -77,16 +77,19 @@ def get_user_quota_usage(current_user, username):
 def get_all_users_quota_usage(current_user):
     """Get quota usage for all users (admin only)."""
     try:
-        # Get all users quota usage
-        all_usage = quota_monitoring_service.get_all_users_quota_usage()
+        # Check for a 'refresh' query parameter to force a cache refresh
+        force_refresh = request.args.get('refresh', 'false').lower() == 'true'
+
+        # Get all users quota usage (uses cache by default)
+        all_usage = quota_monitoring_service.get_all_users_quota_usage(force_refresh=force_refresh)
         
-        # Get quota alerts
-        alerts = quota_monitoring_service.get_quota_alerts()
+        # Get quota alerts, passing the already fetched data to avoid a second slow call
+        alerts = quota_monitoring_service.get_quota_alerts(all_usage_data=all_usage)
         
         response_data = {
             'users': all_usage,
             'alerts': alerts,
-            'summary': {
+            'stats': {
                 'total_users': len(all_usage),
                 'users_with_quota': len([u for u in all_usage.values() if u.get('quota_soft_mb')]),
                 'warning_count': len(alerts['warning']),
@@ -172,6 +175,44 @@ def refresh_user_quota(current_user, username):
         
     except Exception as e:
         print(f"Error refreshing quota for {username}: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@quota_bp.route('/api/quota/set/<username>', methods=['POST'])
+@token_required
+@admin_required
+def set_user_quota(current_user, username):
+    """Set storage quota for a specific user (admin only)."""
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({'error': 'Invalid JSON body'}), 400
+            
+        soft_limit_mb = data.get('soft_limit_mb')
+        hard_limit_mb = data.get('hard_limit_mb')
+        
+        # Basic validation
+        if soft_limit_mb is None or hard_limit_mb is None:
+            return jsonify({'error': 'Missing soft_limit_mb or hard_limit_mb'}), 400
+        
+        try:
+            soft_limit_mb = int(soft_limit_mb)
+            hard_limit_mb = int(hard_limit_mb)
+            if soft_limit_mb < 0 or hard_limit_mb < 0:
+                raise ValueError("Limits must be non-negative")
+            if soft_limit_mb > hard_limit_mb:
+                return jsonify({'error': 'Soft limit cannot be greater than hard limit'}), 400
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Quota limits must be valid integers'}), 400
+
+        result = quota_monitoring_service.set_user_quota(username, soft_limit_mb, hard_limit_mb)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        error_message = f"Failed to process request to set quota for {username}: {e}"
+        print(error_message)
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 

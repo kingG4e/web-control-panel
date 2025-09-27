@@ -1,13 +1,17 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias, db
 from models.virtual_host import VirtualHost
 from services.email_service import EmailService
+from services.maildb_reader import MailDbReader
+import crypt
+import secrets
 from utils.auth import token_required
 from datetime import datetime
 from sqlalchemy import or_
 
 email_bp = Blueprint('email', __name__)
 email_service = EmailService()
+mail_db_reader = MailDbReader()
 
 @email_bp.route('/api/email/domains', methods=['GET'])
 @token_required
@@ -44,14 +48,54 @@ def get_domains(current_user):
         
         result = []
         
-        # 1) Include existing EmailDomain data (with accounts/forwarders)
+        # Helper: build accounts for a domain from mail DB, enriching with local IDs if present
+        def _build_accounts_for_domain(domain_name: str, email_domain_id: int | None) -> list:
+            accounts_from_mail = []
+            try:
+                mail_users = mail_db_reader.fetch_users_by_domain(domain_name)
+            except Exception as e:
+                mail_users = []
+            # Map: local accounts by username for ID/quota enrichment
+            local_accounts_by_username = {}
+            if email_domain_id:
+                try:
+                    local_accounts = EmailAccount.query.filter_by(domain_id=email_domain_id).all()
+                    local_accounts_by_username = {la.username: la for la in local_accounts}
+                except Exception:
+                    local_accounts_by_username = {}
+            for u in mail_users:
+                email_addr = u.get('email') or ''
+                username = email_addr.split('@')[0] if '@' in email_addr else email_addr
+                local = local_accounts_by_username.get(username)
+                quota_val = None
+                if local and getattr(local, 'quota', None) is not None:
+                    quota_val = local.quota
+                elif u.get('quota') is not None:
+                    try:
+                        quota_val = int(u['quota'])
+                    except Exception:
+                        quota_val = None
+                if quota_val is None:
+                    quota_val = 1024
+                accounts_from_mail.append({
+                    'id': getattr(local, 'id', None) if local else None,
+                    'username': username,
+                    'email': email_addr,
+                    'quota': quota_val,
+                    'used_quota': getattr(local, 'used_quota', 0) if local else 0,
+                    'status': u.get('status', 'active')
+                })
+            return accounts_from_mail
+
+        # 1) Include existing EmailDomain data; accounts sourced from mail DB
         for domain in email_domains:
             domain_dict = domain.to_dict()
             # Ensure virtual_host_id is set (older rows may be null)
             if not domain_dict.get('virtual_host_id') and domain.domain in domain_name_to_vh:
                 domain_dict['virtual_host_id'] = domain_name_to_vh[domain.domain].id
-            # Add accounts explicitly
-            domain_dict['accounts'] = [account.to_dict() for account in domain.accounts]
+            # Accounts from mail DB
+            domain_dict['accounts'] = _build_accounts_for_domain(domain.domain, domain.id)
+            # Forwarders remain from local DB for now
             domain_dict.setdefault('forwarders', [fwd.to_dict() for fwd in domain.forwarders])
             result.append(domain_dict)
         
@@ -65,7 +109,8 @@ def get_domains(current_user):
                     'status': 'active',
                     'created_at': vh.created_at.isoformat() if vh.created_at else None,
                     'updated_at': vh.updated_at.isoformat() if vh.updated_at else None,
-                    'accounts': [],
+                    # Accounts from mail DB even if no local EmailDomain row exists
+                    'accounts': _build_accounts_for_domain(vh.domain, None),
                     'forwarders': []
                 })
         
@@ -85,14 +130,46 @@ def get_domain_accounts(current_user, virtual_host_id):
         if not virtual_host:
             return jsonify({'error': 'Virtual Host not found or access denied'}), 404
         
-        # Get email domain
+        # Get email domain (local row if exists for enrichment)
         email_domain = EmailDomain.query.filter_by(domain=virtual_host.domain).first()
-        if not email_domain:
-            return jsonify([])
+        email_domain_id = email_domain.id if email_domain else None
         
-        # Get accounts
-        accounts = EmailAccount.query.filter_by(domain_id=email_domain.id).all()
-        return jsonify([account.to_dict() for account in accounts])
+        # Build accounts directly from mail DB
+        accounts = []
+        try:
+            mail_users = mail_db_reader.fetch_users_by_domain(virtual_host.domain)
+        except Exception:
+            mail_users = []
+        local_by_username = {}
+        if email_domain_id:
+            try:
+                local_accounts = EmailAccount.query.filter_by(domain_id=email_domain_id).all()
+                local_by_username = {la.username: la for la in local_accounts}
+            except Exception:
+                local_by_username = {}
+        for u in mail_users:
+            email_addr = u.get('email') or ''
+            username = email_addr.split('@')[0] if '@' in email_addr else email_addr
+            local = local_by_username.get(username)
+            quota_val = None
+            if local and getattr(local, 'quota', None) is not None:
+                quota_val = local.quota
+            elif u.get('quota') is not None:
+                try:
+                    quota_val = int(u['quota'])
+                except Exception:
+                    quota_val = None
+            if quota_val is None:
+                quota_val = 1024
+            accounts.append({
+                'id': getattr(local, 'id', None) if local else None,
+                'username': username,
+                'email': email_addr,
+                'quota': quota_val,
+                'used_quota': getattr(local, 'used_quota', 0) if local else 0,
+                'status': u.get('status', 'active')
+            })
+        return jsonify(accounts)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -101,8 +178,18 @@ def get_domain_accounts(current_user, virtual_host_id):
 def create_account(current_user, virtual_host_id):
     """Create email account for a Virtual Host domain"""
     try:
-        # Verify Virtual Host ownership
-        virtual_host = VirtualHost.query.filter_by(id=virtual_host_id, user_id=current_user.id).first()
+        # Verify Virtual Host ownership (admins can manage all; regular users limited)
+        is_admin = (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root')
+        if is_admin:
+            virtual_host = VirtualHost.query.filter_by(id=virtual_host_id).first()
+        else:
+            virtual_host = VirtualHost.query.filter(
+                VirtualHost.id == virtual_host_id,
+                or_(
+                    VirtualHost.user_id == current_user.id,
+                    VirtualHost.linux_username == current_user.username
+                )
+            ).first()
         if not virtual_host:
             return jsonify({'error': 'Virtual Host not found or access denied'}), 404
         
@@ -125,21 +212,54 @@ def create_account(current_user, virtual_host_id):
             if field not in data:
                 return jsonify({'error': f'Missing required field: {field}'}), 400
         
-        # Check if account already exists
+        # Check if account already exists (treat as idempotent; ensure mail DB has it)
         existing_account = EmailAccount.query.filter_by(
             domain_id=email_domain.id, 
             username=data['username']
         ).first()
-        if existing_account:
-            return jsonify({'error': 'Email account already exists'}), 400
         
-        # Create account in email system
-        email_service.create_account(
-            data['username'],
-            virtual_host.domain,
-            data['password'],
-            quota=data.get('quota', 1024)
-        )
+        # Create account in mail DB (minimal schema)
+        full_email = f"{data['username']}@{virtual_host.domain}"
+        maildir = f"{virtual_host.domain}/{data['username']}/"
+        try:
+            # Build SHA-512-CRYPT password hash for mail DB password column
+            salt = f"$6${secrets.token_hex(8)}"  # $6$ => SHA-512
+            hashed = crypt.crypt(data['password'], salt)
+            password_hash = f"{'{'}SHA512-CRYPT{'}'}{hashed}"
+        except Exception:
+            password_hash = None
+
+        try:
+            mail_db_reader.upsert_user(
+                email=full_email,
+                maildir=maildir,
+                status='active',
+                quota=data.get('quota', 1024),
+                password_hash=password_hash
+            )
+        except Exception as e:
+            # Surface the real reason to the client and log server-side
+            try:
+                current_app.logger.exception(f"Mail DB upsert failed for {full_email}: {e}")
+            except Exception:
+                pass
+            return jsonify({'error': 'Mail DB write failed', 'details': str(e)}), 502
+
+        # If already exists in app DB, return idempotent success with existing record
+        if existing_account:
+            return jsonify(existing_account.to_dict()), 200
+
+        # Also create account in email system (filesystem / Dovecot) for compatibility
+        try:
+            email_service.create_account(
+                data['username'],
+                virtual_host.domain,
+                data['password'],
+                quota=data.get('quota', 1024)
+            )
+        except Exception:
+            # Non-fatal if filesystem creation fails when minimal schema is in use
+            pass
         
         # Create account record
         account = EmailAccount(
@@ -180,6 +300,17 @@ def update_account(current_user, id):
                 data['password']
             )
             account.password = data['password']
+            # Update password in mail DB if possible
+            try:
+                salt = f"$6${secrets.token_hex(8)}"
+                hashed = crypt.crypt(data['password'], salt)
+                password_hash = f"{'{'}SHA512-CRYPT{'}'}{hashed}"
+                mail_db_reader.update_password(
+                    email=f"{account.username}@{email_domain.domain}",
+                    password_hash=password_hash
+                )
+            except Exception:
+                pass
         
         # Update quota if provided
         if 'quota' in data:
@@ -189,6 +320,14 @@ def update_account(current_user, id):
                 data['quota']
             )
             account.quota = data['quota']
+            # Reflect quota to mail DB if supported
+            try:
+                mail_db_reader.update_quota(
+                    email=f"{account.username}@{email_domain.domain}",
+                    quota=int(data['quota'])
+                )
+            except Exception:
+                pass
         
         account.updated_at = datetime.utcnow()
         db.session.commit()
@@ -211,8 +350,17 @@ def delete_account(current_user, id):
         if not virtual_host:
             return jsonify({'error': 'Access denied'}), 403
         
+        # Delete account from mail DB (minimal schema)
+        try:
+            mail_db_reader.delete_user(f"{account.username}@{email_domain.domain}")
+        except Exception:
+            pass
+
         # Delete account from email system
-        email_service.delete_account(account.username, email_domain.domain)
+        try:
+            email_service.delete_account(account.username, email_domain.domain)
+        except Exception:
+            pass
         
         # Delete from our database
         db.session.delete(account)
@@ -222,3 +370,110 @@ def delete_account(current_user, id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500 
+
+
+@email_bp.route('/api/email/domains/<int:virtual_host_id>/forwarders', methods=['POST'])
+@token_required
+def create_forwarder(current_user, virtual_host_id):
+    """Create an email forwarder (alias) for a Virtual Host domain"""
+    try:
+        # Verify Virtual Host ownership
+        virtual_host = VirtualHost.query.filter_by(id=virtual_host_id, user_id=current_user.id).first()
+        if not virtual_host:
+            return jsonify({'error': 'Virtual Host not found or access denied'}), 404
+
+        # Ensure EmailDomain exists
+        email_domain = EmailDomain.query.filter_by(domain=virtual_host.domain).first()
+        if not email_domain:
+            email_domain = EmailDomain(
+                domain=virtual_host.domain,
+                virtual_host_id=virtual_host.id,
+                status='active'
+            )
+            db.session.add(email_domain)
+            db.session.flush()
+
+        data = request.get_json() or {}
+        source = (data.get('source') or '').strip()
+        destination = (data.get('destination') or '').strip()
+
+        if not source or not destination:
+            return jsonify({'error': 'Missing required fields: source, destination'}), 400
+
+        # Validate destination is full email
+        if '@' not in destination:
+            return jsonify({'error': 'Destination must be a full email address'}), 400
+
+        # Prevent duplicates (per domain + source)
+        existing = EmailForwarder.query.filter_by(domain_id=email_domain.id, source=source).first()
+        if existing:
+            return jsonify({'error': 'Forwarder already exists for this source'}), 400
+
+        # Create in mail system
+        email_service.create_forwarder(source, destination, virtual_host.domain)
+
+        # Persist in DB
+        fwd = EmailForwarder(
+            domain_id=email_domain.id,
+            source=source,
+            destination=destination,
+            status='active'
+        )
+        db.session.add(fwd)
+        db.session.commit()
+
+        return jsonify(fwd.to_dict()), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@email_bp.route('/api/email/forwarders/<int:id>', methods=['DELETE'])
+@token_required
+def delete_forwarder(current_user, id):
+    """Delete an email forwarder (alias)"""
+    try:
+        fwd = EmailForwarder.query.get_or_404(id)
+
+        # Verify ownership via Virtual Host
+        email_domain = fwd.email_domain
+        virtual_host = VirtualHost.query.filter_by(domain=email_domain.domain, user_id=current_user.id).first()
+        if not virtual_host:
+            return jsonify({'error': 'Access denied'}), 403
+
+        # Delete from mail system
+        email_service.delete_forwarder(fwd.source, email_domain.domain)
+
+        # Delete from DB
+        db.session.delete(fwd)
+        db.session.commit()
+
+        return '', 204
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@email_bp.route('/api/email/accounts/<int:id>/quota', methods=['GET'])
+@token_required
+def refresh_quota(current_user, id):
+    """Refresh and return current quota usage for an email account (in MB)"""
+    try:
+        account = EmailAccount.query.get_or_404(id)
+
+        # Verify ownership via Virtual Host
+        email_domain = account.email_domain
+        virtual_host = VirtualHost.query.filter_by(domain=email_domain.domain, user_id=current_user.id).first()
+        if not virtual_host:
+            return jsonify({'error': 'Access denied'}), 403
+
+        # Calculate usage and persist
+        used_mb = email_service.get_quota_usage(account.username, email_domain.domain)
+        account.used_quota = used_mb
+        account.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        return jsonify({'used_quota': used_mb, 'quota': account.quota, 'account': account.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500

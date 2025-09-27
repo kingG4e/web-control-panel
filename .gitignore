@@ -56,3 +56,5 @@ backend/instance/
 # Temporary files
 *.tmp
 *.temp 
+# environment variables
+/backend/.env 

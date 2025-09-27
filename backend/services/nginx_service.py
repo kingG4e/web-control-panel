@@ -76,9 +76,8 @@ server {
             # Enable site
             self._enable_site(virtual_host.domain)
 
-            # Test and reload Nginx
-            subprocess.run(['nginx', '-t'], check=True)
-            subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+            # Test and reload Nginx with fallbacks and detailed errors
+            self._reload_nginx()
 
             # Create default index file
             self._create_default_index(document_root, virtual_host.domain)
@@ -89,28 +88,38 @@ server {
             raise Exception(f'Failed to create Nginx virtual host: {str(e)}')
 
     def delete_virtual_host(self, domain):
-        """Delete Nginx virtual host configuration"""
+        """Delete Nginx virtual host configuration.
+
+        Accepts either a domain string or an object with a `domain` attribute.
+        Removes both standard and SSL configs from sites-available and sites-enabled.
+        """
         try:
             if self.is_development:
                 print(f"[SIMULATION] Would delete Nginx virtual host for: {domain}")
                 return True
 
+            # Normalize input
+            if hasattr(domain, 'domain'):
+                domain = getattr(domain, 'domain')
+
             # Disable site
             self._disable_site(domain)
+            # Also disable potential SSL vhost created by SSL service
+            self._disable_site(f"{domain}-ssl")
 
             # Remove configuration file
-            config_path = os.path.join(self.sites_available, f'{domain}.conf')
-            if os.path.exists(config_path):
-                os.remove(config_path)
+            for name in (domain, f"{domain}-ssl"):
+                config_path = os.path.join(self.sites_available, f'{name}.conf')
+                if os.path.exists(config_path):
+                    os.remove(config_path)
 
             # Remove document root (only if it's in /var/www for backward compatibility)
             document_root = f'/var/www/{domain}'
             if os.path.exists(document_root):
                 subprocess.run(['rm', '-rf', document_root], check=True)
 
-            # Test and reload Nginx
-            subprocess.run(['nginx', '-t'], check=True)
-            subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+            # Test and reload Nginx with fallbacks and detailed errors
+            self._reload_nginx()
 
             return True
 
@@ -141,8 +150,7 @@ server {
                 return True
 
             self._enable_site(domain)
-            subprocess.run(['nginx', '-t'], check=True)
-            subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+            self._reload_nginx()
             return True
 
         except Exception as e:
@@ -156,8 +164,7 @@ server {
                 return True
 
             self._disable_site(domain)
-            subprocess.run(['nginx', '-t'], check=True)
-            subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+            self._reload_nginx()
             return True
 
         except Exception as e:
@@ -187,10 +194,13 @@ server {
             os.symlink(source, target)
 
     def _disable_site(self, domain):
-        """Disable Nginx site by removing symlink"""
+        """Disable Nginx site by removing symlink (idempotent)."""
         target = os.path.join(self.sites_enabled, f'{domain}.conf')
-        if os.path.exists(target):
-            os.unlink(target)
+        if os.path.islink(target) or os.path.exists(target):
+            try:
+                os.unlink(target)
+            except FileNotFoundError:
+                pass
 
     def _create_default_index(self, document_root, domain_name):
         """Create default index.html file"""
@@ -286,3 +296,27 @@ server {
         # Set proper permissions
         subprocess.run(['chown', 'www-data:www-data', index_path], check=True)
         subprocess.run(['chmod', '644', index_path], check=True) 
+
+    def _reload_nginx(self):
+        """Validate configuration and reload Nginx with fallbacks, raising detailed errors on failure."""
+        def _run(cmd):
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            return result.returncode == 0, result.stdout, result.stderr
+
+        ok, out, err = _run(['nginx', '-t'])
+        if not ok:
+            message = err.strip() or out.strip() or 'nginx -t failed without output'
+            raise Exception(f"nginx -t failed: {message}")
+
+        errors = []
+        for cmd in [
+            ['systemctl', 'reload', 'nginx'],
+            ['nginx', '-s', 'reload'],
+            ['service', 'nginx', 'reload'],
+        ]:
+            ok, out, err = _run(cmd)
+            if ok:
+                return True
+            errors.append(f"{' '.join(cmd)} => {(err or out).strip()}")
+
+        raise Exception("All Nginx reload attempts failed: " + " | ".join(errors))

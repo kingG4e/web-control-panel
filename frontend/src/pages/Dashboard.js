@@ -20,6 +20,7 @@ import {
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { system, virtualHosts as vhostApi } from '../services/api';
+import QuotaDashboard from '../components/QuotaDashboard';
 
 // Inline SVG Icons
 const ServerIconSVG = ({ className, style }) => (
@@ -411,6 +412,13 @@ const Dashboard = () => {
             }
           </p>
         </div>
+
+        {/* User Quota Card - only for non-admins */}
+        {!stats.isAdmin && (
+            <div className="mb-8">
+                <QuotaDashboard />
+            </div>
+        )}
 
         {/* Admin Notice */}
         {stats.isAdmin && (

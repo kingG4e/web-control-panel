@@ -3,6 +3,7 @@ from functools import wraps
 from utils.auth import token_required, admin_required
 from utils.rate_limiter import rate_limit, check_rate_limit_status, reset_rate_limit
 from services.sync_check_service import SyncCheckService
+from services.postfix_sql_maps_service import PostfixSQLMapsService, MySQLConnectionConfig
 from services.backup_service import BackupService
 from models.virtual_host import VirtualHost
 from models.database import Database
@@ -26,6 +27,7 @@ except ImportError as e:
 system_bp = Blueprint('system', __name__)
 sync_check_service = SyncCheckService()
 backup_service = BackupService()
+postfix_maps_service = PostfixSQLMapsService()
 
 # Simple in-memory cache
 _cache = {}
@@ -204,6 +206,55 @@ def get_system_status():
                     'percent': (disk.used / disk.total) * 100
                 },
                 'cpu_percent': cpu_percent
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@system_bp.route('/api/system/postfix/sync', methods=['POST'])
+@token_required
+@admin_required
+def postfix_sync(current_user):
+    """Generate Postfix MySQL maps and reload Postfix (admin only).
+
+    Optional JSON body overrides connection:
+    { "host": "127.0.0.1", "user": "postfix", "password": "***", "database": "mail" }
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+
+        host = payload.get('host') or os.environ.get('MYSQL_HOST', '127.0.0.1')
+        user = payload.get('user') or os.environ.get('MYSQL_POSTFIX_USER', 'mailadmin')
+        password = payload.get('password') or os.environ.get('MYSQL_POSTFIX_PASSWORD', 'King_73260')
+        database = payload.get('database') or os.environ.get('MYSQL_POSTFIX_DB', 'mail')
+
+        conn = MySQLConnectionConfig(host=host, user=user, password=password, database=database)
+
+        # Prefer minimal schema if explicitly requested via payload flags
+        use_minimal = payload.get('use_minimal_schema') is True or os.environ.get('POSTFIX_MINIMAL_SCHEMA') == '1'
+        users_table = payload.get('users_table')
+
+        domains_path = postfix_maps_service.write_domain_map(conn, table='email_domain')
+        if use_minimal:
+            chosen_users_table = users_table or 'email_user'
+            mailbox_path = postfix_maps_service.write_mailbox_map(conn, users_table=chosen_users_table, domains_table='email_domain')
+            alias_path = postfix_maps_service.write_alias_map(conn, fwd_table='email_alias', domains_table='email_domain')
+        else:
+            mailbox_path = postfix_maps_service.write_mailbox_map(conn, users_table='email_account', domains_table='email_domain')
+            alias_path = postfix_maps_service.write_alias_map(conn, fwd_table='email_forwarder', domains_table='email_domain')
+
+        # Reload postfix; ignore errors in dev
+        try:
+            subprocess.run(['systemctl', 'reload', 'postfix'], check=True)
+        except Exception:
+            pass
+
+        return jsonify({
+            'success': True,
+            'paths': {
+                'domains': domains_path,
+                'mailboxes': mailbox_path,
+                'aliases': alias_path
             }
         })
     except Exception as e:

@@ -4,6 +4,7 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorAlert from '../components/common/ErrorAlert';
+import BaseModal, { ModalSection, ModalButton } from '../components/modals/BaseModal';
 import { useAuth } from '../contexts/AuthContext';
 import { users } from '../services/api';
 import QuotaDashboard from '../components/QuotaDashboard';
@@ -90,9 +91,10 @@ const UserSettings = () => {
 
   const stats = useMemo(() => {
     const total = userList.length;
-    const active = userList.filter((u) => u.is_active).length;
+    // Treat users as active by default unless explicitly is_active === false
+    const active = userList.filter((u) => u?.is_active !== false).length;
+    const inactive = userList.filter((u) => u?.is_active === false).length;
     const admins = userList.filter((u) => u.role === 'admin' || u.is_admin).length;
-    const inactive = total - active;
     return { total, active, admins, inactive };
   }, [userList]);
 
@@ -392,120 +394,122 @@ const UserSettings = () => {
 
       {/* User Modal */}
       {showUserModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-[var(--card-bg)] w-full max-w-md p-6 rounded-xl border border-[var(--border-color)] relative">
-            <button className="absolute top-3 right-3 text-[var(--secondary-text)] hover:text-[var(--primary-text)]" onClick={() => { setShowUserModal(false); setEditingUser(null); }}>
-              <XMarkIcon className="w-5 h-5" />
-            </button>
-            <h2 className="text-xl font-bold mb-4">{editingUser ? 'Edit User' : 'New User'}</h2>
-            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-              {/* Form Fields */}
+        <BaseModal
+          isOpen={showUserModal}
+          onClose={() => { setShowUserModal(false); setEditingUser(null); }}
+          title={editingUser ? 'Edit User' : 'New User'}
+          footer={(
+            <div className="flex justify-end gap-3">
+              <ModalButton variant="secondary" onClick={() => { setShowUserModal(false); setEditingUser(null); }}>Cancel</ModalButton>
+              <ModalButton variant="primary" onClick={upsertUser}>{editingUser ? 'Save' : 'Create'}</ModalButton>
+            </div>
+          )}
+       >
+          <ModalSection className="space-y-3">
+            {[
+              { label: 'Username', key: 'username', type: 'text', required: true },
+              { label: 'Email', key: 'email', type: 'email', required: true },
+              { label: 'First Name', key: 'first_name', type: 'text' },
+              { label: 'Last Name', key: 'last_name', type: 'text' },
+            ].map(({ label, key, type, required }) => (
+              <div key={key}>
+                <label className="block text-sm mb-1 text-[var(--secondary-text)]">{label}{required && ' *'}</label>
+                <input
+                  type={type}
+                  value={formData[key]}
+                  onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
+                  className="input-field w-full"
+                  required={required}
+                />
+              </div>
+            ))}
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-sm mb-1 text-[var(--secondary-text)]">Role</label>
+                <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} className="input-field w-full">
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2 pt-6">
+                <input type="checkbox" id="is_active" checked={formData.is_active} onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })} className="h-4 w-4 text-[var(--accent-color)] border-[var(--border-color)]" />
+                <label htmlFor="is_active" className="text-sm text-[var(--secondary-text)]">Active</label>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {[
-                { label: 'Username', key: 'username', type: 'text', required: true },
-                { label: 'Email', key: 'email', type: 'email', required: true },
-                { label: 'First Name', key: 'first_name', type: 'text' },
-                { label: 'Last Name', key: 'last_name', type: 'text' },
-              ].map(({ label, key, type, required }) => (
+                { label: 'Password', key: 'password' },
+                { label: 'Confirm Password', key: 'confirm_password' },
+              ].map(({ label, key }) => (
                 <div key={key}>
-                  <label className="block text-sm mb-1 text-[var(--secondary-text)]">{label}{required && ' *'}</label>
+                  <label className="block text-sm mb-1 text-[var(--secondary-text)]">{label}{!editingUser && ' *'}</label>
                   <input
-                    type={type}
+                    type="password"
                     value={formData[key]}
                     onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
                     className="input-field w-full"
-                    required={required}
+                    required={!editingUser}
                   />
                 </div>
               ))}
-              {/* Role & Status */}
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="block text-sm mb-1 text-[var(--secondary-text)]">Role</label>
-                  <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} className="input-field w-full">
-                    <option value="user">User</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-2 pt-6">
-                  <input type="checkbox" id="is_active" checked={formData.is_active} onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })} className="h-4 w-4 text-[var(--accent-color)] border-[var(--border-color)]" />
-                  <label htmlFor="is_active" className="text-sm text-[var(--secondary-text)]">Active</label>
-                </div>
-              </div>
-              {/* Password fields */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {[
-                  { label: 'Password', key: 'password' },
-                  { label: 'Confirm Password', key: 'confirm_password' },
-                ].map(({ label, key }) => (
-                  <div key={key}>
-                    <label className="block text-sm mb-1 text-[var(--secondary-text)]">{label}{!editingUser && ' *'}</label>
-                    <input
-                      type="password"
-                      value={formData[key]}
-                      onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
-                      className="input-field w-full"
-                      required={!editingUser}
-                    />
-                  </div>
-                ))}
-              </div>
             </div>
-            <div className="flex justify-end gap-3 mt-6">
-              <Button variant="secondary" onClick={() => { setShowUserModal(false); setEditingUser(null); }}>Cancel</Button>
-              <Button variant="primary" onClick={upsertUser}>{editingUser ? 'Save' : 'Create'}</Button>
-            </div>
-          </div>
-        </div>
+          </ModalSection>
+        </BaseModal>
       )}
 
       {/* Delete Confirmation */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-[var(--card-bg)] w-full max-w-sm p-6 rounded-xl border border-[var(--border-color)] text-center">
-            <p className="mb-6 text-[var(--secondary-text)]">Delete user <strong>{targetUser?.username}</strong>? This action cannot be undone.</p>
+        <BaseModal
+          isOpen={showDeleteConfirm}
+          onClose={() => setShowDeleteConfirm(false)}
+          title="Delete User"
+          footer={(
             <div className="flex justify-center gap-3">
-              <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
-              <Button variant="danger" onClick={deleteUser}>Delete</Button>
+              <ModalButton variant="secondary" onClick={() => setShowDeleteConfirm(false)}>Cancel</ModalButton>
+              <ModalButton variant="danger" onClick={deleteUser}>Delete</ModalButton>
             </div>
-          </div>
-        </div>
+          )}
+        >
+          <ModalSection>
+            <p className="text-center text-[var(--secondary-text)]">Delete user <strong>{targetUser?.username}</strong>? This action cannot be undone.</p>
+          </ModalSection>
+        </BaseModal>
       )}
 
       {/* Permission Modal */}
       {showPermissionModal && permUser && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-[var(--card-bg)] w-full max-w-md p-6 rounded-xl border border-[var(--border-color)] relative">
-            <button className="absolute top-3 right-3 text-[var(--secondary-text)] hover:text-[var(--primary-text)]" onClick={() => { setShowPermissionModal(false); setPermUser(null); }}>
-              <XMarkIcon className="w-5 h-5" />
-            </button>
-            <h2 className="text-xl font-bold mb-4">Set Permissions for {permUser.username}</h2>
-            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-              <div>
-                <label className="block text-sm mb-1 text-[var(--secondary-text)]">Domain *</label>
-                <input type="text" value={permData.domain} onChange={(e) => setPermData({ ...permData, domain: e.target.value })} className="input-field w-full" placeholder="example.com" />
-              </div>
-              <div className="space-y-2">
-                {[
-                  { key: 'can_manage_vhost', label: 'Virtual Hosts' },
-                  { key: 'can_manage_dns', label: 'DNS' },
-                  { key: 'can_manage_ssl', label: 'SSL Certificates' },
-                  { key: 'can_manage_email', label: 'Email' },
-                  { key: 'can_manage_database', label: 'Database' },
-          
-                ].map(({ key, label }) => (
-                  <div key={key} className="flex items-center gap-2">
-                    <input type="checkbox" id={key} checked={permData[key]} onChange={(e) => setPermData({ ...permData, [key]: e.target.checked })} className="h-4 w-4 text-[var(--accent-color)] border-[var(--border-color)]" />
-                    <label htmlFor={key} className="text-sm text-[var(--secondary-text)]">{label}</label>
-                  </div>
-                ))}
-              </div>
+        <BaseModal
+          isOpen={!!(showPermissionModal && permUser)}
+          onClose={() => { setShowPermissionModal(false); setPermUser(null); }}
+          title={`Set Permissions for ${permUser.username}`}
+          footer={(
+            <div className="flex justify-end gap-3">
+              <ModalButton variant="secondary" onClick={() => { setShowPermissionModal(false); setPermUser(null); }}>Cancel</ModalButton>
+              <ModalButton variant="primary" onClick={submitPermissions}>Save</ModalButton>
             </div>
-            <div className="flex justify-end gap-3 mt-6">
-              <Button variant="secondary" onClick={() => { setShowPermissionModal(false); setPermUser(null); }}>Cancel</Button>
-              <Button variant="primary" onClick={submitPermissions}>Save</Button>
+          )}
+        >
+          <ModalSection className="space-y-4">
+            <div>
+              <label className="block text-sm mb-1 text-[var(--secondary-text)]">Domain *</label>
+              <input type="text" value={permData.domain} onChange={(e) => setPermData({ ...permData, domain: e.target.value })} className="input-field w-full" placeholder="example.com" />
             </div>
-          </div>
-        </div>
+            <div className="space-y-2">
+              {[
+                { key: 'can_manage_vhost', label: 'Virtual Hosts' },
+                { key: 'can_manage_dns', label: 'DNS' },
+                { key: 'can_manage_ssl', label: 'SSL Certificates' },
+                { key: 'can_manage_email', label: 'Email' },
+                { key: 'can_manage_database', label: 'Database' },
+              ].map(({ key, label }) => (
+                <div key={key} className="flex items-center gap-2">
+                  <input type="checkbox" id={key} checked={permData[key]} onChange={(e) => setPermData({ ...permData, [key]: e.target.checked })} className="h-4 w-4 text-[var(--accent-color)] border-[var(--border-color)]" />
+                  <label htmlFor={key} className="text-sm text-[var(--secondary-text)]">{label}</label>
+                </div>
+              ))}
+            </div>
+          </ModalSection>
+        </BaseModal>
       )}
     </PageLayout>
   );

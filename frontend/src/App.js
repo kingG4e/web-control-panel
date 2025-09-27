@@ -27,6 +27,7 @@ import Breadcrumb from './components/layout/Breadcrumb';
 import FileManager from './pages/FileManager';
 import ToastContainer from './components/common/ToastContainer';
 import VirtualHostDetail from './pages/VirtualHostDetail';
+import AdminSettings from './pages/AdminSettings';
 
 const AppContent = () => {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -115,6 +116,7 @@ const AppContent = () => {
                         <Route path="/users" element={<Navigate to="/pending-approval" />} />
                         <Route path="/ssl" element={<Navigate to="/pending-approval" />} />
                         <Route path="/file-manager" element={<Navigate to="/pending-approval" />} />
+                        <Route path="/admin/settings" element={<AdminSettings />} />
                         <Route path="*" element={<Navigate to="/pending-approval" />} />
                       </>
                     ) : (
@@ -132,6 +134,7 @@ const AppContent = () => {
                         <Route path="/ssl" element={<SSLSettings />} />
                         <Route path="/file-manager" element={<FileManager />} />
                         <Route path="/my-requests" element={<MyRequests />} />
+                        <Route path="/admin/settings" element={<AdminSettings />} />
                         {/* fallback */}
                         <Route path="*" element={<Navigate to="/dashboard" />} />
                       </>

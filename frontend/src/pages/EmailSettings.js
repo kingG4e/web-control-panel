@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import BaseModal, { ModalSection, ModalSectionTitle, ModalButton } from '../components/modals/BaseModal';
 import { Link } from 'react-router-dom';
-import { email, roundcube } from '../services/api';
+import api, { email, roundcube } from '../services/api';
 
 // Inline SVG Icons
 const ArrowLeftIcon = ({ className, style }) => (
@@ -94,14 +95,16 @@ const EmailSettings = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('domains');
+  const [syncing, setSyncing] = useState(false);
 
   // Modal states
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showForwarderModal, setShowForwarderModal] = useState(false);
   const [showPasswordResetModal, setShowPasswordResetModal] = useState(false);
-  const [showQuotaModal, setShowQuotaModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [selectedAccount, setSelectedAccount] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [accountToDelete, setAccountToDelete] = useState(null);
 
   // Form data
   const [accountForm, setAccountForm] = useState({
@@ -117,9 +120,7 @@ const EmailSettings = () => {
     newPassword: '',
     confirmPassword: '',
   });
-  const [quotaForm, setQuotaForm] = useState({
-    quota: 1024,
-  });
+  
 
   // Switch to Accounts tab automatically when a domain with accounts is selected
   useEffect(() => {
@@ -137,9 +138,13 @@ const EmailSettings = () => {
       setLoading(true);
       const data = await email.getDomains();
       setDomains(data);
-      if (data.length > 0 && !selectedDomain) {
-        setSelectedDomain(data[0]);
-      }
+      setSelectedDomain(prev => {
+        if (!prev) {
+          return data.length > 0 ? data[0] : null;
+        }
+        const match = data.find(d => d.domain === prev.domain);
+        return match || (data.length > 0 ? data[0] : null);
+      });
     } catch (err) {
       setError('Failed to fetch email domains');
       console.error('Error fetching domains:', err);
@@ -153,12 +158,21 @@ const EmailSettings = () => {
     if (!selectedDomain) return;
 
     try {
+      const payload = editingAccount
+        ? {
+            ...(accountForm.password ? { password: accountForm.password } : {}),
+            ...(typeof accountForm.quota !== 'undefined' ? { quota: accountForm.quota } : {}),
+          }
+        : {
+            username: accountForm.username,
+            password: accountForm.password,
+            ...(typeof accountForm.quota !== 'undefined' ? { quota: accountForm.quota } : {}),
+          };
+
       if (editingAccount) {
-        // Update existing account
-        await email.updateAccount(selectedDomain.virtual_host_id, editingAccount.id, accountForm);
+        await email.updateAccount(selectedDomain.virtual_host_id, editingAccount.id, payload);
       } else {
-        // Create new account
-        await email.createAccount(selectedDomain.virtual_host_id, accountForm);
+        await email.createAccount(selectedDomain.virtual_host_id, payload);
       }
       setShowAccountModal(false);
       setAccountForm({ username: '', password: '', quota: 1024 });
@@ -175,39 +189,23 @@ const EmailSettings = () => {
     if (!selectedDomain) return;
 
     try {
-      const response = await fetch(`/api/email/domains/${selectedDomain.virtual_host_id}/forwarders`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(forwarderForm)
-      });
-
-      if (!response.ok) throw new Error('Failed to create forwarder');
+      await api.post(`/email/domains/${selectedDomain.virtual_host_id}/forwarders`, forwarderForm);
 
       setShowForwarderModal(false);
       setForwarderForm({ source: '', destination: '' });
       fetchDomains();
     } catch (err) {
-      setError('Failed to create forwarder');
+      setError(err.message || 'Failed to create forwarder');
       console.error('Error creating forwarder:', err);
     }
   };
 
   const handleDeleteAccount = async (accountId) => {
-    if (!window.confirm('Are you sure you want to delete this email account?')) return;
-
     try {
-      const response = await fetch(`/api/email/accounts/${accountId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
+      await email.deleteAccount(selectedDomain?.virtual_host_id, accountId);
 
-      if (!response.ok) throw new Error('Failed to delete account');
-
+      setShowDeleteModal(false);
+      setAccountToDelete(null);
       fetchDomains();
     } catch (err) {
       setError('Failed to delete account');
@@ -219,14 +217,7 @@ const EmailSettings = () => {
     if (!window.confirm('Are you sure you want to delete this forwarder?')) return;
 
     try {
-      const response = await fetch(`/api/email/forwarders/${forwarderId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      if (!response.ok) throw new Error('Failed to delete forwarder');
+      await api.delete(`/email/forwarders/${forwarderId}`);
 
       fetchDomains();
     } catch (err) {
@@ -235,22 +226,7 @@ const EmailSettings = () => {
     }
   };
 
-  const handleRefreshQuota = async (accountId) => {
-    try {
-      const response = await fetch(`/api/email/accounts/${accountId}/quota`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      if (!response.ok) throw new Error('Failed to refresh quota');
-
-      fetchDomains();
-    } catch (err) {
-      setError('Failed to refresh quota');
-      console.error('Error refreshing quota:', err);
-    }
-  };
+  
 
   const handlePasswordReset = async (e) => {
     e.preventDefault();
@@ -267,18 +243,9 @@ const EmailSettings = () => {
     }
 
     try {
-      const response = await fetch(`/api/email/accounts/${selectedAccount.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          password: passwordResetForm.newPassword
-        })
+      await api.put(`/email/accounts/${selectedAccount.id}`, {
+        password: passwordResetForm.newPassword
       });
-
-      if (!response.ok) throw new Error('Failed to reset password');
 
       setShowPasswordResetModal(false);
       setPasswordResetForm({ newPassword: '', confirmPassword: '' });
@@ -291,49 +258,33 @@ const EmailSettings = () => {
     }
   };
 
-  const handleQuotaUpdate = async (e) => {
-    e.preventDefault();
-    if (!selectedAccount) return;
-
+  const handleSyncPostfix = async () => {
     try {
-      const response = await fetch(`/api/email/accounts/${selectedAccount.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          quota: quotaForm.quota
-        })
-      });
-
-      if (!response.ok) throw new Error('Failed to update quota');
-
-      setShowQuotaModal(false);
-      setQuotaForm({ quota: 1024 });
-      setSelectedAccount(null);
-      fetchDomains();
+      setSyncing(true);
       setError(null);
+      const { data } = await api.post(`/system/postfix/sync`, { use_minimal_schema: true, users_table: 'email_users' });
+      if (data?.success === false) {
+        throw new Error(data?.error || 'Failed to sync Postfix');
+      }
+      // Refresh domains so UI reflects any changes
+      fetchDomains();
+      alert('Postfix synced successfully');
     } catch (err) {
-      setError('Failed to update quota');
-      console.error('Error updating quota:', err);
+      console.error('Error syncing Postfix:', err);
+      setError(err.message || 'Failed to sync Postfix');
+    } finally {
+      setSyncing(false);
     }
   };
+
+  
 
   const handleRoundcubeAccess = (account) => {
     const redirect = roundcube.redirectUrl({ email: account.email, domain: selectedDomain?.domain });
     window.open(redirect, '_blank', 'noopener');
   };
 
-  const formatQuotaUsage = (used, total) => {
-    const percentage = (used / total) * 100;
-    return {
-      percentage: Math.min(percentage, 100),
-      used: used.toFixed(1),
-      total: total,
-      color: percentage > 90 ? '#ef4444' : percentage > 70 ? '#f59e0b' : '#22c55e'
-    };
-  };
+  
 
   if (loading) {
     return (
@@ -348,13 +299,25 @@ const EmailSettings = () => {
       <div className="max-w-7xl mx-auto p-6">
         {/* Header */}
         <div className="mb-8">
-          <div>
-            <h1 className="text-2xl font-semibold" style={{ color: 'var(--primary-text)', marginBottom: '8px' }}>
-              Email Management
-            </h1>
-            <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-              Manage email accounts and forwarders for your Virtual Hosts
-            </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold" style={{ color: 'var(--primary-text)', marginBottom: '8px' }}>
+                Email Management
+              </h1>
+              <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
+                Manage email accounts and forwarders for your Virtual Hosts
+              </p>
+            </div>
+            <button
+              onClick={handleSyncPostfix}
+              disabled={syncing}
+              className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
+              style={{ backgroundColor: 'var(--accent-color)', color: 'white', opacity: syncing ? 0.8 : 1 }}
+              title="Generate Postfix maps and reload Postfix"
+            >
+              <ArrowPathIcon className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+              <span>{syncing ? 'Syncing…' : 'Sync Postfix'}</span>
+            </button>
           </div>
         </div>
 
@@ -444,31 +407,7 @@ const EmailSettings = () => {
             </div>
           </div>
 
-          <div className="rounded-xl border p-6" style={{ 
-            backgroundColor: 'var(--card-bg)', 
-            borderColor: 'var(--border-color)' 
-          }}>
-            <div className="flex items-center">
-              <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ 
-                backgroundColor: 'rgba(168, 85, 247, 0.15)' 
-              }}>
-                <UserIcon className="w-6 h-6" style={{ color: '#a855f7' }} />
-              </div>
-              <div className="ml-4">
-                <h3 className="text-2xl font-bold" style={{ color: 'var(--primary-text)' }}>
-                  {(() => {
-                    const totalQuota = domains.reduce((total, domain) => 
-                      total + (domain.accounts?.reduce((acc, account) => acc + account.quota, 0) || 0), 0
-                    );
-                    return (totalQuota / 1024).toFixed(1);
-                  })()}
-                </h3>
-                <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                  Total Quota (GB)
-                </p>
-              </div>
-            </div>
-          </div>
+          
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -506,16 +445,16 @@ const EmailSettings = () => {
                 ) : (
                   domains.map((domain) => (
                     <div
-                      key={domain.id}
+                      key={domain.domain}
                       onClick={() => setSelectedDomain(domain)}
                       className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                        selectedDomain?.id === domain.id ? 'ring-2' : ''
+                        selectedDomain?.domain === domain.domain ? 'ring-2' : ''
                       }`}
                       style={{
-                        backgroundColor: selectedDomain?.id === domain.id 
+                        backgroundColor: selectedDomain?.domain === domain.domain 
                           ? 'rgba(59, 130, 246, 0.1)' 
                           : 'var(--secondary-bg)',
-                        ringColor: selectedDomain?.id === domain.id ? '#3b82f6' : 'transparent'
+                        ringColor: selectedDomain?.domain === domain.domain ? '#3b82f6' : 'transparent'
                       }}
                     >
                       <div className="flex items-center justify-between">
@@ -556,7 +495,7 @@ const EmailSettings = () => {
                         {selectedDomain.domain}
                       </h2>
                       <p className="text-sm mt-1" style={{ color: 'var(--secondary-text)' }}>
-                        Created: {new Date(selectedDomain.created_at).toLocaleDateString()}
+                        Created: {selectedDomain.created_at ? new Date(selectedDomain.created_at).toLocaleDateString() : 'N/A'}
                       </p>
                     </div>
                             <div className="flex items-center space-x-3">
@@ -618,10 +557,9 @@ const EmailSettings = () => {
                         {selectedDomain.accounts && selectedDomain.accounts.length > 0 ? (
                           <div className="space-y-4">
                             {selectedDomain.accounts.map((account) => {
-                              const quotaInfo = formatQuotaUsage(account.used_quota || 0, account.quota);
                               return (
                                 <div
-                                  key={account.id}
+                                  key={account.email}
                                   className="p-4 rounded-lg border"
                     style={{ 
                                     backgroundColor: 'var(--secondary-bg)', 
@@ -639,82 +577,73 @@ const EmailSettings = () => {
                                         <h3 className="font-medium" style={{ color: 'var(--primary-text)' }}>
                                           {account.email}
                                         </h3>
-                                        <div className="flex items-center space-x-2">
-                                          <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                                            Quota: {quotaInfo.used} MB / {quotaInfo.total} MB
-                                          </p>
-                                          <button
-                                            onClick={() => handleRefreshQuota(account.id)}
-                                            className="p-1 rounded transition-colors"
-                                            style={{ color: 'var(--secondary-text)' }}
-                                            title="Refresh quota usage"
-                                          >
-                                            <ArrowPathIcon className="w-3 h-3" />
-                                          </button>
-                </div>
+                                        <div className="flex items-center space-x-2"></div>
                                       </div>
                                     </div>
                                     <div className="flex items-center space-x-3">
-                                      <div className="w-24 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--border-color)' }}>
-                  <div 
-                                          className="h-full transition-all"
-                    style={{ 
-                                            width: `${quotaInfo.percentage}%`, 
-                                            backgroundColor: quotaInfo.color 
-                    }}
-                  />
-                </div>
-                                      <button
-                                        onClick={() => {
-                                          setEditingAccount(account);
-                                          setAccountForm({
-                                            username: account.username,
-                                            password: '',
-                                            quota: account.quota
-                                          });
-                                          setShowAccountModal(true);
-                                        }}
-                                        className="p-2 rounded transition-colors"
-                                        style={{ color: 'var(--secondary-text)' }}
-                                      >
-                                        <PencilIcon className="w-4 h-4" />
-                                      </button>
-                                      <button
-                                        onClick={() => handleDeleteAccount(account.id)}
-                                        className="p-2 rounded transition-colors"
-                                        style={{ color: 'var(--secondary-text)' }}
-                                      >
-                                        <TrashIcon className="w-4 h-4" />
-                                      </button>
+                                      {account.id && (
+                                        <>
+                                          <button
+                                            onClick={() => {
+                                              setEditingAccount(account);
+                                              setAccountForm({
+                                                username: account.username,
+                                                password: '',
+                                                quota: account.quota
+                                              });
+                                              setShowAccountModal(true);
+                                            }}
+                                            className="p-2 rounded transition-colors"
+                                            style={{ color: 'var(--secondary-text)' }}
+                                          >
+                                            <PencilIcon className="w-4 h-4" />
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              setAccountToDelete(account);
+                                              setShowDeleteModal(true);
+                                            }}
+                                            className="p-2 rounded transition-colors"
+                                            style={{ color: 'var(--secondary-text)' }}
+                                          >
+                                            <TrashIcon className="w-4 h-4" />
+                                          </button>
+                                        </>
+                                      )}
           </div>
 
                                     <div className="flex items-center space-x-2 mt-3">
-                                      <button
-                                        onClick={() => {
-                                          setSelectedAccount(account);
-                                          setPasswordResetForm({ newPassword: '', confirmPassword: '' });
-                                          setShowPasswordResetModal(true);
-                                        }}
-                                        className="px-3 py-1 rounded text-xs font-medium transition-colors flex items-center space-x-1"
-                                        style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', color: '#f59e0b' }}
-                                        title="Reset Password"
-                                      >
-                                        <KeyIcon className="w-3 h-3" />
-                                        <span>Reset Password</span>
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          setSelectedAccount(account);
-                                          setQuotaForm({ quota: account.quota });
-                                          setShowQuotaModal(true);
-                                        }}
-                                        className="px-3 py-1 rounded text-xs font-medium transition-colors flex items-center space-x-1"
-                                        style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#a855f7' }}
-                                        title="Set Quota"
-                                      >
-                                        <CogIcon className="w-3 h-3" />
-                                        <span>Set Quota</span>
-                                      </button>
+                                      {account.id && (
+                                        <button
+                                          onClick={() => {
+                                            setSelectedAccount(account);
+                                            setPasswordResetForm({ newPassword: '', confirmPassword: '' });
+                                            setShowPasswordResetModal(true);
+                                          }}
+                                          className="px-3 py-1 rounded text-xs font-medium transition-colors flex items-center space-x-1"
+                                          style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', color: '#f59e0b' }}
+                                          title="Reset Password"
+                                        >
+                                          <KeyIcon className="w-3 h-3" />
+                                          <span>Reset Password</span>
+                                        </button>
+                                      )}
+                                      {!account.id && (
+                                        <button
+                                          onClick={() => {
+                                            setEditingAccount(null);
+                                            setAccountForm({ username: account.username, password: '', quota: account.quota ?? 1024 });
+                                            setShowAccountModal(true);
+                                          }}
+                                          className="px-3 py-1 rounded text-xs font-medium transition-colors flex items-center space-x-1"
+                                          style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6' }}
+                                          title="Start managing this account"
+                                        >
+                                          <UserIcon className="w-3 h-3" />
+                                          <span>Manage</span>
+                                        </button>
+                                      )}
+                                      
                                       <button
                                         onClick={() => handleRoundcubeAccess(account)}
                                         className="px-3 py-1 rounded text-xs font-medium transition-colors flex items-center space-x-1"
@@ -737,7 +666,7 @@ const EmailSettings = () => {
                               No email accounts yet
                             </p>
                             <button
-                              onClick={() => setShowAccountModal(true)}
+                              onClick={() => { setEditingAccount(null); setAccountForm({ username: '', password: '', quota: 1024 }); setShowAccountModal(true); }}
                               className="mt-2 text-sm underline"
                               style={{ color: 'var(--accent-color)' }}
                             >
@@ -827,402 +756,195 @@ const EmailSettings = () => {
         </div>
 
       {/* Account Modal */}
-      {showAccountModal && (
-        <div className="fixed inset-0 z-[100] overflow-y-auto">
-          <div 
-            className="fixed inset-0 transition-opacity"
-            style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-            onClick={() => setShowAccountModal(false)}
-          />
-          <div className="flex min-h-full items-center justify-center p-4">
-            <div 
-              className="relative w-full max-w-md transform rounded-xl shadow-2xl transition-all"
-              style={{ backgroundColor: 'var(--card-bg)' }}
-            >
-              <div className="p-6">
-                <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--primary-text)' }}>
-                  {editingAccount ? 'Edit Email Account' : 'Add Email Account'}
-                </h3>
-                <form onSubmit={handleCreateAccount}>
-                  <div className="space-y-4">
-                <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                        Username
+      <BaseModal
+        isOpen={showAccountModal}
+        onClose={() => setShowAccountModal(false)}
+        title={editingAccount ? 'Edit Email Account' : 'Add Email Account'}
+        maxWidth="max-w-md"
+        footer={(
+          <div className="flex items-center justify-end gap-3">
+            <ModalButton variant="secondary" onClick={() => setShowAccountModal(false)}>Cancel</ModalButton>
+            <ModalButton onClick={() => document.getElementById('accountFormSubmit').click()}>
+              {editingAccount ? 'Update Account' : 'Create Account'}
+            </ModalButton>
+          </div>
+        )}
+      >
+        <ModalSection>
+          <form onSubmit={handleCreateAccount}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                  Username
                 </label>
-                      <div className="flex">
-                <input
-                          type="text"
-                          value={accountForm.username}
-                          onChange={(e) => setAccountForm(prev => ({ ...prev, username: e.target.value }))}
-                          placeholder="user"
-                          className="flex-1 px-3 py-2 rounded-l-lg border-r-0 border"
-                          style={{ 
-                            backgroundColor: 'var(--input-bg)', 
-                            borderColor: 'var(--border-color)',
-                            color: 'var(--primary-text)'
-                          }}
-                          disabled={editingAccount}
+                <div className="flex">
+                  <input
+                    type="text"
+                    value={accountForm.username}
+                    onChange={(e) => setAccountForm(prev => ({ ...prev, username: e.target.value }))}
+                    placeholder="user"
+                    className="flex-1 px-3 py-2 rounded-l-lg border-r-0 border"
+                    style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                    disabled={editingAccount}
                     required
-                />
-                        <div 
-                          className="px-3 py-2 rounded-r-lg border flex items-center"
-                          style={{ 
-                            backgroundColor: 'var(--secondary-bg)', 
-                            borderColor: 'var(--border-color)',
-                            color: 'var(--secondary-text)'
-                          }}
-                        >
-                          @{selectedDomain?.domain}
-                        </div>
-                      </div>
+                  />
+                  <div className="px-3 py-2 rounded-r-lg border flex items-center" style={{ backgroundColor: 'var(--secondary-bg)', borderColor: 'var(--border-color)', color: 'var(--secondary-text)' }}>
+                    @{selectedDomain?.domain}
+                  </div>
+                </div>
               </div>
               <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
                   Password
                 </label>
                 <input
                   type="password"
-                        value={accountForm.password}
-                        onChange={(e) => setAccountForm(prev => ({ ...prev, password: e.target.value }))}
-                        placeholder={editingAccount ? "Leave blank to keep current password" : "••••••••"}
-                        className="w-full px-3 py-2 rounded-lg border"
-                        style={{ 
-                          backgroundColor: 'var(--input-bg)', 
-                          borderColor: 'var(--border-color)',
-                          color: 'var(--primary-text)'
-                        }}
-                    required={!editingAccount}
+                  value={accountForm.password}
+                  onChange={(e) => setAccountForm(prev => ({ ...prev, password: e.target.value }))}
+                  placeholder={editingAccount ? 'Leave blank to keep current password' : '••••••••'}
+                  className="w-full px-3 py-2 rounded-lg border"
+                  style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                  required={!editingAccount}
+                />
+              </div>
+              
+            </div>
+            <button id="accountFormSubmit" type="submit" className="hidden">submit</button>
+          </form>
+        </ModalSection>
+      </BaseModal>
+
+      {/* Delete Account Modal */}
+      <BaseModal
+        isOpen={showDeleteModal}
+        onClose={() => { setShowDeleteModal(false); setAccountToDelete(null); }}
+        title="Delete Email Account"
+        maxWidth="max-w-md"
+        footer={(
+          <div className="flex items-center justify-end gap-3">
+            <ModalButton variant="secondary" onClick={() => { setShowDeleteModal(false); setAccountToDelete(null); }}>Cancel</ModalButton>
+            <ModalButton variant="danger" onClick={() => accountToDelete && handleDeleteAccount(accountToDelete.id)}>Delete</ModalButton>
+          </div>
+        )}
+      >
+        <ModalSection>
+          <p className="text-sm" style={{ color: 'var(--primary-text)' }}>
+            Are you sure you want to delete <strong>{accountToDelete?.email}</strong>? This action cannot be undone.
+          </p>
+        </ModalSection>
+      </BaseModal>
+
+      {/* Forwarder Modal */}
+      <BaseModal
+        isOpen={showForwarderModal}
+        onClose={() => setShowForwarderModal(false)}
+        title="Add Email Forwarder"
+        maxWidth="max-w-md"
+        footer={(
+          <div className="flex items-center justify-end gap-3">
+            <ModalButton variant="secondary" onClick={() => setShowForwarderModal(false)}>Cancel</ModalButton>
+            <ModalButton onClick={() => document.getElementById('forwarderFormSubmit').click()}>Create Forwarder</ModalButton>
+          </div>
+        )}
+      >
+        <ModalSection>
+          <form onSubmit={handleCreateForwarder}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                  Source Address
+                </label>
+                <div className="flex">
+                  <input
+                    type="text"
+                    value={forwarderForm.source}
+                    onChange={(e) => setForwarderForm(prev => ({ ...prev, source: e.target.value }))}
+                    placeholder="info"
+                    className="flex-1 px-3 py-2 rounded-l-lg border-r-0 border"
+                    style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                    required
+                  />
+                  <div className="px-3 py-2 rounded-r-lg border flex items-center" style={{ backgroundColor: 'var(--secondary-bg)', borderColor: 'var(--border-color)', color: 'var(--secondary-text)' }}>
+                    @{selectedDomain?.domain}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                  Destination Email
+                </label>
+                <input
+                  type="email"
+                  value={forwarderForm.destination}
+                  onChange={(e) => setForwarderForm(prev => ({ ...prev, destination: e.target.value }))}
+                  placeholder="user@example.com"
+                  className="w-full px-3 py-2 rounded-lg border"
+                  style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                  required
+                />
+              </div>
+            </div>
+            <button id="forwarderFormSubmit" type="submit" className="hidden">submit</button>
+          </form>
+        </ModalSection>
+      </BaseModal>
+
+      {/* Password Reset Modal */}
+      <BaseModal
+        isOpen={showPasswordResetModal}
+        onClose={() => setShowPasswordResetModal(false)}
+        title="Reset Password"
+        maxWidth="max-w-md"
+        footer={(
+          <div className="flex items-center justify-end gap-3">
+            <ModalButton variant="secondary" onClick={() => setShowPasswordResetModal(false)}>Cancel</ModalButton>
+            <ModalButton variant="warning" onClick={() => document.getElementById('passwordResetFormSubmit').click()}>Reset Password</ModalButton>
+          </div>
+        )}
+      >
+        <ModalSection>
+          <p className="text-sm mb-4" style={{ color: 'var(--secondary-text)' }}>
+            Reset password for: <strong>{selectedAccount?.email}</strong>
+          </p>
+          <form onSubmit={handlePasswordReset}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  value={passwordResetForm.newPassword}
+                  onChange={(e) => setPasswordResetForm(prev => ({ ...prev, newPassword: e.target.value }))}
+                  placeholder="Enter new password"
+                  className="w-full px-3 py-2 rounded-lg border"
+                  style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                  required
+                  minLength="6"
                 />
               </div>
               <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                    Quota (MB)
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                  Confirm Password
                 </label>
-                  <input
-                    type="number"
-                        value={accountForm.quota}
-                        onChange={(e) => setAccountForm(prev => ({ ...prev, quota: parseInt(e.target.value) }))}
-                    min="100"
-                        max="10240"
-                        className="w-full px-3 py-2 rounded-lg border"
-                        style={{ 
-                          backgroundColor: 'var(--input-bg)', 
-                          borderColor: 'var(--border-color)',
-                          color: 'var(--primary-text)'
-                        }}
-                    required
-                  />
-              </div>
-                  </div>
-                  <div className="flex items-center justify-end space-x-3 mt-6">
-                    <button
-                      type="button"
-                      onClick={() => setShowAccountModal(false)}
-                      className="px-4 py-2 rounded-lg font-medium transition-colors"
-                      style={{ backgroundColor: 'var(--secondary-bg)', color: 'var(--primary-text)' }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-4 py-2 rounded-lg font-medium transition-colors"
-                      style={{ backgroundColor: 'var(--accent-color)', color: 'white' }}
-                    >
-                      {editingAccount ? 'Update Account' : 'Create Account'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Forwarder Modal */}
-      {showForwarderModal && (
-        <div className="fixed inset-0 z-[100] overflow-y-auto">
-          <div 
-            className="fixed inset-0 transition-opacity"
-            style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-            onClick={() => setShowForwarderModal(false)}
-          />
-          <div className="flex min-h-full items-center justify-center p-4">
-            <div 
-              className="relative w-full max-w-md transform rounded-xl shadow-2xl transition-all"
-              style={{ backgroundColor: 'var(--card-bg)' }}
-            >
-              <div className="p-6">
-                <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--primary-text)' }}>
-                  Add Email Forwarder
-                </h3>
-                <form onSubmit={handleCreateForwarder}>
-                  <div className="space-y-4">
-              <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                        Source Address
-                </label>
-                      <div className="flex">
                 <input
-                          type="text"
-                          value={forwarderForm.source}
-                          onChange={(e) => setForwarderForm(prev => ({ ...prev, source: e.target.value }))}
-                          placeholder="info"
-                          className="flex-1 px-3 py-2 rounded-l-lg border-r-0 border"
-                          style={{ 
-                            backgroundColor: 'var(--input-bg)', 
-                            borderColor: 'var(--border-color)',
-                            color: 'var(--primary-text)'
-                          }}
-                          required
-                        />
-                        <div 
-                          className="px-3 py-2 rounded-r-lg border flex items-center"
-                          style={{ 
-                            backgroundColor: 'var(--secondary-bg)', 
-                            borderColor: 'var(--border-color)',
-                            color: 'var(--secondary-text)'
-                          }}
-                        >
-                          @{selectedDomain?.domain}
-                </div>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                        Destination Email
-                      </label>
-                  <input
-                        type="email"
-                        value={forwarderForm.destination}
-                        onChange={(e) => setForwarderForm(prev => ({ ...prev, destination: e.target.value }))}
-                        placeholder="user@example.com"
-                        className="w-full px-3 py-2 rounded-lg border"
-                        style={{ 
-                          backgroundColor: 'var(--input-bg)', 
-                          borderColor: 'var(--border-color)',
-                          color: 'var(--primary-text)'
-                        }}
-                        required
-                      />
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end space-x-3 mt-6">
-                    <button
-                      type="button"
-                      onClick={() => setShowForwarderModal(false)}
-                      className="px-4 py-2 rounded-lg font-medium transition-colors"
-                      style={{ backgroundColor: 'var(--secondary-bg)', color: 'var(--primary-text)' }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-4 py-2 rounded-lg font-medium transition-colors"
-                      style={{ backgroundColor: 'var(--accent-color)', color: 'white' }}
-                    >
-                      Create Forwarder
-                    </button>
-                  </div>
-                </form>
+                  type="password"
+                  value={passwordResetForm.confirmPassword}
+                  onChange={(e) => setPasswordResetForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                  placeholder="Confirm new password"
+                  className="w-full px-3 py-2 rounded-lg border"
+                  style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                  required
+                  minLength="6"
+                />
               </div>
             </div>
-          </div>
-        </div>
-      )}
+            <button id="passwordResetFormSubmit" type="submit" className="hidden">submit</button>
+          </form>
+        </ModalSection>
+      </BaseModal>
 
-      {/* Password Reset Modal */}
-      {showPasswordResetModal && (
-        <div className="fixed inset-0 z-[100] overflow-y-auto">
-          <div 
-            className="fixed inset-0 transition-opacity"
-            style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-            onClick={() => setShowPasswordResetModal(false)}
-          />
-          <div className="flex min-h-full items-center justify-center p-4">
-            <div 
-              className="relative w-full max-w-md transform rounded-xl shadow-2xl transition-all"
-              style={{ backgroundColor: 'var(--card-bg)' }}
-            >
-              <div className="p-6">
-                <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--primary-text)' }}>
-                  Reset Password
-                </h3>
-                <p className="text-sm mb-4" style={{ color: 'var(--secondary-text)' }}>
-                  Reset password for: <strong>{selectedAccount?.email}</strong>
-                </p>
-                <form onSubmit={handlePasswordReset}>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                        New Password
-                  </label>
-                      <input
-                        type="password"
-                        value={passwordResetForm.newPassword}
-                        onChange={(e) => setPasswordResetForm(prev => ({ ...prev, newPassword: e.target.value }))}
-                        placeholder="Enter new password"
-                        className="w-full px-3 py-2 rounded-lg border"
-                        style={{ 
-                          backgroundColor: 'var(--input-bg)', 
-                          borderColor: 'var(--border-color)',
-                          color: 'var(--primary-text)'
-                        }}
-                        required
-                        minLength="6"
-                      />
-                </div>
-                  <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                        Confirm Password
-                    </label>
-                      <input
-                        type="password"
-                        value={passwordResetForm.confirmPassword}
-                        onChange={(e) => setPasswordResetForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
-                        placeholder="Confirm new password"
-                        className="w-full px-3 py-2 rounded-lg border"
-                        style={{ 
-                          backgroundColor: 'var(--input-bg)', 
-                          borderColor: 'var(--border-color)',
-                          color: 'var(--primary-text)'
-                        }}
-                      required
-                        minLength="6"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end space-x-3 mt-6">
-                    <button
-                      type="button"
-                      onClick={() => setShowPasswordResetModal(false)}
-                      className="px-4 py-2 rounded-lg font-medium transition-colors"
-                      style={{ backgroundColor: 'var(--secondary-bg)', color: 'var(--primary-text)' }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-4 py-2 rounded-lg font-medium transition-colors"
-                      style={{ backgroundColor: '#f59e0b', color: 'white' }}
-                    >
-                      Reset Password
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
-              </div>
-                )}
-
-      {/* Quota Management Modal */}
-      {showQuotaModal && (
-        <div className="fixed inset-0 z-[100] overflow-y-auto">
-          <div 
-            className="fixed inset-0 transition-opacity"
-            style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-            onClick={() => setShowQuotaModal(false)}
-          />
-          <div className="flex min-h-full items-center justify-center p-4">
-            <div 
-              className="relative w-full max-w-md transform rounded-xl shadow-2xl transition-all"
-              style={{ backgroundColor: 'var(--card-bg)' }}
-            >
-              <div className="p-6">
-                <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--primary-text)' }}>
-                  Set Quota
-                </h3>
-                <p className="text-sm mb-4" style={{ color: 'var(--secondary-text)' }}>
-                  Set quota for: <strong>{selectedAccount?.email}</strong>
-                </p>
-                <form onSubmit={handleQuotaUpdate}>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                        Quota (MB)
-                      </label>
-                      <input
-                        type="number"
-                        value={quotaForm.quota}
-                        onChange={(e) => setQuotaForm(prev => ({ ...prev, quota: parseInt(e.target.value) }))}
-                        min="100"
-                        max="10240"
-                        step="100"
-                        className="w-full px-3 py-2 rounded-lg border"
-                        style={{ 
-                          backgroundColor: 'var(--input-bg)', 
-                          borderColor: 'var(--border-color)',
-                          color: 'var(--primary-text)'
-                        }}
-                        required
-                      />
-                      <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
-                        Current quota: {selectedAccount?.quota} MB
-                      </p>
-                    </div>
-                    <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg">
-                      <h4 className="text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                        Recommended Quotas:
-                      </h4>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <button
-                          type="button"
-                          onClick={() => setQuotaForm({ quota: 512 })}
-                          className="p-2 rounded text-left hover:bg-gray-100 dark:hover:bg-gray-700"
-                          style={{ color: 'var(--secondary-text)' }}
-                        >
-                          512 MB - Basic
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setQuotaForm({ quota: 1024 })}
-                          className="p-2 rounded text-left hover:bg-gray-100 dark:hover:bg-gray-700"
-                          style={{ color: 'var(--secondary-text)' }}
-                        >
-                          1 GB - Standard
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setQuotaForm({ quota: 2048 })}
-                          className="p-2 rounded text-left hover:bg-gray-100 dark:hover:bg-gray-700"
-                          style={{ color: 'var(--secondary-text)' }}
-                        >
-                          2 GB - Professional
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setQuotaForm({ quota: 5120 })}
-                          className="p-2 rounded text-left hover:bg-gray-100 dark:hover:bg-gray-700"
-                          style={{ color: 'var(--secondary-text)' }}
-                        >
-                          5 GB - Enterprise
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end space-x-3 mt-6">
-                    <button
-                      type="button"
-                      onClick={() => setShowQuotaModal(false)}
-                      className="px-4 py-2 rounded-lg font-medium transition-colors"
-                      style={{ backgroundColor: 'var(--secondary-bg)', color: 'var(--primary-text)' }}
-                >
-                  Cancel
-                    </button>
-                    <button
-                    type="submit"
-                      className="px-4 py-2 rounded-lg font-medium transition-colors"
-                      style={{ backgroundColor: '#a855f7', color: 'white' }}
-                  >
-                      Update Quota
-                    </button>
-              </div>
-            </form>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      
     </div>
   );
 };

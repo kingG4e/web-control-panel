@@ -12,30 +12,35 @@ try:
 except Exception:
     dns = None
 
+from config import Config
+
 class BindService:
     def __init__(self):
-        # Import config here to avoid circular imports
-        from config import Config
+        # Determine if using remote services
+        self.use_remote = Config.USE_REMOTE_DNS
         
-        # Use production BIND9 paths from config or environment variables
-        self.bind_config_dir = os.environ.get('BIND_CONFIG_DIR', Config.BIND_CONFIG_DIR)
-        self.zones_dir = os.environ.get('BIND_ZONES_DIR', Config.BIND_ZONES_DIR)
-        self.named_conf_local = os.path.join(self.bind_config_dir, 'named.conf.local')
-        
-        # Detect environment - use development paths only if explicitly set
-        self.is_development = (
-            os.getenv('FLASK_ENV') == 'development' or 
-            os.getenv('BIND9_DEV_MODE', 'False').lower() == 'true'
-        )
-        
-        # Override with development paths if in development mode
-        if self.is_development:
-            backend_dir = os.path.dirname(os.path.dirname(__file__))
-            self.zones_dir = os.path.join(backend_dir, 'bind', 'zones')
-            self.named_conf_local = os.path.join(backend_dir, 'bind', 'conf', 'named.conf.local')
-            print(f"BIND9 Development Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
+        if self.use_remote:
+            self.remote_server = Config.REMOTE_DNS_SERVER
+            self.remote_port = Config.REMOTE_DNS_PORT
+            self.remote_key_path = Config.REMOTE_DNS_KEY_PATH
         else:
-            print(f"BIND9 Production Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
+            # Use production BIND9 paths from config or environment variables
+            self.bind_config_dir = os.environ.get('BIND_CONFIG_DIR', Config.BIND_CONFIG_DIR)
+            self.zones_dir = os.environ.get('BIND_ZONES_DIR', Config.BIND_ZONES_DIR)
+            self.named_conf_local = os.path.join(self.bind_config_dir, 'named.conf.local')
+            
+            # Detect environment - use development paths only if explicitly enabled
+            # Important: FLASK_ENV should NOT influence BIND paths
+            self.is_development = Config.BIND_DEV_MODE
+            
+            # Override with development paths if in development mode
+            if self.is_development:
+                backend_dir = os.path.dirname(os.path.dirname(__file__))
+                self.zones_dir = os.path.join(backend_dir, 'bind', 'zones')
+                self.named_conf_local = os.path.join(backend_dir, 'bind', 'conf', 'named.conf.local')
+                print(f"BIND9 Development Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
+            else:
+                print(f"BIND9 Production Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
         
         self.zone_template = '''$TTL 3600
 $ORIGIN {{ zone.domain_name }}.
@@ -203,6 +208,8 @@ mail    IN A   {{ ip_mail }}
 
     def _ensure_directories(self):
         """Ensure BIND directories exist with proper permissions"""
+        if self.use_remote:
+            return  # Not needed for remote server
         try:
             # Create zones directory
             os.makedirs(self.zones_dir, exist_ok=True)
@@ -229,6 +236,9 @@ mail    IN A   {{ ip_mail }}
 
     def _test_bind_config(self):
         """Test BIND configuration before applying changes"""
+        if self.use_remote:
+            # TODO: Implement remote config test if possible (e.g., using rndc)
+            return True
         try:
             result = subprocess.run(
                 ['named-checkconf'], 
@@ -247,6 +257,19 @@ mail    IN A   {{ ip_mail }}
 
     def _update_named_conf_local(self, domain_name):
         """Add zone configuration to named.conf.local"""
+        if self.use_remote:
+            # Use rndc to add the zone on the remote server
+            try:
+                cmd = ['rndc', '-s', self.remote_server, '-p', str(self.remote_port)]
+                if self.remote_key_path:
+                    cmd.extend(['-k', self.remote_key_path])
+                cmd.extend(['addzone', f'{domain_name} IN {{ type master; file "{self.zones_dir}/db.{domain_name}"; }}'])
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                print(f"Successfully added zone {domain_name} on remote server")
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                raise Exception(f'Failed to add zone on remote server: {e.stderr if hasattr(e, "stderr") else e}')
+            return
+
         zone_conf = f'''zone "{domain_name}" {{
     type master;
     file "{self.zones_dir}/db.{domain_name}";
@@ -290,6 +313,19 @@ mail    IN A   {{ ip_mail }}
 
     def _remove_from_named_conf_local(self, domain_name):
         """Remove a single zone block from named.conf.local safely (no leftovers)."""
+        if self.use_remote:
+            # Use rndc to delete the zone on the remote server
+            try:
+                cmd = ['rndc', '-s', self.remote_server, '-p', str(self.remote_port)]
+                if self.remote_key_path:
+                    cmd.extend(['-k', self.remote_key_path])
+                cmd.extend(['delzone', domain_name])
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                print(f"Successfully deleted zone {domain_name} on remote server")
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                raise Exception(f'Failed to delete zone on remote server: {e.stderr if hasattr(e, "stderr") else e}')
+            return
+
         import os, re
         from datetime import datetime
 
@@ -402,6 +438,17 @@ mail    IN A   {{ ip_mail }}
 
     def _reload_bind(self):
         """Reload BIND service"""
+        if self.use_remote:
+            try:
+                cmd = ['rndc', '-s', self.remote_server, '-p', str(self.remote_port)]
+                if self.remote_key_path:
+                    cmd.extend(['-k', self.remote_key_path])
+                cmd.append('reload')
+                subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+                print(f"BIND reloaded successfully on remote server {self.remote_server}")
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+                print(f"Warning: Could not reload BIND on remote server: {e}")
+            return
         # Skip BIND reload in Windows environment
         if platform.system() == 'Windows' or os.name == 'nt':
             print("Skipping BIND reload in Windows environment")

@@ -1,0 +1,31 @@
+// Local DNS zones managed by Web Control Panel
+
+zone "phu.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.phu.com";
+    allow-transfer { none; };
+};
+
+zone "phu1.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.phu1.com";
+    allow-transfer { none; };
+};
+zone "piya.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.piya.com";
+    allow-transfer { none; };
+};
+
+zone "piyawa.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.piyawa.com";
+    allow-transfer { none; };
+};
+
+zone "webtest.com" {
+    type master;
+    file "/home/user/web-control-panel/backend/bind/zones/db.webtest.com";
+    allow-transfer { none; };
+};
+

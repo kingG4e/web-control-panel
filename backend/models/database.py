@@ -1,10 +1,17 @@
 from datetime import datetime
 from models.base import db
 
+# Association Table for Many-to-Many relationship
+database_user_association = db.Table('database_user_association',
+    db.Column('database_id', db.Integer, db.ForeignKey('database.id'), primary_key=True),
+    db.Column('database_user_id', db.Integer, db.ForeignKey('database_user.id'), primary_key=True)
+)
+
 def init_db(app):
     db.init_app(app)
 
 class Database(db.Model):
+    __tablename__ = 'database'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), unique=True, nullable=False)
     charset = db.Column(db.String(32), default='utf8mb4')
@@ -12,11 +19,17 @@ class Database(db.Model):
     size = db.Column(db.Float)  # Size in MB
     status = db.Column(db.String(50), default='active')
     owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    associated_domain = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships with eager loading
-    users = db.relationship('DatabaseUser', backref='database', lazy='select', cascade='all, delete-orphan')
+    users = db.relationship(
+        'DatabaseUser', 
+        secondary=database_user_association,
+        back_populates='databases',
+        lazy='select'
+    )
     backups = db.relationship('DatabaseBackup', backref='database', lazy='select', cascade='all, delete-orphan')
 
     def to_dict(self, include_relations=True):
@@ -28,6 +41,7 @@ class Database(db.Model):
             'size': self.size,
             'status': self.status,
             'owner_id': self.owner_id,
+            'associated_domain': self.associated_domain,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
@@ -53,8 +67,8 @@ class Database(db.Model):
         return query.all()
 
 class DatabaseUser(db.Model):
+    __tablename__ = 'database_user'
     id = db.Column(db.Integer, primary_key=True)
-    database_id = db.Column(db.Integer, db.ForeignKey('database.id'), nullable=False)
     username = db.Column(db.String(32), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False)
     host = db.Column(db.String(255), default='%')
@@ -63,10 +77,16 @@ class DatabaseUser(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    databases = db.relationship(
+        'Database',
+        secondary=database_user_association,
+        back_populates='users',
+        lazy='select'
+    )
+
     def to_dict(self, include_relations=True):
-        return {
+        result = {
             'id': self.id,
-            'database_id': self.database_id,
             'username': self.username,
             'host': self.host,
             'privileges': self.privileges,
@@ -74,6 +94,9 @@ class DatabaseUser(db.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
+        if include_relations:
+            result['databases'] = [db.to_dict(include_relations=False) for db in self.databases]
+        return result
 
 class DatabaseBackup(db.Model):
     id = db.Column(db.Integer, primary_key=True)

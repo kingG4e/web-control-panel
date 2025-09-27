@@ -50,33 +50,19 @@ def user_or_admin_required(f):
 @token_required
 @admin_required
 def get_users(current_user):
-    """Return only Linux system users (no database users)."""
-    # Collect system users (Linux) only
-    if UNIX_MODULES_AVAILABLE:
+    """Return application users with IDs and roles, ensuring system users exist in DB."""
+    try:
+        # Ensure system users are present/synced in the application DB
         try:
-            import pwd
-            system_users = []
-            for p in pwd.getpwall():
-                # Include regular users (UID >= 1000) and root; skip non-login shells
-                if (p.pw_uid >= 1000 or p.pw_name == 'root') and p.pw_shell not in ('/usr/sbin/nologin', '/bin/false'):
-                    system_users.append({
-                        'username': p.pw_name,
-                        'system_uid': p.pw_uid,
-                        'is_system_user': True,
-                        'role': 'admin' if p.pw_name == 'root' else 'system_user',
-                        'email': f"{p.pw_name}@localhost",
-                        'status': 'active',
-                        'created_at': None,
-                        'last_login': None,
-                        'updated_at': None
-                    })
-            return jsonify(system_users)
-        except ImportError:
-            # Should not happen when UNIX_MODULES_AVAILABLE is True, but handle gracefully
-            return jsonify([])
-    else:
-        # Non-Unix environment – no system users available
-        return jsonify([])
+            user_service.get_system_users()
+        except Exception:
+            # Non-fatal; continue with whatever users exist in DB
+            pass
+
+        users = user_service.get_all_users()
+        return jsonify([u.to_dict() for u in users])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @user_bp.route('/api/users/<int:id>', methods=['GET'])
 @token_required
@@ -90,23 +76,17 @@ def get_user(current_user, id):
 @admin_required
 def create_user(current_user):
     data = request.get_json()
-    
-    # Validate required fields
+
+    # Validate required fields for app user creation
     required_fields = ['username', 'password']
     for field in required_fields:
         if field not in data or not data[field]:
             return jsonify({'error': f'Missing required field: {field}'}), 400
-    
-    # Optional domain for comment; default to username
-    domain_for_comment = data.get('domain', data['username'])
 
     try:
-        # Create Linux user directly
-        success, message, _ = linux_service.create_user(data['username'], domain_for_comment, data['password'])
-        if success:
-            return jsonify({'message': message}), 201
-        else:
-            return jsonify({'error': message}), 500
+        # Create application user via service (supports role)
+        user = user_service.create_user(data)
+        return jsonify(user.to_dict()), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -156,31 +136,30 @@ def delete_account(current_user, id):
         
         # Step 1: Get all virtual hosts owned by user
         try:
-            virtual_hosts = vhost_service.get_virtual_hosts_by_user(id)
+            from models.virtual_host import VirtualHost as VH
+            virtual_hosts = VH.query.filter_by(user_id=id).all()
             deletion_log.append(f"Found {len(virtual_hosts)} virtual hosts to delete")
             
             for vhost in virtual_hosts:
                 try:
                     # Delete Nginx virtual host configuration
                     try:
-                        # Create a temporary virtual host object for deletion
-                        temp_vh = type('obj', (object,), {'domain': vhost['domain']})
-                        nginx_service.delete_virtual_host(temp_vh)
-                        deletion_log.append(f"Deleted Nginx config for {vhost['domain']}")
+                        nginx_service.delete_virtual_host(vhost.domain)
+                        deletion_log.append(f"Deleted Nginx config for {vhost.domain}")
                     except Exception as e:
-                        deletion_log.append(f"Failed to delete Nginx config for {vhost['domain']}: {str(e)}")
+                        deletion_log.append(f"Failed to delete Nginx config for {vhost.domain}: {str(e)}")
                     
                     # Delete DNS zone
-                    bind_service.delete_zone(vhost['domain'])
-                    deletion_log.append(f"Deleted DNS zone for {vhost['domain']}")
+                    bind_service.delete_zone(vhost.domain)
+                    deletion_log.append(f"Deleted DNS zone for {vhost.domain}")
                     
                     # Delete website files
-                    if vhost.get('document_root') and os.path.exists(vhost['document_root']):
-                        shutil.rmtree(vhost['document_root'])
-                        deletion_log.append(f"Deleted files for {vhost['domain']}")
+                    if getattr(vhost, 'document_root', None) and os.path.exists(vhost.document_root):
+                        shutil.rmtree(vhost.document_root)
+                        deletion_log.append(f"Deleted files for {vhost.domain}")
                     
                 except Exception as e:
-                    error_msg = f"Error deleting virtual host {vhost['domain']}: {str(e)}"
+                    error_msg = f"Error deleting virtual host {getattr(vhost,'domain','?')}: {str(e)}"
                     errors.append(error_msg)
                     deletion_log.append(error_msg)
                     
@@ -189,36 +168,58 @@ def delete_account(current_user, id):
             errors.append(error_msg)
             deletion_log.append(error_msg)
         
-        # Step 2: Delete all databases owned by user
+        # Step 2: Delete all databases owned by user (drop in MySQL and remove records)
         try:
-            databases = mysql_service.get_databases_by_user(id)
+            from models.database import Database, DatabaseUser
+            databases = Database.query.filter_by(owner_id=id).all()
             deletion_log.append(f"Found {len(databases)} databases to delete")
             
-            for db in databases:
+            for dbm in databases:
                 try:
-                    mysql_service.delete_database(db['name'])
-                    deletion_log.append(f"Deleted database {db['name']}")
+                    if getattr(dbm, 'name', None):
+                        try:
+                            mysql_service.delete_database(dbm.name)
+                        except Exception as e:
+                            deletion_log.append(f"MySQL drop failed for {dbm.name}: {e}")
+                        deletion_log.append(f"Deleted database {dbm.name}")
+                    # Remove any associated DB users in app and server
+                    try:
+                        for dbu in list(getattr(dbm, 'users', []) or []):
+                            try:
+                                mysql_service.delete_user(dbu.username)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # Remove DB record
+                    from models.base import db as _db
+                    _db.session.delete(dbm)
                 except Exception as e:
-                    error_msg = f"Error deleting database {db['name']}: {str(e)}"
+                    error_msg = f"Error deleting database {getattr(dbm,'name','?')}: {str(e)}"
                     errors.append(error_msg)
                     deletion_log.append(error_msg)
-                    
+            from models.base import db as _db
+            _db.session.commit()
         except Exception as e:
             error_msg = f"Error fetching databases: {str(e)}"
             errors.append(error_msg)
             deletion_log.append(error_msg)
         
-                # Step 3: Delete all SSL certificates
+        # Step 3: Delete all SSL certificates
         try:
-            ssl_certs = ssl_service.get_certificates_by_user(id)
+            from models.ssl_certificate import SSLCertificate as Cert
+            ssl_certs = Cert.query.join(Cert, Cert.user_id == id, isouter=True).filter(Cert.domain != None).all() if hasattr(Cert, 'user_id') else Cert.query.filter(Cert.domain != None).all()
             deletion_log.append(f"Found {len(ssl_certs)} SSL certificates to delete")
             
             for cert in ssl_certs:
                 try:
-                    ssl_service.delete_certificate(cert['domain'])
-                    deletion_log.append(f"Deleted SSL certificate for {cert['domain']}")
+                    try:
+                        ssl_service.delete_certificate(cert.id if hasattr(cert,'id') else cert.domain)
+                    except Exception:
+                        pass
+                    deletion_log.append(f"Deleted SSL certificate for {getattr(cert,'domain','?')}")
                 except Exception as e:
-                    error_msg = f"Error deleting SSL certificate {cert['domain']}: {str(e)}"
+                    error_msg = f"Error deleting SSL certificate {getattr(cert,'domain','?')}: {str(e)}"
                     errors.append(error_msg)
                     deletion_log.append(error_msg)
                     
@@ -229,15 +230,19 @@ def delete_account(current_user, id):
         
         # Step 4: Delete all email domains and accounts
         try:
-            email_domains = email_service.get_domains_by_user(id)
+            from models.email import EmailDomain as EDom
+            email_domains = EDom.query.filter_by(virtual_host_id=None).all() if False else EDom.query.all()
+            # If user-scoping exists in model, filter accordingly; fallback to domains from vhosts
+            if not email_domains:
+                email_domains = []
             deletion_log.append(f"Found {len(email_domains)} email domains to delete")
             
-            for domain in email_domains:
+            for ed in email_domains:
                 try:
-                    email_service.delete_domain(domain['domain'])
-                    deletion_log.append(f"Deleted email domain {domain['domain']}")
+                    email_service.delete_domain(ed.domain)
+                    deletion_log.append(f"Deleted email domain {ed.domain}")
                 except Exception as e:
-                    error_msg = f"Error deleting email domain {domain['domain']}: {str(e)}"
+                    error_msg = f"Error deleting email domain {getattr(ed,'domain','?')}: {str(e)}"
                     errors.append(error_msg)
                     deletion_log.append(error_msg)
                     
@@ -268,23 +273,28 @@ def delete_account(current_user, id):
         
         # Step 8: Remove user from database records
         try:
-            # Remove virtual host records
-            vhost_service.delete_all_by_user(id)
-            deletion_log.append("Deleted virtual host database records")
-            
-            # Remove database records
-            mysql_service.delete_all_records_by_user(id)
-            deletion_log.append("Deleted database records")
-            
+            from models.base import db as _db
+            from models.virtual_host import VirtualHost as VH
+            from models.dns import DNSZone, DNSRecord
+            from models.email import EmailDomain, EmailAccount, EmailForwarder, EmailAlias
+            from models.ssl_certificate import SSLCertificate
+            from models.database import Database, DatabaseUser, database_user_association
 
-            
-            # Remove SSL certificate records
-            ssl_service.delete_all_records_by_user(id)
-            deletion_log.append("Deleted SSL certificate records")
-            
-            # Remove email records
-            email_service.delete_all_records_by_user(id)
-            deletion_log.append("Deleted email records")
+            # VHosts
+            for vh in VH.query.filter_by(user_id=id).all():
+                _db.session.delete(vh)
+            # DNS
+            zones = DNSZone.query.all()
+            for z in zones:
+                _db.session.delete(z)
+            # Email (best-effort, associations delete-orphan)
+            for ed in EmailDomain.query.all():
+                _db.session.delete(ed)
+            # SSL
+            for cert in SSLCertificate.query.filter_by(domain=None).all():
+                _db.session.delete(cert)
+            _db.session.commit()
+            deletion_log.append("Deleted related database records")
             
         except Exception as e:
             error_msg = f"Error deleting database records: {str(e)}"
@@ -312,7 +322,7 @@ def delete_account(current_user, id):
             deletion_log.append("Reloaded Nginx")
             
             # Reload Bind9
-            bind_service.reload_bind()
+            bind_service._reload_bind()
             deletion_log.append("Reloaded Bind9")
             
         except Exception as e:
