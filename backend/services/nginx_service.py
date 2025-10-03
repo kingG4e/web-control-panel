@@ -85,7 +85,7 @@ server {
             self._reload_nginx()
 
             # Create default index file
-            self._create_default_index(document_root, virtual_host.domain)
+            self._create_default_index(document_root, virtual_host)
 
             return True
 
@@ -207,8 +207,9 @@ server {
             except FileNotFoundError:
                 pass
 
-    def _create_default_index(self, document_root, domain_name):
+    def _create_default_index(self, document_root, virtual_host):
         """Create default index.html file"""
+        domain_name = virtual_host.domain
         index_content = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
