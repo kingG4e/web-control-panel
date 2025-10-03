@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { virtualHosts } from '../services/api.js';
+import api from '../services/api';
 import SuccessModal from '../components/modals/SuccessModal.js';
 import ConfirmationModal from '../components/modals/ConfirmationModal.js';
 import CreateVirtualHostProgress from '../components/modals/CreateVirtualHostProgress.js';
@@ -84,8 +85,11 @@ const CreateVirtualHost = () => {
     custom_username: ''
   });
   
+  const [documentRoot, setDocumentRoot] = useState('');
+  const [creationMode, setCreationMode] = useState('newUser'); // 'newUser' or 'existingUser'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [primaryDomain, setPrimaryDomain] = useState('');
   const [existingDomains, setExistingDomains] = useState([]);
   const [loadingDomains, setLoadingDomains] = useState(true);
   const [domainValidation, setDomainValidation] = useState({
@@ -102,9 +106,24 @@ const CreateVirtualHost = () => {
   const [progressError, setProgressError] = useState(null);
   const [isComplete, setIsComplete] = useState(false);
 
+  const generatedUsername = formData.domain ? formData.domain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '') : 'example';
+
   // Fetch existing domains on component mount
   useEffect(() => {
     fetchExistingDomains();
+  }, []);
+
+  // Fetch PRIMARY_DOMAIN
+  useEffect(() => {
+    const fetchPrimary = async () => {
+      try {
+        const res = await api.get('/public-settings');
+        setPrimaryDomain(res.data?.PRIMARY_DOMAIN || '');
+      } catch (_) {
+        setPrimaryDomain('');
+      }
+    };
+    fetchPrimary();
   }, []);
 
   const fetchExistingDomains = async () => {
@@ -204,16 +223,21 @@ const CreateVirtualHost = () => {
     return () => clearTimeout(timer);
   }, [formData.domain, existingDomains, loadingDomains]);
 
+  useEffect(() => {
+    if (creationMode === 'existingUser' && formData.custom_username && formData.domain) {
+      const domainPart = formData.domain.split('.')[0];
+      setDocumentRoot(`/home/${formData.custom_username}/${domainPart}`);
+    } else if (creationMode === 'newUser') {
+      const user = formData.username_mode === 'custom' ? formData.custom_username : generatedUsername;
+      setDocumentRoot(`/home/${user}/public_html`);
+    }
+  }, [creationMode, formData.custom_username, formData.domain, formData.username_mode, generatedUsername]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!formData.domain || !formData.linux_password) {
-      setError('Please enter domain and password');
-      return;
-    }
-    
-    if (formData.linux_password.length < 8) {
-      setError('Password must be at least 8 characters long');
+    if (!formData.domain) {
+      setError('Please enter a domain name');
       return;
     }
     
@@ -246,14 +270,21 @@ const CreateVirtualHost = () => {
       setLoading(true);
       setShowConfirmModal(false);
       
-      // Define the steps that will be performed
-      const steps = [
-        { title: "Create Linux user + home directory", description: "Creating user account and home folder" },
-        { title: "Create Nginx VirtualHost + DNS zone", description: "Configuring web server and DNS records" },
-        { title: "Create maildir + email mapping", description: "Setting up email account and mail structure" },
-        { title: "Create database + user", description: "Creating MySQL database and user" },
+      const isExistingUser = creationMode === 'existingUser';
 
-      ];
+      // Define the steps that will be performed
+      const steps = isExistingUser
+        ? [
+            { title: "Create Nginx VirtualHost + DNS zone", description: "Configuring web server and DNS records" },
+            { title: "Create maildir + email mapping", description: "Setting up email account and mail structure" },
+            { title: "Create database + user", description: "Creating MySQL database and user" },
+          ]
+        : [
+            { title: "Create Linux user + home directory", description: "Creating user account and home folder" },
+            { title: "Create Nginx VirtualHost + DNS zone", description: "Configuring web server and DNS records" },
+            { title: "Create maildir + email mapping", description: "Setting up email account and mail structure" },
+            { title: "Create database + user", description: "Creating MySQL database and user" },
+          ];
       
       if (formData.create_ssl) {
         steps.push({ title: "Request SSL certificate", description: "Issuing SSL certificate for HTTPS" });
@@ -263,12 +294,17 @@ const CreateVirtualHost = () => {
       
       const data = {
         domain: formData.domain,
-        linux_password: formData.linux_password,
         server_admin: formData.server_admin || `admin@${formData.domain}`,
         php_version: formData.php_version,
         create_ssl: formData.create_ssl,
-        linux_username: formData.username_mode === 'custom' ? formData.custom_username : generatedUsername
       };
+
+      if (isExistingUser) {
+        data.linux_username = formData.custom_username;
+      } else {
+        data.linux_password = formData.linux_password;
+        data.linux_username = formData.username_mode === 'custom' ? formData.custom_username : generatedUsername;
+      }
       
       setProgressSteps(steps);
       setCurrentStep(0);
@@ -288,7 +324,11 @@ const CreateVirtualHost = () => {
       const progressPromise = simulateProgress();
       
       // Make actual API call
-      const result = await virtualHosts.create(data);
+      const apiCall = isExistingUser
+        ? virtualHosts.createForExistingUser(data)
+        : virtualHosts.create(data);
+
+      const result = await apiCall;
       
       // Wait for progress simulation to complete
       await progressPromise;
@@ -406,6 +446,11 @@ const CreateVirtualHost = () => {
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
+    // Lock to subdomain under PRIMARY_DOMAIN
+    if (name === 'subdomain') {
+      const full = value ? `${value}.${primaryDomain}` : '';
+      return setFormData(prev => ({ ...prev, domain: full }));
+    }
     setFormData(prev => {
       const newData = { ...prev, [name]: type === 'checkbox' ? checked : value };
       
@@ -424,7 +469,6 @@ const CreateVirtualHost = () => {
     });
   };
 
-  const generatedUsername = formData.domain ? formData.domain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '') : 'example';
   const currentUsername = formData.username_mode === 'custom' ? formData.custom_username : generatedUsername;
 
   return (
@@ -454,6 +498,50 @@ const CreateVirtualHost = () => {
           {/* Main Form */}
           <div className="lg:col-span-2">
             <form onSubmit={handleSubmit} className="space-y-8">
+              {/* Creation Mode Selection */}
+              <div className="rounded-xl border p-6" style={{ 
+                backgroundColor: 'var(--card-bg)', 
+                borderColor: 'var(--border-color)' 
+              }}>
+                <div className="flex items-center space-x-3 mb-4">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ 
+                      backgroundColor: 'rgba(167, 139, 250, 0.15)',
+                      border: '1px solid rgba(167, 139, 250, 0.3)'
+                    }}>
+                      <UserIcon className="w-5 h-5" style={{ color: '#a78bfa' }} />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold" style={{ color: 'var(--primary-text)' }}>Creation Mode</h2>
+                      <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>Choose how to associate the Linux user</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-4 rounded-lg p-1" style={{ backgroundColor: 'var(--secondary-bg)'}}>
+                    <button
+                      type="button"
+                      onClick={() => setCreationMode('newUser')}
+                      className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${creationMode === 'newUser' ? 'shadow-sm' : ''}`}
+                      style={{
+                        backgroundColor: creationMode === 'newUser' ? 'var(--card-bg)' : 'transparent',
+                        color: creationMode === 'newUser' ? 'var(--accent-color)' : 'var(--secondary-text)',
+                      }}
+                    >
+                      Create New User
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCreationMode('existingUser')}
+                      className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${creationMode === 'existingUser' ? 'shadow-sm' : ''}`}
+                      style={{
+                        backgroundColor: creationMode === 'existingUser' ? 'var(--card-bg)' : 'transparent',
+                        color: creationMode === 'existingUser' ? 'var(--accent-color)' : 'var(--secondary-text)',
+                      }}
+                    >
+                      Use Existing User
+                    </button>
+                  </div>
+              </div>
+
+
               {/* Domain Configuration */}
               <div className="rounded-xl border p-6" style={{ 
                 backgroundColor: 'var(--card-bg)', 
@@ -478,32 +566,39 @@ const CreateVirtualHost = () => {
                     <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
                       Domain Name <span className="text-red-400">*</span>
                     </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        name="domain"
-                        value={formData.domain}
-                        onChange={handleChange}
-                        placeholder="example.com"
-                        className="w-full px-4 py-3 rounded-lg border transition-all duration-200 focus:ring-2 focus:ring-opacity-50"
-                        style={{ 
-                          backgroundColor: 'var(--input-bg)', 
-                          borderColor: domainValidation.isValid ? 'var(--border-color)' : '#f87171',
-                          color: 'var(--primary-text)',
-                          focusRingColor: 'var(--accent-color)'
-                        }}
-                        required
-                      />
-                      {formData.domain && (
-                        <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                          {domainValidation.isChecking ? (
-                            <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          name="subdomain"
+                          value={formData.domain && primaryDomain && formData.domain.endsWith(`.${primaryDomain}`) ? formData.domain.replace(`.${primaryDomain}`, '') : ''}
+                          onChange={handleChange}
+                          placeholder="sub"
+                          className="flex-1 px-4 py-3 rounded-lg border transition-all duration-200 focus:ring-2 focus:ring-opacity-50"
+                          style={{ 
+                            backgroundColor: 'var(--input-bg)', 
+                            borderColor: domainValidation.isValid ? 'var(--border-color)' : '#f87171',
+                            color: 'var(--primary-text)',
+                            focusRingColor: 'var(--accent-color)'
+                          }}
+                          required
+                          disabled={!primaryDomain}
+                        />
+                        <span className="text-sm whitespace-nowrap" style={{ color: 'var(--secondary-text)' }}>.{primaryDomain || '...'}</span>
+                        {formData.domain && (
+                          domainValidation.isChecking ? (
+                            <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full shrink-0"></div>
                           ) : domainValidation.isValid ? (
-                            <CheckCircleIcon className="w-5 h-5" style={{ color: '#34d399' }} />
+                            <CheckCircleIcon className="w-5 h-5 shrink-0" style={{ color: '#34d399' }} />
                           ) : (
-                            <XCircleIcon className="w-5 h-5" style={{ color: '#f87171' }} />
-                          )}
-                        </div>
+                            <XCircleIcon className="w-5 h-5 shrink-0" style={{ color: '#f87171' }} />
+                          )
+                        )}
+                      </div>
+                      {!primaryDomain && (
+                        <p className="text-xs mt-2" style={{ color: 'var(--secondary-text)' }}>
+                          Please set PRIMARY_DOMAIN in Admin Settings first.
+                        </p>
                       )}
                     </div>
                     {domainValidation.message && (
@@ -632,108 +727,140 @@ const CreateVirtualHost = () => {
                   </div>
                   <div>
                     <h2 className="text-lg font-semibold" style={{ color: 'var(--primary-text)' }}>Linux User Account</h2>
-                    <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>Secure access credentials for file management</p>
+                    <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
+                      {creationMode === 'newUser'
+                        ? "Secure access credentials for file management"
+                        : "Specify the existing Linux user for this vhost"}
+                    </p>
                   </div>
                 </div>
 
-                <div className="space-y-6">
-                  {/* Username Mode Selection */}
-                  <div>
-                    <label className="block text-sm font-medium mb-3" style={{ color: 'var(--primary-text)' }}>
-                      Linux Username Configuration
-                    </label>
-                    <div className="space-y-3">
-                      {/* Automatic Username */}
-                      <div className="flex items-start">
-                        <input
-                          type="radio"
-                          id="username_automatic"
-                          name="username_mode"
-                          value="automatic"
-                          checked={formData.username_mode === 'automatic'}
-                          onChange={handleChange}
-                          className="mt-1 w-4 h-4"
-                          style={{ accentColor: 'var(--accent-color)' }}
-                        />
-                        <div className="ml-3 flex-1">
-                          <label htmlFor="username_automatic" className="block text-sm font-medium cursor-pointer" style={{ color: 'var(--primary-text)' }}>
-                            Automatic (Recommended)
-                          </label>
-                          <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
-                            Username will be auto-generated from domain name
-                          </p>
-                          {formData.username_mode === 'automatic' && (
-                            <div className="mt-2 px-3 py-2 rounded-lg border" style={{ 
-                              backgroundColor: 'var(--secondary-bg)', 
-                              borderColor: 'var(--border-color)',
-                              color: 'var(--primary-text)'
-                            }}>
-                              <span className="font-mono">{generatedUsername}</span>
-                              <span className="text-xs ml-2" style={{ color: 'var(--secondary-text)' }}>
-                                (from: {formData.domain || 'example.com'})
-                              </span>
-                            </div>
-                          )}
+                {creationMode === 'newUser' ? (
+                  <div className="space-y-6">
+                    {/* Username Mode Selection */}
+                    <div>
+                      <label className="block text-sm font-medium mb-3" style={{ color: 'var(--primary-text)' }}>
+                        Linux Username Configuration
+                      </label>
+                      <div className="space-y-3">
+                        {/* Automatic Username */}
+                        <div className="flex items-start">
+                          <input
+                            type="radio"
+                            id="username_automatic"
+                            name="username_mode"
+                            value="automatic"
+                            checked={formData.username_mode === 'automatic'}
+                            onChange={handleChange}
+                            className="mt-1 w-4 h-4"
+                            style={{ accentColor: 'var(--accent-color)' }}
+                          />
+                          <div className="ml-3 flex-1">
+                            <label htmlFor="username_automatic" className="block text-sm font-medium cursor-pointer" style={{ color: 'var(--primary-text)' }}>
+                              Automatic (Recommended)
+                            </label>
+                            <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
+                              Username will be auto-generated from domain name
+                            </p>
+                            {formData.username_mode === 'automatic' && (
+                              <div className="mt-2 px-3 py-2 rounded-lg border" style={{ 
+                                backgroundColor: 'var(--secondary-bg)', 
+                                borderColor: 'var(--border-color)',
+                                color: 'var(--primary-text)'
+                              }}>
+                                <span className="font-mono">{generatedUsername}</span>
+                                <span className="text-xs ml-2" style={{ color: 'var(--secondary-text)' }}>
+                                  (from: {formData.domain || 'example.com'})
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Custom Username */}
-                      <div className="flex items-start">
-                        <input
-                          type="radio"
-                          id="username_custom"
-                          name="username_mode"
-                          value="custom"
-                          checked={formData.username_mode === 'custom'}
-                          onChange={handleChange}
-                          className="mt-1 w-4 h-4"
-                          style={{ accentColor: 'var(--accent-color)' }}
-                        />
-                        <div className="ml-3 flex-1">
-                          <label htmlFor="username_custom" className="block text-sm font-medium cursor-pointer" style={{ color: 'var(--primary-text)' }}>
-                            Custom Username
-                          </label>
-                          <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
-                            Specify your own Linux username (3-32 characters, lowercase, alphanumeric)
-                          </p>
-                          {formData.username_mode === 'custom' && (
-                            <div className="mt-2">
-                              <input
-                                type="text"
-                                name="custom_username"
-                                value={formData.custom_username}
-                                onChange={handleChange}
-                                placeholder="myusername"
-                                pattern="^[a-z][a-z0-9_]{2,31}$"
-                                className="w-full px-3 py-2 rounded-lg border transition-all duration-200 focus:ring-2 focus:ring-opacity-50"
-                                style={{ 
-                                  backgroundColor: 'var(--input-bg)', 
-                                  borderColor: 'var(--border-color)',
-                                  color: 'var(--primary-text)',
-                                  focusRingColor: 'var(--accent-color)'
-                                }}
-                              />
-                              <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
-                                Must start with a letter, only lowercase letters, numbers, and underscores
-                              </p>
-                            </div>
-                          )}
+                        {/* Custom Username */}
+                        <div className="flex items-start">
+                          <input
+                            type="radio"
+                            id="username_custom"
+                            name="username_mode"
+                            value="custom"
+                            checked={formData.username_mode === 'custom'}
+                            onChange={handleChange}
+                            className="mt-1 w-4 h-4"
+                            style={{ accentColor: 'var(--accent-color)' }}
+                          />
+                          <div className="ml-3 flex-1">
+                            <label htmlFor="username_custom" className="block text-sm font-medium cursor-pointer" style={{ color: 'var(--primary-text)' }}>
+                              Custom Username
+                            </label>
+                            <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
+                              Specify your own Linux username (3-32 characters, lowercase, alphanumeric)
+                            </p>
+                            {formData.username_mode === 'custom' && (
+                              <div className="mt-2">
+                                <input
+                                  type="text"
+                                  name="custom_username"
+                                  value={formData.custom_username}
+                                  onChange={handleChange}
+                                  placeholder="myusername"
+                                  pattern="^[a-z][a-z0-9_]{2,31}$"
+                                  className="w-full px-3 py-2 rounded-lg border transition-all duration-200 focus:ring-2 focus:ring-opacity-50"
+                                  style={{ 
+                                    backgroundColor: 'var(--input-bg)', 
+                                    borderColor: 'var(--border-color)',
+                                    color: 'var(--primary-text)',
+                                    focusRingColor: 'var(--accent-color)'
+                                  }}
+                                />
+                                <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
+                                  Must start with a letter, only lowercase letters, numbers, and underscores
+                                </p>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Password */}
+                    {/* Password */}
+                    <div>
+                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                        Linux User Password <span className="text-red-400">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        name="linux_password"
+                        value={formData.linux_password}
+                        onChange={handleChange}
+                        placeholder="Enter secure password (min 8 characters)"
+                        className="w-full px-4 py-3 rounded-lg border transition-all duration-200 focus:ring-2 focus:ring-opacity-50"
+                        style={{ 
+                          backgroundColor: 'var(--input-bg)', 
+                          borderColor: 'var(--border-color)',
+                          color: 'var(--primary-text)',
+                          focusRingColor: 'var(--accent-color)'
+                        }}
+                        required={creationMode === 'newUser'}
+                        minLength={8}
+                      />
+                      <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
+                        This password will be used for the new Linux user
+                      </p>
+                    </div>
+                  </div>
+                ) : (
                   <div>
+                    {/* Existing Linux Username Input */}
                     <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                      Linux User Password <span className="text-red-400">*</span>
+                      Existing Linux Username <span className="text-red-400">*</span>
                     </label>
                     <input
-                      type="password"
-                      name="linux_password"
-                      value={formData.linux_password}
+                      type="text"
+                      name="custom_username" // Re-using this state for simplicity
+                      value={formData.custom_username}
                       onChange={handleChange}
-                      placeholder="Enter secure password (min 8 characters)"
+                      placeholder="e.g., myuser"
                       className="w-full px-4 py-3 rounded-lg border transition-all duration-200 focus:ring-2 focus:ring-opacity-50"
                       style={{ 
                         backgroundColor: 'var(--input-bg)', 
@@ -741,14 +868,30 @@ const CreateVirtualHost = () => {
                         color: 'var(--primary-text)',
                         focusRingColor: 'var(--accent-color)'
                       }}
-                      required
-                      minLength={8}
+                      required={creationMode === 'existingUser'}
                     />
-                    <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
-                      This password will be used for the new Linux user
+                     <p className="text-xs mt-2" style={{ color: 'var(--secondary-text)' }}>
+                      The virtual host files will be created in this user's home directory.
                     </p>
+                    
+                    {/* Document Root Preview for Existing User */}
+                    <div className="mt-4">
+                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                        Document Root
+                      </label>
+                      <div className="font-mono p-3 rounded-lg text-sm" style={{ 
+                        backgroundColor: 'var(--secondary-bg)',
+                        color: 'var(--primary-text)',
+                        border: '1px solid var(--border-color)'
+                      }}>
+                        {documentRoot || '/home/user/new_site'}
+                      </div>
+                      <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
+                        This directory will be automatically created for your new site.
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Error Display */}
@@ -847,7 +990,7 @@ const CreateVirtualHost = () => {
                       backgroundColor: 'var(--secondary-bg)',
                       color: 'var(--primary-text)'
                     }}>
-                      {currentUsername || generatedUsername}
+                      {creationMode === 'existingUser' ? (formData.custom_username || '...') : (currentUsername || generatedUsername)}
                       {formData.username_mode === 'custom' && !formData.custom_username && (
                         <span className="text-xs ml-2" style={{ color: 'var(--secondary-text)' }}>(enter custom username)</span>
                       )}
@@ -860,7 +1003,7 @@ const CreateVirtualHost = () => {
                       backgroundColor: 'var(--secondary-bg)',
                       color: 'var(--primary-text)'
                     }}>
-                      /home/{currentUsername || generatedUsername}/public_html
+                      {documentRoot}
                     </div>
                   </div>
 

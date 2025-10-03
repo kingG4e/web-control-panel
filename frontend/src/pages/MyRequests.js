@@ -7,6 +7,7 @@ const MyRequests = () => {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingRequest, setEditingRequest] = useState(null);
   const [formData, setFormData] = useState({
     domain: '',
     want_ssl: false,
@@ -23,18 +24,34 @@ const MyRequests = () => {
   const loadRequests = async () => {
     try {
       setLoading(true);
-      // Get user's requests from signup status
+      // Get all of user's requests
       if (user?.username) {
-        const result = await signup.status(user.username);
+        const result = await signup.myRequests();
         if (result.data) {
-          setRequests([result.data]);
+          setRequests(result.data);
+        } else {
+          setRequests([]);
         }
       }
     } catch (e) {
       console.error('Failed to load requests:', e);
+      setRequests([]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleEditClick = (request) => {
+    setEditingRequest(request);
+    setFormData({
+      domain: request.domain,
+      want_ssl: request.want_ssl,
+      want_dns: request.want_dns,
+      want_email: request.want_email,
+      want_mysql: request.want_mysql,
+      storage_quota_mb: request.storage_quota_mb || ''
+    });
+    setShowForm(true);
   };
 
   const handleSubmit = async (e) => {
@@ -46,8 +63,6 @@ const MyRequests = () => {
     
     try {
       const payload = {
-        username: user.username + '_' + Date.now(), // temp unique username
-        password: 'temp_password', // Will be handled by admin
         domain: formData.domain,
         want_ssl: formData.want_ssl,
         want_dns: formData.want_dns,
@@ -56,9 +71,21 @@ const MyRequests = () => {
         storage_quota_mb: formData.storage_quota_mb ? Number(formData.storage_quota_mb) : undefined
       };
       
-      await signup.submit(payload);
-      alert('Request submitted successfully');
+      if (editingRequest) {
+        await signup.update(editingRequest.id, payload);
+        alert('Update request submitted successfully. It will be reviewed by an admin.');
+      } else {
+        const createPayload = {
+          ...payload,
+          username: user.username, // Username is already known by backend
+          password: 'temp_password', // Will be handled by admin
+        };
+        await signup.submit(createPayload);
+        alert('Request submitted successfully');
+      }
+
       setShowForm(false);
+      setEditingRequest(null);
       setFormData({
         domain: '',
         want_ssl: false,
@@ -86,7 +113,23 @@ const MyRequests = () => {
           <p className="text-[var(--secondary-text)] text-sm">Service requests and approval status</p>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => {
+            if (showForm) {
+              setShowForm(false);
+              setEditingRequest(null);
+            } else {
+              setEditingRequest(null);
+              setFormData({
+                domain: '',
+                want_ssl: false,
+                want_dns: false,
+                want_email: false,
+                want_mysql: false,
+                storage_quota_mb: ''
+              });
+              setShowForm(true);
+            }
+          }}
           className="btn-primary px-4 py-2"
         >
           {showForm ? 'Cancel' : '+ New Request'}
@@ -96,7 +139,7 @@ const MyRequests = () => {
       {/* Add New Request Form */}
       {showForm && (
         <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-[var(--primary-text)] mb-4">Add New Request</h3>
+          <h3 className="text-lg font-semibold text-[var(--primary-text)] mb-4">{editingRequest ? 'Update Request' : 'Add New Request'}</h3>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
               <label className="block text-sm text-[var(--secondary-text)]">Domain <span className="text-red-500">*</span></label>
@@ -107,6 +150,7 @@ const MyRequests = () => {
                 className="input-field mt-1" 
                 placeholder="example.com" 
                 required
+                disabled={!!editingRequest}
               />
             </div>
 
@@ -152,7 +196,10 @@ const MyRequests = () => {
             <div className="md:col-span-2 flex justify-end space-x-3 pt-2">
               <button 
                 type="button" 
-                onClick={() => setShowForm(false)}
+                onClick={() => {
+                  setShowForm(false);
+                  setEditingRequest(null);
+                }}
                 className="px-4 py-2 border border-[var(--border-color)] rounded text-[var(--secondary-text)] hover:text-[var(--primary-text)] hover:bg-[var(--hover-bg)]"
               >
                 Cancel
@@ -161,7 +208,7 @@ const MyRequests = () => {
                 type="submit"
                 className="btn-primary px-4 py-2"
               >
-                Submit Request
+                {editingRequest ? 'Submit Update' : 'Submit Request'}
               </button>
             </div>
           </form>
@@ -177,8 +224,8 @@ const MyRequests = () => {
       ) : (
         <div className="space-y-4">
           {requests.length > 0 ? (
-            requests.map((request, index) => (
-              <div key={index} className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6">
+            requests.map((request) => (
+              <div key={request.id} className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <h3 className="text-lg font-semibold text-[var(--primary-text)]">{request.domain || 'No domain specified'}</h3>
@@ -233,6 +280,17 @@ const MyRequests = () => {
                     <p>Processed: {new Date(request.approved_at).toLocaleString('en-US')}</p>
                   )}
                 </div>
+
+                {request.status === 'approved' && (
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      onClick={() => handleEditClick(request)}
+                      className="btn-secondary px-4 py-2"
+                    >
+                      Request Change
+                    </button>
+                  </div>
+                )}
               </div>
             ))
           ) : (

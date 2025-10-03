@@ -14,7 +14,7 @@ from services.ssl_service import SSLService
 from services.quota_service import QuotaService
 from config import Config
 import os
-from utils.settings_util import get_dns_default_ip
+from utils.settings_util import get_dns_default_ip, get_primary_domain
 from utils.auth import token_required
 from utils.permissions import (
     check_virtual_host_permission, 
@@ -48,6 +48,157 @@ def _generate_secure_password(length=12):
 def _get_document_root_path(linux_username):
     """Generate document root path"""
     return f'/home/{linux_username}/public_html'
+
+
+@virtual_host_bp.route('/api/subdomains', methods=['POST'])
+@token_required
+@rate_limit('virtual_host_create', per_user=True)
+@check_virtual_host_permission('create')
+def create_subdomain_virtual_host(current_user):
+    """
+    Create a subdomain virtual host under PRIMARY_DOMAIN without creating a new DNS zone.
+    Steps:
+    1) Validate PRIMARY_DOMAIN is set
+    2) Build full domain = <subdomain>.<PRIMARY_DOMAIN>
+    3) Create Linux user (or reuse if exists), home, public_html
+    4) Create Nginx vhost for the subdomain
+    5) Add A record to existing PRIMARY_DOMAIN zone (or create zone if missing)
+    6) Optionally request SSL
+    """
+    try:
+        data = request.get_json() or {}
+        sub_label = str(data.get('subdomain', '')).strip().lower()
+        if not sub_label:
+            return jsonify({'success': False, 'error': 'subdomain is required'}), 400
+
+        # Validate label
+        import re
+        if not re.match(r'^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$', sub_label):
+            return jsonify({'success': False, 'error': 'Invalid subdomain label'}), 400
+
+        primary_domain = get_primary_domain()
+        if not primary_domain:
+            return jsonify({'success': False, 'error': 'PRIMARY_DOMAIN is not set. Please configure it in Admin Settings.'}), 400
+
+        domain = f"{sub_label}.{primary_domain}"
+
+        # Prevent duplicates
+        existing_host = VirtualHost.query.filter_by(domain=domain).first()
+        if existing_host:
+            return jsonify({'success': False, 'error': f'Domain "{domain}" already exists'}), 409
+
+        # Prepare Linux user
+        linux_username = data.get('linux_username')
+        if not linux_username:
+            linux_username = linux_user_service.generate_username_from_domain(domain)
+
+        doc_root = _get_document_root_path(linux_username)
+
+        # Ensure Linux user
+        linux_password = data.get('linux_password') or _generate_secure_password(14)
+        user_success, user_message, final_password = linux_user_service.create_user(linux_username, domain, linux_password)
+        if not user_success:
+            return jsonify({'success': False, 'error': f'Failed to create/reuse Linux user: {user_message}'}), 500
+
+        # Create VirtualHost record
+        php_version = str(data.get('php_version') or '8.1')
+        virtual_host = VirtualHost(
+            domain=domain,
+            document_root=doc_root,
+            linux_username=linux_username,
+            server_admin=data.get('server_admin', current_user.email or f'admin@{primary_domain}'),
+            php_version=php_version,
+            user_id=current_user.id
+        )
+        db.session.add(virtual_host)
+        db.session.flush()
+
+        # Create Nginx vhost
+        try:
+            nginx_service.create_virtual_host(virtual_host)
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'success': False, 'error': f'Failed to create Nginx vhost: {str(e)}'}), 500
+
+        # Ensure PRIMARY_DOMAIN zone exists
+        zone = DNSZone.query.filter_by(domain_name=primary_domain).first()
+        if not zone:
+            # Create zone with defaults
+            zone = DNSZone(
+                domain_name=primary_domain,
+                serial=datetime.now().strftime('%Y%m%d01'),
+                refresh=3600,
+                retry=1800,
+                expire=1209600,
+                minimum=86400,
+                status='active'
+            )
+            db.session.add(zone)
+            db.session.flush()
+            # base records minimal
+            default_ip = get_dns_default_ip()
+            db.session.add(DNSRecord(zone_id=zone.id, name='@',  record_type='NS', content=f"ns1.{primary_domain}.", ttl=3600, status='active'))
+            db.session.add(DNSRecord(zone_id=zone.id, name='ns1', record_type='A',  content=default_ip,                ttl=3600, status='active'))
+            db.session.add(DNSRecord(zone_id=zone.id, name='@',  record_type='A',  content=default_ip,                ttl=3600, status='active'))
+
+        # Add/Upsert subdomain A record
+        default_ip = get_dns_default_ip()
+        existing_rec = DNSRecord.query.filter_by(zone_id=zone.id, name=sub_label, record_type='A').first()
+        if existing_rec:
+            existing_rec.content = default_ip
+            existing_rec.status = 'active'
+        else:
+            db.session.add(DNSRecord(zone_id=zone.id, name=sub_label, record_type='A', content=default_ip, ttl=3600, status='active'))
+
+        # Write zone file to BIND
+        try:
+            bind_service.update_zone(zone, nameserver_ip=default_ip)
+        except Exception as e:
+            # Non-fatal; keep DB in sync and allow manual DNS management
+            print(f"Warning: Failed to update BIND zone for {primary_domain}: {e}")
+
+        # Optionally request SSL
+        ssl_requested = bool(data.get('create_ssl', False))
+        ssl_status = None
+        if ssl_requested:
+            try:
+                ssl_info = ssl_service.issue_certificate(domain, document_root=doc_root)
+                if ssl_info:
+                    ssl_cert = SSLCertificate(
+                        domain=domain,
+                        certificate_path=ssl_info['certificate_path'],
+                        private_key_path=ssl_info['private_key_path'],
+                        chain_path=ssl_info.get('chain_path'),
+                        issuer=ssl_info.get('issuer'),
+                        valid_from=ssl_info.get('valid_from'),
+                        valid_until=ssl_info.get('valid_until'),
+                        auto_renewal=True,
+                        status='active'
+                    )
+                    db.session.add(ssl_cert)
+                    ssl_status = 'issued'
+            except Exception as e:
+                print(f"Warning: SSL issue for {domain} failed: {e}")
+                ssl_status = 'failed'
+
+        # Commit all changes
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'domain': domain,
+                'linux_username': linux_username,
+                'linux_password': final_password or linux_password,
+                'document_root': doc_root,
+                'php_version': php_version,
+                'ssl_status': ssl_status or 'skipped'
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 def _create_cgi_bin_folder(home_directory):
     """Create cgi-bin folder for the user"""
@@ -1188,6 +1339,10 @@ def create_virtual_host_for_existing_user(current_user):
         data['domain'] = domain
         data['linux_username'] = linux_username
         
+        # Determine document root
+        domain_part = re.sub(r'[^a-zA-Z0-9]', '', domain.split('.')[0])
+        doc_root = f"/home/{linux_username}/{domain_part}"
+
         # Validate domain format
         domain_pattern = r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
         if not re.match(domain_pattern, domain):

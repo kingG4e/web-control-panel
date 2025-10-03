@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FolderIcon,
@@ -27,6 +27,9 @@ import {
   FolderOpenIcon,
   CubeIcon,
   GlobeAltIcon,
+  EllipsisVerticalIcon,
+  ViewColumnsIcon,
+  QueueListIcon,
 } from '@heroicons/react/24/outline';
 import { fileApi } from '../services/api';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -71,6 +74,7 @@ const FileManager = () => {
   const [newFolderName, setNewFolderName] = useState('');
   const [newFileName, setNewFileName] = useState('');
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
+  const [showNewFileModal, setShowNewFileModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState(new Set(['/']));
@@ -90,6 +94,8 @@ const FileManager = () => {
   const [clipboardItem, setClipboardItem] = useState(null);
   const [clipboardAction, setClipboardAction] = useState(null); // 'copy' or 'cut'
   const dropZoneRef = useRef(null);
+  const [showNewItemDropdown, setShowNewItemDropdown] = useState(false);
+  const newItemDropdownRef = useRef(null);
 
 
 
@@ -498,6 +504,27 @@ const FileManager = () => {
     }
   };
 
+  const handleCreateFile = async (fileName) => {
+    if (!fileName) return;
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const path = currentPath ? `${currentPath}/${fileName}` : fileName;
+      await fileApi.createFile(path, currentDomain);
+      
+      setShowNewFileModal(false);
+      setNewFileName('');
+      await loadDirectory(currentPath);
+    } catch (err) {
+      console.error('Create file error:', err);
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to create file';
+      setError(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleFileUpload = async (files) => {
     try {
       setLoading(true);
@@ -579,7 +606,7 @@ const FileManager = () => {
               ) : fileInfo ? (
                 <div className="space-y-4">
                   <div className="flex items-center space-x-3">
-                    {getFileIcon(fileInfo.type)}
+                {getFileIcon({ name: fileInfo.name, type: fileInfo.type })}
                     <div>
                       <h4 className="font-medium" style={{ color: 'var(--primary-text)' }}>
                         {fileInfo.name}
@@ -736,26 +763,23 @@ const FileManager = () => {
       return; // Already handled by single click
     }
 
-    if (isImageFile(file.name) || isTextFile(file.name)) {
-      if (isImageFile(file.name)) {
-        setShowFilePreview(true);
-      } else {
-        await openFileEditor(file);
-      }
+    if (isImageFile(file.name)) {
+      setShowFilePreview(true);
     } else {
-      // Try to download the file
-      handleDownload(file);
+      // For any other file, try to open it in the editor
+      await openFileEditor(file);
     }
   };
 
-  const handleContextMenu = (event, item) => {
+  const handleContextMenu = (event, item, anchor = 'top-left') => {
     event.preventDefault();
     setSelectedFile(item);
     setContextMenu({
       visible: true,
       x: event.pageX,
       y: event.pageY,
-      item
+      item,
+      anchor,
     });
   };
 
@@ -933,16 +957,70 @@ const FileManager = () => {
   const ContextMenu = () => {
     if (!contextMenu.visible) return null;
 
+    const [menuStyle, setMenuStyle] = useState({});
+
+    useLayoutEffect(() => {
+      if (contextMenu.visible && contextMenuRef.current) {
+        const menuEl = contextMenuRef.current;
+        const menuRect = menuEl.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+
+        let top = contextMenu.y;
+        let left = 'auto';
+        let right = 'auto';
+
+        // Vertical position adjustment
+        if (top + menuRect.height > viewportHeight) {
+          top = top - menuRect.height;
+          // For action menu, adjust to align with button
+          if (contextMenu.anchor === 'top-right') {
+            const buttonHeight = 32; // Approx height of the button
+            top = contextMenu.y - menuRect.height - buttonHeight;
+          }
+        }
+        if (top < 0) top = 0;
+
+        // Horizontal position adjustment
+        if (contextMenu.anchor === 'top-right') {
+          right = `${viewportWidth - contextMenu.x}px`;
+          if (contextMenu.x - menuRect.width < 0) {
+            right = 'auto';
+            left = `0px`;
+          }
+        } else { // top-left
+          left = `${contextMenu.x}px`;
+          if (contextMenu.x + menuRect.width > viewportWidth) {
+            left = 'auto';
+            right = '0px';
+          }
+        }
+
+        setMenuStyle({
+          position: 'fixed',
+          top: `${top}px`,
+          left,
+          right,
+        });
+      }
+    }, [contextMenu.visible, contextMenu.x, contextMenu.y, contextMenu.anchor]);
+
     return (
       <div
         ref={contextMenuRef}
         className="fixed bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg shadow-lg py-2 z-[85]"
-        style={{ left: contextMenu.x, top: contextMenu.y }}
+        style={menuStyle}
       >
         <button
           onClick={() => {
-            setShowFilePreview(true);
             setContextMenu({ ...contextMenu, visible: false });
+            if (contextMenu.item) {
+              if (isImageFile(contextMenu.item.name)) {
+                setShowFilePreview(true);
+              } else {
+                openFileEditor(contextMenu.item);
+              }
+            }
           }}
           className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
           disabled={contextMenu.item?.type === 'folder'}
@@ -992,6 +1070,48 @@ const FileManager = () => {
           <ArrowDownTrayIcon className="w-4 h-4 mr-2" />
           Download
         </button>
+        <button
+          onClick={async () => {
+            try {
+              setLoading(true);
+              setContextMenu({ ...contextMenu, visible: false });
+              const items = Array.from(selectedFiles.size ? selectedFiles : new Set([contextMenu.item?.name])).filter(Boolean);
+              const result = await fileApi.zipItems(currentPath, items, undefined, currentDomain);
+              await loadDirectory(currentPath);
+            } catch (err) {
+              const errorMsg = err.response?.data?.error || err.message || 'Failed to create archive';
+              setError(errorMsg);
+            } finally {
+              setLoading(false);
+            }
+          }}
+          className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
+        >
+          <ArchiveBoxIcon className="w-4 h-4 mr-2" />
+          Compress (zip)
+        </button>
+        {contextMenu.item?.name?.toLowerCase().endsWith('.zip') && (
+          <button
+            onClick={async () => {
+              try {
+                setLoading(true);
+                setContextMenu({ ...contextMenu, visible: false });
+                const archiveRel = contextMenu.item.path || (currentPath ? `${currentPath}/${contextMenu.item.name}` : contextMenu.item.name);
+                await fileApi.unzip(archiveRel, currentPath, currentDomain);
+                await loadDirectory(currentPath);
+              } catch (err) {
+                const errorMsg = err.response?.data?.error || err.message || 'Failed to extract archive';
+                setError(errorMsg);
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
+          >
+            <ArchiveBoxIcon className="w-4 h-4 mr-2" />
+            Extract here
+          </button>
+        )}
         <button
           onClick={() => {
             setShowFileProperties(true);
@@ -1497,7 +1617,7 @@ const FileManager = () => {
           <div className="p-4 flex-1 overflow-auto flex items-center justify-center">
             {isImageFile(selectedFile.name) ? (
               <img
-                src={`/api/files/download?path=${encodeURIComponent(selectedFile.path)}`}
+                src={`/api/files/download?path=${encodeURIComponent(selectedFile.path)}${currentDomain ? `&domain=${encodeURIComponent(currentDomain)}` : ''}`}
                 alt={selectedFile.name}
                 className="max-w-full max-h-full object-contain"
               />
@@ -1541,27 +1661,84 @@ const FileManager = () => {
     }
   };
 
-  const getFileIcon = (type) => {
+  const getFileIcon = (fileOrType, size = 'w-5 h-5') => {
+    const filename = typeof fileOrType === 'string' ? fileOrType : fileOrType?.name;
+    const type = typeof fileOrType === 'string' ? fileOrType : fileOrType?.type;
+    const lower = (filename || '').toLowerCase();
+
+    if (type === 'folder') return <FolderIcon className={`${size} text-yellow-400`} />;
+
+    const ext = lower.split('.').pop();
+    const IconBy = (I, cls) => <I className={`${size} ${cls}`} />;
+    const mapping = {
+      html: () => IconBy(DocumentTextIcon, 'text-orange-500'),
+      htm: () => IconBy(DocumentTextIcon, 'text-orange-500'),
+      css: () => IconBy(DocumentTextIcon, 'text-blue-500'),
+      scss: () => IconBy(DocumentTextIcon, 'text-pink-500'),
+      sass: () => IconBy(DocumentTextIcon, 'text-pink-500'),
+      js: () => IconBy(DocumentTextIcon, 'text-yellow-500'),
+      ts: () => IconBy(DocumentTextIcon, 'text-blue-600'),
+      tsx: () => IconBy(DocumentTextIcon, 'text-blue-600'),
+      jsx: () => IconBy(DocumentTextIcon, 'text-yellow-600'),
+      json: () => IconBy(DocumentTextIcon, 'text-emerald-500'),
+      xml: () => IconBy(DocumentTextIcon, 'text-amber-500'),
+      py: () => IconBy(DocumentTextIcon, 'text-yellow-400'),
+      php: () => IconBy(DocumentTextIcon, 'text-indigo-500'),
+      java: () => IconBy(DocumentTextIcon, 'text-red-500'),
+      go: () => IconBy(DocumentTextIcon, 'text-cyan-500'),
+      rb: () => IconBy(DocumentTextIcon, 'text-rose-500'),
+      sh: () => IconBy(DocumentTextIcon, 'text-gray-500'),
+      sql: () => IconBy(DocumentTextIcon, 'text-green-600'),
+      md: () => IconBy(DocumentTextIcon, 'text-slate-500'),
+      pdf: () => IconBy(DocumentTextIcon, 'text-red-600'),
+      doc: () => IconBy(DocumentTextIcon, 'text-blue-700'),
+      docx: () => IconBy(DocumentTextIcon, 'text-blue-700'),
+      xls: () => IconBy(DocumentTextIcon, 'text-green-700'),
+      xlsx: () => IconBy(DocumentTextIcon, 'text-green-700'),
+      ppt: () => IconBy(DocumentTextIcon, 'text-orange-600'),
+      pptx: () => IconBy(DocumentTextIcon, 'text-orange-600'),
+      jpg: () => IconBy(PhotoIcon, 'text-green-400'),
+      jpeg: () => IconBy(PhotoIcon, 'text-green-400'),
+      png: () => IconBy(PhotoIcon, 'text-green-400'),
+      gif: () => IconBy(PhotoIcon, 'text-green-400'),
+      webp: () => IconBy(PhotoIcon, 'text-green-400'),
+      svg: () => IconBy(PhotoIcon, 'text-green-400'),
+      mp4: () => IconBy(FilmIcon, 'text-purple-400'),
+      avi: () => IconBy(FilmIcon, 'text-purple-400'),
+      mov: () => IconBy(FilmIcon, 'text-purple-400'),
+      mkv: () => IconBy(FilmIcon, 'text-purple-400'),
+      webm: () => IconBy(FilmIcon, 'text-purple-400'),
+      mp3: () => IconBy(MusicalNoteIcon, 'text-pink-400'),
+      wav: () => IconBy(MusicalNoteIcon, 'text-pink-400'),
+      ogg: () => IconBy(MusicalNoteIcon, 'text-pink-400'),
+      zip: () => IconBy(ArchiveBoxIcon, 'text-orange-500'),
+      tar: () => IconBy(ArchiveBoxIcon, 'text-orange-500'),
+      gz: () => IconBy(ArchiveBoxIcon, 'text-orange-500'),
+      bz2: () => IconBy(ArchiveBoxIcon, 'text-orange-500'),
+      '7z': () => IconBy(ArchiveBoxIcon, 'text-orange-500'),
+      rar: () => IconBy(ArchiveBoxIcon, 'text-orange-500'),
+    };
+
+    if (ext && mapping[ext]) return mapping[ext]();
+
     switch (type) {
-      case 'folder':
-        return <FolderIcon className="w-5 h-5 text-yellow-400" />;
       case 'text':
-        return <DocumentTextIcon className="w-5 h-5 text-blue-400" />;
+        return <DocumentTextIcon className={`${size} text-blue-400`} />;
       case 'image':
-        return <PhotoIcon className="w-5 h-5 text-green-400" />;
+        return <PhotoIcon className={`${size} text-green-400`} />;
       case 'video':
-        return <FilmIcon className="w-5 h-5 text-purple-400" />;
+        return <FilmIcon className={`${size} text-purple-400`} />;
       case 'audio':
-        return <MusicalNoteIcon className="w-5 h-5 text-pink-400" />;
+        return <MusicalNoteIcon className={`${size} text-pink-400`} />;
       case 'archive':
-        return <ArchiveBoxIcon className="w-5 h-5 text-orange-400" />;
+        return <ArchiveBoxIcon className={`${size} text-orange-400`} />;
       default:
-        return <DocumentIcon className="w-5 h-5 text-gray-400" />;
+        return <DocumentIcon className={`${size} text-gray-400`} />;
     }
   };
 
   const formatSize = (bytes) => {
-    if (bytes === null) return '';
+    if (bytes === null || bytes === undefined) return '';
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     if (bytes === 0) return '0 B';
     const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
@@ -1623,11 +1800,52 @@ const FileManager = () => {
         </div>
       ) : (
         <div className="space-y-1">
-          {filteredFiles.map((file, index) => (
-            <FileRow key={`${file.name}-${index}`} file={file} />
+          {/* File List Header */}
+          <div className="flex items-center px-4 py-2 text-xs font-medium tracking-wider text-left uppercase" style={{ color: 'var(--secondary-text)', borderBottom: '1px solid var(--border-color)' }}>
+            <div className="flex-1 pl-10">Name</div>
+            <div className="w-28 flex-shrink-0 text-right px-3">Size</div>
+            <div className="w-44 flex-shrink-0 text-right px-3 whitespace-nowrap">Last Modified</div>
+            <div className="w-36 flex-shrink-0 text-right px-3">Owner</div>
+            <div className="w-24 flex-shrink-0 text-right px-3">Permissions</div>
+            <div className="w-16 flex-shrink-0"></div> {/* Actions column header */}
+          </div>
+          {filteredFiles.map((file) => (
+            <FileRow key={file.path} file={file} />
           ))}
         </div>
       )}
+    </div>
+  );
+
+  const FileGridItem = ({ file }) => {
+    const isSelected = selectedFiles.has(file.name);
+
+    return (
+      <div
+        className={`relative flex flex-col items-center p-3 rounded-lg cursor-pointer transition-colors group ${
+          isSelected ? 'bg-blue-500/20 ring-1 ring-blue-500/50' : 'hover:bg-[var(--hover-bg)]'
+        }`}
+        onClick={(e) => handleFileClick(file, e)}
+        onDoubleClick={() => handleDoubleClick(file)}
+        onContextMenu={(e) => handleContextMenu(e, file)}
+      >
+        <div className="mb-3">
+          {getFileIcon(file, 'w-16 h-16')}
+        </div>
+        <p className="w-full text-sm text-center break-words text-[var(--primary-text)]" title={file.name}>
+          {file.name}
+        </p>
+      </div>
+    );
+  };
+
+  const FileGrid = () => (
+    <div className="p-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
+        {filteredFiles.map((file) => (
+          <FileGridItem key={file.path} file={file} />
+        ))}
+      </div>
     </div>
   );
 
@@ -1636,105 +1854,72 @@ const FileManager = () => {
     const isSelected = selectedFiles.has(file.name);
     const isHighlighted = highlightedRow === file.name;
 
+    const handleActionMenu = (e, file) => {
+      e.stopPropagation();
+      const rect = e.currentTarget.getBoundingClientRect();
+      handleContextMenu({
+        preventDefault: () => {},
+        pageX: rect.right,
+        pageY: rect.bottom,
+      }, file, 'top-right');
+    };
+
     return (
       <div
-        className={`flex items-center px-4 py-3 rounded-lg cursor-pointer transition-colors group ${
-          isSelected ? 'ring-2 ring-blue-500' : ''
-        }`}
-        style={{
-          backgroundColor: isSelected 
-            ? 'var(--accent-color)20' 
-            : isHighlighted 
-              ? 'var(--hover-bg)' 
-              : 'transparent'
-        }}
+        className={`flex items-center px-4 py-2 rounded-lg cursor-pointer transition-colors group ${
+          isSelected ? 'bg-blue-500/10 ring-1 ring-blue-500/50' : ''
+        } ${isHighlighted ? 'bg-[var(--hover-bg)]' : ''}`}
         onClick={(e) => handleFileClick(file, e)}
         onDoubleClick={() => handleDoubleClick(file)}
         onContextMenu={(e) => handleContextMenu(e, file)}
         onMouseEnter={() => setHighlightedRow(file.name)}
         onMouseLeave={() => setHighlightedRow(null)}
       >
+        {/* Name and Icon */}
         <div className="flex items-center flex-1 min-w-0">
-          <div className="flex-shrink-0 mr-3">
-            {getFileIcon(file.type)}
+          <div className="flex-shrink-0 mr-4">
+            {getFileIcon(file)}
           </div>
-          
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center space-x-2">
-              <p className="text-sm font-medium truncate" 
-                 style={{ color: isSelected ? 'var(--accent-color)' : 'var(--primary-text)' }}>
-                {file.name}
-              </p>
-              
-              {file.isSymlink && (
-                <span className="text-xs px-1 py-0.5 rounded" 
-                      style={{ 
-                        backgroundColor: 'var(--secondary-bg)', 
-                        color: 'var(--secondary-text)' 
-                      }}>
-                  link
-                </span>
-              )}
-              
-              {file.isHidden && (
-                <span className="text-xs px-1 py-0.5 rounded" 
-                      style={{ 
-                        backgroundColor: 'var(--warning-bg)', 
-                        color: 'var(--warning-text)' 
-                      }}>
-                  hidden
-                </span>
-              )}
-            </div>
-            
-            <div className="flex items-center space-x-4 mt-1 text-xs" 
-                 style={{ color: 'var(--secondary-text)' }}>
-              <span>{formatSize(file.size)}</span>
-              <span>{formatDate(file.modifiedAt)}</span>
-              {file.permissions && <span className="font-mono">{file.permissions}</span>}
-              {file.owner && <span>{file.owner}</span>}
-            </div>
+          <div className="flex-1 min-w-0 flex items-center space-x-2">
+            <p className="text-sm font-medium truncate text-[var(--primary-text)]">
+              {file.name}
+            </p>
+            {file.isSymlink && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--secondary-bg)] text-[var(--secondary-text)]">link</span>
+            )}
+            {file.isHidden && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--warning-bg)] text-[var(--warning-text)]">hidden</span>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedFile(file);
-              setShowFileProperties(true);
-            }}
-            className="p-1 rounded hover:bg-opacity-20 transition-colors"
-            style={{ color: 'var(--secondary-text)' }}
-            title="Properties"
-          >
-            <InformationCircleIcon className="w-4 h-4" />
-          </button>
+        {/* Size */}
+        <div className="w-28 flex-shrink-0 text-right px-3 text-sm text-[var(--secondary-text)]">
+          {file.type !== 'folder' ? formatSize(file.size) : '--'}
+        </div>
 
-          {isTextFile(file.name) && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                openFileEditor(file);
-              }}
-              className="p-1 rounded hover:bg-opacity-20 transition-colors"
-              style={{ color: 'var(--secondary-text)' }}
-              title="Edit"
-            >
-              <PencilIcon className="w-4 h-4" />
-            </button>
-          )}
+        {/* Last Modified */}
+        <div className="w-44 flex-shrink-0 text-right px-3 text-sm text-[var(--secondary-text)] whitespace-nowrap">
+          {formatDate(file.modifiedAt)}
+        </div>
 
+        {/* Owner */}
+        <div className="w-36 flex-shrink-0 text-right px-3 text-sm text-[var(--secondary-text)] truncate">
+          {file.owner}{file.group ? `:${file.group}` : ''}
+        </div>
+
+        {/* Permissions */}
+        <div className="w-24 flex-shrink-0 text-right px-3 text-sm text-[var(--secondary-text)] font-mono">
+          {file.permissions}
+        </div>
+        
+        {/* Actions */}
+        <div className="w-16 flex-shrink-0 flex justify-end">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDownload(file);
-            }}
-            className="p-1 rounded hover:bg-opacity-20 transition-colors"
-            style={{ color: 'var(--secondary-text)' }}
-            title="Download"
+            onClick={(e) => handleActionMenu(e, file)}
+            className="p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--primary-bg)] focus:ring-blue-500 text-[var(--secondary-text)]"
           >
-            <ArrowDownTrayIcon className="w-4 h-4" />
+            <EllipsisVerticalIcon className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -1771,6 +1956,41 @@ const FileManager = () => {
               }
             }}
             disabled={!newFolderName || loading}
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Creating...' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const NewFileModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+      <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Create New File</h3>
+        <input
+          type="text"
+          value={newFileName}
+          onChange={(e) => setNewFileName(e.target.value)}
+          placeholder="File name"
+          className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white"
+          onKeyPress={(e) => e.key === 'Enter' && handleCreateFile(newFileName)}
+          autoFocus
+        />
+        <div className="flex justify-end mt-6 space-x-3">
+          <button
+            onClick={() => {
+              setNewFileName('');
+              setShowNewFileModal(false);
+            }}
+            className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => handleCreateFile(newFileName)}
+            disabled={!newFileName || loading}
             className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Creating...' : 'Create'}
@@ -1989,12 +2209,17 @@ const FileManager = () => {
         setContextMenu({ ...contextMenu, visible: false });
         setHighlightedRow(null);
       }
+      if (newItemDropdownRef.current && !newItemDropdownRef.current.contains(e.target)) {
+        setShowNewItemDropdown(false);
+      }
     };
     const handleScrollOrResize = () => {
       setContextMenu({ ...contextMenu, visible: false });
       setHighlightedRow(null);
+      setShowNewItemDropdown(false);
     };
-    if (contextMenu.visible) {
+
+    if (contextMenu.visible || showNewItemDropdown) {
       document.addEventListener('mousedown', handleClick);
       window.addEventListener('scroll', handleScrollOrResize, true);
       window.addEventListener('resize', handleScrollOrResize);
@@ -2004,7 +2229,7 @@ const FileManager = () => {
       window.removeEventListener('scroll', handleScrollOrResize, true);
       window.removeEventListener('resize', handleScrollOrResize);
     };
-  }, [contextMenu]);
+  }, [contextMenu, showNewItemDropdown]);
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--primary-bg)' }}>
@@ -2102,24 +2327,51 @@ const FileManager = () => {
               </div>
 
               <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setShowNewFolderModal(true)}
-                  className="flex items-center space-x-2 px-4 py-2 rounded-md transition-colors"
-                  style={{
-                    backgroundColor: 'var(--accent-color)',
-                    color: 'white'
-                  }}
-                >
-                  <FolderPlusIcon className="w-4 h-4" />
-                  <span>New Folder</span>
-                </button>
+                <div className="relative" ref={newItemDropdownRef}>
+                  <button
+                    onClick={() => setShowNewItemDropdown(prev => !prev)}
+                    className="flex items-center space-x-2 px-4 py-2 rounded-md transition-colors"
+                    style={{
+                      backgroundColor: 'var(--accent-color)',
+                      color: 'white'
+                    }}
+                  >
+                    <FolderPlusIcon className="w-4 h-4" />
+                    <span>New</span>
+                    <ChevronDownIcon className={`w-4 h-4 transition-transform ${showNewItemDropdown ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showNewItemDropdown && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-md shadow-lg z-20">
+                      <button
+                        onClick={() => {
+                          setShowNewFolderModal(true);
+                          setShowNewItemDropdown(false);
+                        }}
+                        className="w-full text-left flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      >
+                        <FolderIcon className="w-4 h-4 mr-2" />
+                        New Folder
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNewFileModal(true);
+                          setShowNewItemDropdown(false);
+                        }}
+                        className="w-full text-left flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      >
+                        <DocumentPlusIcon className="w-4 h-4 mr-2" />
+                        New File
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 <label className="flex items-center space-x-2 px-4 py-2 rounded-md cursor-pointer transition-colors"
                        style={{
                          backgroundColor: 'var(--accent-color)',
                          color: 'white'
                        }}>
-                  <DocumentPlusIcon className="w-4 h-4" />
+                  <ArrowDownTrayIcon className="w-4 h-4" />
                   <span>Upload</span>
                   <input 
                     type="file" 
@@ -2210,15 +2462,15 @@ const FileManager = () => {
 
             {/* Show file list only when domain is selected or for admin users */}
             {(currentDomain || isAdminUser) && (
-              <>
+              <div className="h-full relative">
                 {loading && (
-                  <div className="flex items-center justify-center h-64">
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 dark:bg-gray-900/50 transition-opacity duration-300">
                     <LoadingSpinner />
-                    <span className="ml-2">Loading files...</span>
+                    <span className="ml-2 font-medium text-gray-700 dark:text-gray-300">Loading files...</span>
                   </div>
                 )}
-                {!loading && <FileListPanel />}
-              </>
+                {viewMode === 'list' ? <FileListPanel /> : <FileGrid />}
+              </div>
             )}
           </div>
         </div>
@@ -2229,6 +2481,7 @@ const FileManager = () => {
       {showFilePreview && <FilePreview />}
       {showFileProperties && <FilePropertiesModal />}
       {showNewFolderModal && <NewFolderModal />}
+      {showNewFileModal && <NewFileModal />}
       {showRenameModal && <RenameModal />}
       {showDeleteConfirm && <DeleteConfirmModal />}
       

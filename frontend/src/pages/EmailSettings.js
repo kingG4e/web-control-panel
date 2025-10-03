@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import BaseModal, { ModalSection, ModalSectionTitle, ModalButton } from '../components/modals/BaseModal';
 import { Link } from 'react-router-dom';
 import api, { email, roundcube } from '../services/api';
@@ -100,25 +100,34 @@ const EmailSettings = () => {
   // Modal states
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showForwarderModal, setShowForwarderModal] = useState(false);
-  const [showPasswordResetModal, setShowPasswordResetModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
-  const [selectedAccount, setSelectedAccount] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState(null);
+  const [openDropdown, setOpenDropdown] = useState(null);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+        if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+            setOpenDropdown(null);
+        }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   // Form data
   const [accountForm, setAccountForm] = useState({
     username: '',
     password: '',
+    confirmPassword: '',
     quota: 1024,
   });
   const [forwarderForm, setForwarderForm] = useState({
     source: '',
     destination: '',
-  });
-  const [passwordResetForm, setPasswordResetForm] = useState({
-    newPassword: '',
-    confirmPassword: '',
   });
   
 
@@ -155,7 +164,19 @@ const EmailSettings = () => {
 
   const handleCreateAccount = async (e) => {
     e.preventDefault();
+    setError(null);
     if (!selectedDomain) return;
+
+    if (accountForm.password || !editingAccount) {
+      if (accountForm.password !== accountForm.confirmPassword) {
+        setError('Passwords do not match');
+        return;
+      }
+      if (accountForm.password.length < 6) {
+        setError('Password must be at least 6 characters long');
+        return;
+      }
+    }
 
     try {
       const payload = editingAccount
@@ -175,8 +196,8 @@ const EmailSettings = () => {
         await email.createAccount(selectedDomain.virtual_host_id, payload);
       }
       setShowAccountModal(false);
-      setAccountForm({ username: '', password: '', quota: 1024 });
-    setEditingAccount(null);
+      setAccountForm({ username: '', password: '', confirmPassword: '', quota: 1024 });
+      setEditingAccount(null);
       fetchDomains();
     } catch (err) {
       setError(editingAccount ? 'Failed to update account' : 'Failed to create account');
@@ -223,38 +244,6 @@ const EmailSettings = () => {
     } catch (err) {
       setError('Failed to delete forwarder');
       console.error('Error deleting forwarder:', err);
-    }
-  };
-
-  
-
-  const handlePasswordReset = async (e) => {
-    e.preventDefault();
-    if (!selectedAccount) return;
-
-    if (passwordResetForm.newPassword !== passwordResetForm.confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
-    if (passwordResetForm.newPassword.length < 6) {
-      setError('Password must be at least 6 characters long');
-      return;
-    }
-
-    try {
-      await api.put(`/email/accounts/${selectedAccount.id}`, {
-        password: passwordResetForm.newPassword
-      });
-
-      setShowPasswordResetModal(false);
-      setPasswordResetForm({ newPassword: '', confirmPassword: '' });
-      setSelectedAccount(null);
-      fetchDomains();
-      setError(null);
-    } catch (err) {
-      setError('Failed to reset password');
-      console.error('Error resetting password:', err);
     }
   };
 
@@ -502,7 +491,7 @@ const EmailSettings = () => {
                       <button
                                 onClick={() => {
                           setEditingAccount(null);
-                          setAccountForm({ username: '', password: '', quota: 1024 });
+                          setAccountForm({ username: '', password: '', confirmPassword: '', quota: 1024 });
                           setShowAccountModal(true);
                         }}
                         className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
@@ -577,62 +566,14 @@ const EmailSettings = () => {
                                         <h3 className="font-medium" style={{ color: 'var(--primary-text)' }}>
                                           {account.email}
                                         </h3>
-                                        <div className="flex items-center space-x-2"></div>
                                       </div>
                                     </div>
-                                    <div className="flex items-center space-x-3">
-                                      {account.id && (
-                                        <>
-                                          <button
-                                            onClick={() => {
-                                              setEditingAccount(account);
-                                              setAccountForm({
-                                                username: account.username,
-                                                password: '',
-                                                quota: account.quota
-                                              });
-                                              setShowAccountModal(true);
-                                            }}
-                                            className="p-2 rounded transition-colors"
-                                            style={{ color: 'var(--secondary-text)' }}
-                                          >
-                                            <PencilIcon className="w-4 h-4" />
-                                          </button>
-                                          <button
-                                            onClick={() => {
-                                              setAccountToDelete(account);
-                                              setShowDeleteModal(true);
-                                            }}
-                                            className="p-2 rounded transition-colors"
-                                            style={{ color: 'var(--secondary-text)' }}
-                                          >
-                                            <TrashIcon className="w-4 h-4" />
-                                          </button>
-                                        </>
-                                      )}
-          </div>
-
-                                    <div className="flex items-center space-x-2 mt-3">
-                                      {account.id && (
-                                        <button
-                                          onClick={() => {
-                                            setSelectedAccount(account);
-                                            setPasswordResetForm({ newPassword: '', confirmPassword: '' });
-                                            setShowPasswordResetModal(true);
-                                          }}
-                                          className="px-3 py-1 rounded text-xs font-medium transition-colors flex items-center space-x-1"
-                                          style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', color: '#f59e0b' }}
-                                          title="Reset Password"
-                                        >
-                                          <KeyIcon className="w-3 h-3" />
-                                          <span>Reset Password</span>
-                                        </button>
-                                      )}
+                                    <div className="flex items-center space-x-2">
                                       {!account.id && (
                                         <button
                                           onClick={() => {
                                             setEditingAccount(null);
-                                            setAccountForm({ username: account.username, password: '', quota: account.quota ?? 1024 });
+                                            setAccountForm({ username: account.username, password: '', confirmPassword: '', quota: account.quota ?? 1024 });
                                             setShowAccountModal(true);
                                           }}
                                           className="px-3 py-1 rounded text-xs font-medium transition-colors flex items-center space-x-1"
@@ -653,12 +594,56 @@ const EmailSettings = () => {
                                         <ComputerDesktopIcon className="w-3 h-3" />
                                         <span>Webmail</span>
                                       </button>
-            </div>
-              </div>
-              </div>
+                                      
+                                      {account.id && (
+                                        <div className="relative" ref={openDropdown === account.id ? dropdownRef : null}>
+                                          <button
+                                            onClick={() => setOpenDropdown(openDropdown === account.id ? null : account.id)}
+                                            className="p-2 rounded transition-colors"
+                                            style={{ color: 'var(--secondary-text)' }}
+                                          >
+                                            <CogIcon className="w-4 h-4" />
+                                          </button>
+                                          {openDropdown === account.id && (
+                                            <div
+                                              className="absolute right-0 mt-2 w-48 rounded-md shadow-lg z-10 py-1"
+                                              style={{ backgroundColor: 'var(--secondary-bg)', border: '1px solid var(--border-color)' }}
+                                            >
+                                              <button
+                                                onClick={() => {
+                                                  setEditingAccount(account);
+                                                  setAccountForm({ username: account.username, password: '', confirmPassword: '', quota: account.quota });
+                                                  setShowAccountModal(true);
+                                                  setOpenDropdown(null);
+                                                }}
+                                                className="w-full text-left flex items-center space-x-2 px-4 py-2 text-sm transition-colors hover:bg-gray-700"
+                                                style={{ color: 'var(--primary-text)' }}
+                                              >
+                                                <PencilIcon className="w-4 h-4" />
+                                                <span>Edit Account</span>
+                                              </button>
+                                              <button
+                                                onClick={() => {
+                                                  setAccountToDelete(account);
+                                                  setShowDeleteModal(true);
+                                                  setOpenDropdown(null);
+                                                }}
+                                                className="w-full text-left flex items-center space-x-2 px-4 py-2 text-sm transition-colors hover:bg-gray-700"
+                                                style={{ color: '#ef4444' }}
+                                              >
+                                                <TrashIcon className="w-4 h-4" />
+                                                <span>Delete Account</span>
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
                               );
                             })}
-              </div>
+                          </div>
                         ) : (
                           <div className="text-center py-12">
                             <EnvelopeIcon className="w-12 h-12 mx-auto mb-3" style={{ color: 'var(--secondary-text)' }} />
@@ -666,7 +651,7 @@ const EmailSettings = () => {
                               No email accounts yet
                             </p>
                             <button
-                              onClick={() => { setEditingAccount(null); setAccountForm({ username: '', password: '', quota: 1024 }); setShowAccountModal(true); }}
+                              onClick={() => { setEditingAccount(null); setAccountForm({ username: '', password: '', confirmPassword: '', quota: 1024 }); setShowAccountModal(true); }}
                               className="mt-2 text-sm underline"
                               style={{ color: 'var(--accent-color)' }}
                             >
@@ -807,6 +792,20 @@ const EmailSettings = () => {
                   required={!editingAccount}
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
+                  Confirm Password
+                </label>
+                <input
+                  type="password"
+                  value={accountForm.confirmPassword}
+                  onChange={(e) => setAccountForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                  placeholder="Confirm password"
+                  className="w-full px-3 py-2 rounded-lg border"
+                  style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                  required={!editingAccount || !!accountForm.password}
+                />
+              </div>
               
             </div>
             <button id="accountFormSubmit" type="submit" className="hidden">submit</button>
@@ -885,61 +884,6 @@ const EmailSettings = () => {
               </div>
             </div>
             <button id="forwarderFormSubmit" type="submit" className="hidden">submit</button>
-          </form>
-        </ModalSection>
-      </BaseModal>
-
-      {/* Password Reset Modal */}
-      <BaseModal
-        isOpen={showPasswordResetModal}
-        onClose={() => setShowPasswordResetModal(false)}
-        title="Reset Password"
-        maxWidth="max-w-md"
-        footer={(
-          <div className="flex items-center justify-end gap-3">
-            <ModalButton variant="secondary" onClick={() => setShowPasswordResetModal(false)}>Cancel</ModalButton>
-            <ModalButton variant="warning" onClick={() => document.getElementById('passwordResetFormSubmit').click()}>Reset Password</ModalButton>
-          </div>
-        )}
-      >
-        <ModalSection>
-          <p className="text-sm mb-4" style={{ color: 'var(--secondary-text)' }}>
-            Reset password for: <strong>{selectedAccount?.email}</strong>
-          </p>
-          <form onSubmit={handlePasswordReset}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                  New Password
-                </label>
-                <input
-                  type="password"
-                  value={passwordResetForm.newPassword}
-                  onChange={(e) => setPasswordResetForm(prev => ({ ...prev, newPassword: e.target.value }))}
-                  placeholder="Enter new password"
-                  className="w-full px-3 py-2 rounded-lg border"
-                  style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
-                  required
-                  minLength="6"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                  Confirm Password
-                </label>
-                <input
-                  type="password"
-                  value={passwordResetForm.confirmPassword}
-                  onChange={(e) => setPasswordResetForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
-                  placeholder="Confirm new password"
-                  className="w-full px-3 py-2 rounded-lg border"
-                  style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
-                  required
-                  minLength="6"
-                />
-              </div>
-            </div>
-            <button id="passwordResetFormSubmit" type="submit" className="hidden">submit</button>
           </form>
         </ModalSection>
       </BaseModal>

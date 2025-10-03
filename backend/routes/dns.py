@@ -3,6 +3,8 @@ from models.dns import DNSZone, DNSRecord, db
 from services.bind_service import BindService
 from config import Config
 from utils.settings_util import get_dns_default_ip
+import ipaddress
+from sqlalchemy.orm import joinedload
 from datetime import datetime
 import os
 from utils.auth import permission_required, admin_required, token_required
@@ -279,6 +281,7 @@ def get_zone_file(current_user, id):
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/reload', methods=['POST'])
+@token_required
 @admin_required
 def reload_bind(current_user):
     try:
@@ -288,6 +291,7 @@ def reload_bind(current_user):
         return jsonify({'error': str(e)}), 500
 
 @dns_bp.route('/api/dns/rebuild', methods=['POST'])
+@token_required
 @admin_required
 def rebuild_dns(current_user):
     try:
@@ -301,4 +305,110 @@ def rebuild_dns(current_user):
 
         return jsonify({'message': 'DNS zones rebuilt and BIND reloaded successfully'})
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@dns_bp.route('/api/dns/replace-ip-bulk', methods=['POST'])
+@token_required
+@admin_required
+def replace_ip_bulk(current_user):
+    """Bulk replace IP across zones by domain selection.
+
+    Body:
+      - new_ip: required
+      - mode: 'all' | 'selected' (default 'all')
+      - domains: optional list of domain names (used when mode='selected')
+    """
+    data = request.get_json() or {}
+    new_ip = (data.get('new_ip') or '').strip()
+    mode = (data.get('mode') or 'all').strip().lower()
+    domains = data.get('domains') or []
+
+    try:
+        ipaddress.ip_address(new_ip)
+    except Exception:
+        return jsonify({'error': 'Invalid IP address'}), 400
+
+    try:
+        # Determine target zones
+        if mode == 'selected' and domains:
+            zones = DNSZone.query.options(joinedload(DNSZone.records)).filter(DNSZone.domain_name.in_(domains)).all()
+        else:
+            zones = DNSZone.query.options(joinedload(DNSZone.records)).all()
+
+        total_updated_records = 0
+        updated_domains = []
+
+        for zone in zones:
+            zone_updates = 0
+            for r in zone.records:
+                if r.record_type.upper() == 'A' and r.status == 'active':
+                    r.content = new_ip
+                    zone_updates += 1
+            if zone_updates > 0:
+                updated_domains.append(zone.domain_name)
+            total_updated_records += zone_updates
+
+        # Commit DB changes once
+        db.session.commit()
+
+        # Rebuild zone files for updated zones
+        for zone_name in updated_domains:
+            z = DNSZone.query.options(joinedload(DNSZone.records)).filter_by(domain_name=zone_name).first()
+            if z:
+                bind_service.update_zone(z, nameserver_ip=new_ip)
+
+        return jsonify({
+            'success': True,
+            'updated_domains': updated_domains,
+            'updated_records': total_updated_records
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@dns_bp.route('/api/dns/zones/<int:zone_id>/replace-ip', methods=['POST'])
+@permission_required('dns', 'update')
+def replace_zone_ip(current_user, zone_id):
+    """Replace IP for A records in a zone, then rebuild and reload BIND.
+
+    Body:
+      - new_ip: required, IPv4 or IPv6
+      - names: optional list of record names to update (e.g., ["@", "ns1", "mail"]). If omitted, update all A records.
+    """
+    data = request.get_json() or {}
+    new_ip = (data.get('new_ip') or '').strip()
+    names = data.get('names')
+
+    # Validate IP
+    try:
+        ipaddress.ip_address(new_ip)
+    except Exception:
+        return jsonify({'error': 'Invalid IP address'}), 400
+
+    try:
+        # Load zone with records
+        zone = DNSZone.query.options(joinedload(DNSZone.records)).get(zone_id)
+        if not zone:
+            return jsonify({'error': 'Zone not found'}), 404
+
+        # Update records
+        updated = 0
+        for r in zone.records:
+            if r.record_type.upper() == 'A' and r.status == 'active':
+                if names is None or r.name in names:
+                    r.content = new_ip
+                    updated += 1
+
+        db.session.commit()
+
+        # Re-fetch with fresh records for template
+        zone = DNSZone.query.options(joinedload(DNSZone.records)).get(zone.id)
+
+        # Rebuild zone file with the provided IP as nameserver_ip
+        bind_service.update_zone(zone, nameserver_ip=new_ip)
+
+        return jsonify({'success': True, 'updated_records': updated}), 200
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500

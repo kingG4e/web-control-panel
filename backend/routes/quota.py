@@ -36,11 +36,10 @@ def get_user_quota_usage(current_user, username):
             ).all()
         else:
             # Regular user can only see their own email accounts
-            email_accounts = EmailAccount.query.join(
-                EmailAccount.email_domain
-            ).filter(
+            from models.email import EmailDomain
+            email_accounts = EmailAccount.query.join(EmailDomain).filter(
                 EmailAccount.username == username,
-                EmailAccount.email_domain.domain == current_user.email.split('@')[1] if current_user.email else None
+                EmailDomain.domain == current_user.email.split('@')[1] if current_user.email else None
             ).all()
         
         # Get email quota usage

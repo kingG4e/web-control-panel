@@ -104,6 +104,11 @@ const Database = () => {
   const [allDbUsers, setAllDbUsers] = useState([]);
   const [userSelectionMode, setUserSelectionMode] = useState('create'); // 'create' or 'existing'
   const [selectedDbUserId, setSelectedDbUserId] = useState('');
+  const [manageUsersOpen, setManageUsersOpen] = useState(false);
+  const [manageUsersDb, setManageUsersDb] = useState(null);
+  const [manageUsers, setManageUsers] = useState([]);
+  const [editingUser, setEditingUser] = useState(null);
+  const [editingUserForm, setEditingUserForm] = useState({ password: '', host: '%' });
 
   // Debounced search function
   const debouncedSearch = useCallback(
@@ -151,22 +156,25 @@ const Database = () => {
     }
   }, [user]);
 
-  // Fetch all DB users when the form is opened
+  // Fetch DB users when the form is opened (admins get all; non-admins get users of owned databases)
   useEffect(() => {
-    if (showForm && user?.role === 'admin') {
-      const fetchAllUsers = async () => {
+    if (showForm) {
+      const fetchUsers = async () => {
         try {
           const res = await dbApi.getAllUsers();
-          if (res.success) {
+          if (res.success && Array.isArray(res.data)) {
             setAllDbUsers(res.data);
+          } else if (Array.isArray(res)) {
+            // Fallback in case API returns array directly
+            setAllDbUsers(res);
           }
         } catch (err) {
           console.error("Failed to fetch database users:", err);
         }
       };
-      fetchAllUsers();
+      fetchUsers();
     }
-  }, [showForm, user]);
+  }, [showForm]);
 
 
   const fetchUserData = async () => {
@@ -248,13 +256,19 @@ const Database = () => {
           // 2. Associate user with the new database
           if (userSelectionMode === 'create' && formData.username && formData.password) {
             // Create a new user and associate
-            await dbApi.createUser(newDb.id, {
+            const createUserRes = await dbApi.createUser(newDb.id, {
               username: formData.username,
               password: formData.password,
             });
+            if (!createUserRes?.success) {
+              throw new Error(createUserRes?.error || 'Failed to create database user');
+            }
           } else if (userSelectionMode === 'existing' && selectedDbUserId) {
             // Associate an existing user
-            await dbApi.associateUser(newDb.id, selectedDbUserId);
+            const associateRes = await dbApi.associateUser(newDb.id, selectedDbUserId);
+            if (!associateRes?.success) {
+              throw new Error(associateRes?.error || 'Failed to associate database user');
+            }
           }
 
         } else {
@@ -391,6 +405,74 @@ const Database = () => {
     } catch (err) {
       setError('Failed to connect to phpMyAdmin');
       console.error('phpMyAdmin error:', err);
+    }
+  };
+
+  // Manage Users Modal helpers
+  const openManageUsers = async (db) => {
+    try {
+      setManageUsersDb(db);
+      setManageUsersOpen(true);
+      const res = await dbApi.getUsers(db.id);
+      if (res.success && Array.isArray(res.data)) {
+        setManageUsers(res.data);
+      } else if (Array.isArray(res)) {
+        setManageUsers(res);
+      }
+    } catch (e) {
+      console.error('Failed to fetch database users for db', db.id, e);
+      setError('Failed to load database users');
+    }
+  };
+
+  const closeManageUsers = () => {
+    setManageUsersOpen(false);
+    setManageUsersDb(null);
+    setManageUsers([]);
+    setEditingUser(null);
+    setEditingUserForm({ password: '', host: '%' });
+  };
+
+  const startEditUser = (u) => {
+    setEditingUser(u);
+    setEditingUserForm({ password: '', host: u.host || '%' });
+  };
+
+  const saveEditUser = async () => {
+    if (!manageUsersDb || !editingUser) return;
+    try {
+      const payload = {};
+      if (editingUserForm.password) payload.password = editingUserForm.password;
+      if (editingUserForm.host && editingUserForm.host !== editingUser.host) payload.host = editingUserForm.host;
+      if (Object.keys(payload).length === 0) {
+        setEditingUser(null);
+        return;
+      }
+      const res = await dbApi.updateUser(manageUsersDb.id, editingUser.id, payload);
+      if (!res?.success) throw new Error(res?.error || 'Update failed');
+      // refresh list
+      const list = await dbApi.getUsers(manageUsersDb.id);
+      const newList = list?.data || list;
+      if (Array.isArray(newList)) setManageUsers(newList);
+      setEditingUser(null);
+      setEditingUserForm({ password: '', host: '%' });
+    } catch (e) {
+      console.error('Failed to update user', e);
+      setError(e.message || 'Failed to update user');
+    }
+  };
+
+  const revokeUser = async (u) => {
+    if (!manageUsersDb) return;
+    try {
+      const res = await dbApi.deleteUser(manageUsersDb.id, u.id);
+      if (!res?.success) throw new Error(res?.error || 'Revoke failed');
+      const list = await dbApi.getUsers(manageUsersDb.id);
+      const newList = list?.data || list;
+      if (Array.isArray(newList)) setManageUsers(newList);
+    } catch (e) {
+      console.error('Failed to revoke user', e);
+      setError(e.message || 'Failed to revoke user');
     }
   };
 
@@ -724,6 +806,13 @@ const Database = () => {
                         >
                           <ServerIcon className="w-5 h-5 text-blue-500" />
                         </button>
+                        <button
+                          onClick={() => openManageUsers(db)}
+                          className="p-1 hover:bg-[var(--hover-bg)] rounded transition-colors"
+                          title="Manage Users"
+                        >
+                          <UserIcon className="w-5 h-5 text-[var(--text-secondary)]" />
+                        </button>
                         {canEditDatabase(db) ? (
                           <button 
                             onClick={() => handleEdit(db)}
@@ -1043,8 +1132,8 @@ const Database = () => {
                       required
                     >
                       <option value="">-- Choose a user --</option>
-                      {allDbUsers.map(user => (
-                        <option key={user.id} value={user.id}>{user.username}</option>
+                      {allDbUsers.map(userItem => (
+                        <option key={userItem.id} value={userItem.id}>{userItem.username}</option>
                       ))}
                     </select>
                   </div>
@@ -1347,6 +1436,89 @@ const Database = () => {
             <p className="text-sm text-[var(--secondary-text)] mt-2">
               All associated data and database users will be permanently removed. This action cannot be undone.
             </p>
+          </div>
+        </BaseModal>
+
+        {/* Manage Users Modal */}
+        <BaseModal
+          isOpen={manageUsersOpen}
+          onClose={closeManageUsers}
+          title={`Manage Users${manageUsersDb ? ` — ${manageUsersDb.name}` : ''}`}
+          footer={
+            <div className="flex justify-end space-x-3">
+              <Button variant="secondary" onClick={closeManageUsers}>
+                Close
+              </Button>
+              {editingUser && (
+                <Button variant="primary" onClick={saveEditUser}>
+                  Save User
+                </Button>
+              )}
+            </div>
+          }
+        >
+          <div className="p-6 space-y-4">
+            {/* List users */}
+            <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-[var(--border-color)] bg-[var(--secondary-bg)]">
+                    <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Username</th>
+                    <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Host</th>
+                    <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Privileges</th>
+                    <th className="px-6 py-3 text-right text-sm font-medium text-[var(--text-secondary)]">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {manageUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" className="text-center py-6 text-[var(--text-secondary)]">No users associated</td>
+                    </tr>
+                  ) : (
+                    manageUsers.map(u => (
+                      <tr key={u.id} className="border-b border-[var(--border-color)]">
+                        <td className="px-6 py-3">{u.username}</td>
+                        <td className="px-6 py-3">{u.host || '%'}</td>
+                        <td className="px-6 py-3">{u.privileges}</td>
+                        <td className="px-6 py-3 text-right space-x-2">
+                          <Button size="sm" variant="secondary" onClick={() => startEditUser(u)}>Edit</Button>
+                          <Button size="sm" variant="danger" onClick={() => revokeUser(u)}>Revoke</Button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Edit user inline form */}
+            {editingUser && (
+              <div className="border border-[var(--border-color)] rounded-lg p-4 space-y-3">
+                <div className="text-sm text-[var(--text-secondary)]">Editing: <span className="font-medium text-[var(--text-primary)]">{editingUser.username}</span></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">New Password</label>
+                    <input
+                      type="password"
+                      value={editingUserForm.password}
+                      onChange={(e) => setEditingUserForm(v => ({ ...v, password: e.target.value }))}
+                      className="input-field"
+                      placeholder="Leave blank to keep current"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Host</label>
+                    <input
+                      type="text"
+                      value={editingUserForm.host}
+                      onChange={(e) => setEditingUserForm(v => ({ ...v, host: e.target.value }))}
+                      className="input-field"
+                      placeholder="%"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </BaseModal>
       </div>

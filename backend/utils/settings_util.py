@@ -35,3 +35,8 @@ def get_dns_default_ip() -> str:
     return get_env_or_dotenv('DNS_DEFAULT_IP', default='127.0.0.1') or '127.0.0.1'
 
 
+def get_primary_domain(default: Optional[str] = None) -> Optional[str]:
+    """Return PRIMARY_DOMAIN from env or backend/.env for use in subdomain features."""
+    return get_env_or_dotenv('PRIMARY_DOMAIN', default=default)
+
+

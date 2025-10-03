@@ -58,7 +58,12 @@ server {
             os.makedirs(document_root, exist_ok=True)
 
             # Set proper permissions
-            subprocess.run(['chown', '-R', 'www-data:www-data', document_root], check=True)
+            if hasattr(virtual_host, 'linux_username') and virtual_host.linux_username:
+                # If linux_username is available, use it for ownership
+                subprocess.run(['chown', '-R', f'{virtual_host.linux_username}:{virtual_host.linux_username}', document_root], check=True)
+            else:
+                # Fallback to www-data if no specific user is associated yet
+                subprocess.run(['chown', '-R', 'www-data:www-data', document_root], check=True)
             subprocess.run(['chmod', '-R', '755', document_root], check=True)
 
             # Generate configuration
@@ -294,7 +299,10 @@ server {
             f.write(index_content)
 
         # Set proper permissions
-        subprocess.run(['chown', 'www-data:www-data', index_path], check=True)
+        if hasattr(virtual_host, 'linux_username') and virtual_host.linux_username:
+            subprocess.run(['chown', f'{virtual_host.linux_username}:{virtual_host.linux_username}', index_path], check=True)
+        else:
+            subprocess.run(['chown', 'www-data:www-data', index_path], check=True)
         subprocess.run(['chmod', '644', index_path], check=True) 
 
     def _reload_nginx(self):

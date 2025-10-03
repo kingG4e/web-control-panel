@@ -6,7 +6,8 @@ from services.mysql_service import MySQLService
 from services.phpmyadmin_service import PhpMyAdminService
 from datetime import datetime
 from sqlalchemy.orm import joinedload
-from sqlalchemy import desc, or_
+from sqlalchemy import desc, or_, text
+from sqlalchemy.exc import IntegrityError
 from utils.auth import token_required, admin_required
 from werkzeug.security import generate_password_hash
 
@@ -127,25 +128,46 @@ def get_database_users(current_user, id):
         if not _is_admin(current_user) and database.owner_id != current_user.id:
             return jsonify({'success': False, 'error': 'Access denied'}), 403
         
-        # Get paginated users
-        paginated = DatabaseUser.query.filter_by(database_id=id).order_by(
-            desc(DatabaseUser.created_at)
-        ).paginate(
-            page=page, 
-            per_page=per_page, 
-            error_out=False
-        )
+        # Detect schema variants (association table vs legacy FK)
+        assoc_exists = True
+        try:
+            db.session.execute(text('SELECT 1 FROM database_user_association LIMIT 1'))
+        except Exception:
+            assoc_exists = False
+
+        has_legacy_fk = False
+        try:
+            # SQLite PRAGMA; ignore errors on other engines (will stay False)
+            col_info = db.session.execute(text("PRAGMA table_info('database_user')")).fetchall()
+            has_legacy_fk = any(str(row[1]) == 'database_id' for row in col_info)
+        except Exception:
+            has_legacy_fk = False
+
+        # Use appropriate data source
+        if assoc_exists:
+            all_users = sorted(database.users, key=lambda u: u.created_at or datetime.utcnow(), reverse=True)
+        elif has_legacy_fk:
+            all_users = DatabaseUser.query.filter(text('database_id = :dbid')).params(dbid=id).order_by(desc(DatabaseUser.created_at)).all()
+        else:
+            all_users = []
+        total = len(all_users)
+        start = (page - 1) * per_page
+        end = start + per_page
+        items = all_users[start:end]
+        pages = (total + per_page - 1) // per_page if per_page else 1
+        has_next = page < pages
+        has_prev = page > 1
         
         return jsonify({
             'success': True,
-            'data': [user.to_dict(include_relations=False) for user in paginated.items],
+            'data': [user.to_dict(include_relations=False) for user in items],
             'pagination': {
                 'page': page,
                 'per_page': per_page,
-                'total': paginated.total,
-                'pages': paginated.pages,
-                'has_next': paginated.has_next,
-                'has_prev': paginated.has_prev
+                'total': total,
+                'pages': pages,
+                'has_next': has_next,
+                'has_prev': has_prev
             }
         })
     except Exception as e:
@@ -354,6 +376,49 @@ def delete_database_user(current_user, db_id, user_id):
             'error': str(e)
         }), 500
 
+@database_bp.route('/api/databases/<int:db_id>/users/<int:user_id>', methods=['PUT'])
+@token_required
+def update_database_user(current_user, db_id, user_id):
+    """Update database user settings: password and/or host."""
+    database = Database.query.get_or_404(db_id)
+
+    # Ownership/Admin check
+    if not _is_admin(current_user) and database.owner_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+
+    user = DatabaseUser.query.get_or_404(user_id)
+    if user not in database.users:
+        return jsonify({'success': False, 'error': 'User is not associated with this database'}), 400
+
+    data = request.get_json() or {}
+    new_password = data.get('password')
+    new_host = data.get('host')
+
+    try:
+        # Update password if provided
+        if new_password:
+            mysql_service.alter_user_password(user.username, new_password, user.host)
+            # Update stored hash
+            hashed = generate_password_hash(new_password)
+            user.password = hashed
+
+        # Update host if provided and changed
+        if new_host and new_host != user.host:
+            # Rename user host in MySQL
+            mysql_service.rename_user_host(user.username, user.host, new_host)
+            # Also re-grant privileges on this database for new host
+            mysql_service.grant_privileges(user.username, database.name, privileges=user.privileges, host=new_host)
+            # Update stored host
+            user.host = new_host
+
+        user.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        return jsonify({'success': True, 'data': user.to_dict(include_relations=False)})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @database_bp.route('/api/databases/<int:id>/users', methods=['POST'])
 @token_required
 def create_database_user(current_user, id):
@@ -372,6 +437,20 @@ def create_database_user(current_user, id):
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
     try:
+        # Detect schema variants (association table vs legacy FK)
+        assoc_exists = True
+        try:
+            db.session.execute(text('SELECT 1 FROM database_user_association LIMIT 1'))
+        except Exception:
+            assoc_exists = False
+
+        has_legacy_fk = False
+        try:
+            col_info = db.session.execute(text("PRAGMA table_info('database_user')")).fetchall()
+            has_legacy_fk = any(str(row[1]) == 'database_id' for row in col_info)
+        except Exception:
+            has_legacy_fk = False
+
         # Check if user already exists in our panel's database
         user = DatabaseUser.query.filter_by(username=data['username']).first()
 
@@ -385,14 +464,56 @@ def create_database_user(current_user, id):
             
             # Hash password for storage
             hashed_password = generate_password_hash(data['password'])
-            
-            user = DatabaseUser(
-                username=data['username'],
-                password=hashed_password,
-                host=data.get('host', '%'),
-                privileges=data.get('privileges', 'ALL PRIVILEGES')
-            )
-            db.session.add(user)
+
+            # First try ORM insert (new schema without legacy column)
+            try:
+                user = DatabaseUser(
+                    username=data['username'],
+                    password=hashed_password,
+                    host=data.get('host', '%'),
+                    privileges=data.get('privileges', 'ALL PRIVILEGES')
+                )
+                db.session.add(user)
+                db.session.flush()
+            except IntegrityError as ie:
+                # Handle legacy schema where database_user.database_id is NOT NULL
+                db.session.rollback()
+                if 'database_user.database_id' in str(ie) or 'database_user.database_id' in str(getattr(ie, 'orig', '')):
+                    now = datetime.utcnow()
+                    insert_sql = text(
+                        """
+                        INSERT INTO database_user (username, password, host, privileges, status, created_at, updated_at, database_id)
+                        VALUES (:username, :password, :host, :privileges, :status, :created_at, :updated_at, :database_id)
+                        """
+                    )
+                    db.session.execute(insert_sql, {
+                        'username': data['username'],
+                        'password': hashed_password,
+                        'host': data.get('host', '%'),
+                        'privileges': data.get('privileges', 'ALL PRIVILEGES'),
+                        'status': 'active',
+                        'created_at': now,
+                        'updated_at': now,
+                        'database_id': database.id
+                    })
+                    db.session.flush()
+                    user = DatabaseUser.query.filter_by(username=data['username']).first()
+                else:
+                    raise
+        else:
+            # Existing user: ensure compatibility with legacy schema
+            if has_legacy_fk:
+                row = db.session.execute(
+                    text("SELECT database_id FROM database_user WHERE username = :u"),
+                    {'u': user.username}
+                ).fetchone()
+                if row is not None and row[0] is not None and row[0] != database.id:
+                    return jsonify({'success': False, 'error': 'User belongs to another database (legacy schema)'}), 400
+                if row is not None and row[0] is None:
+                    db.session.execute(
+                        text("UPDATE database_user SET database_id = :dbid WHERE username = :u"),
+                        {'dbid': database.id, 'u': user.username}
+                    )
         
         # Grant privileges for the specific database in MySQL
         mysql_service.grant_privileges(
@@ -403,8 +524,15 @@ def create_database_user(current_user, id):
         )
         
         # Associate user with the database
-        if user not in database.users:
-            database.users.append(user)
+        if assoc_exists:
+            if user not in database.users:
+                database.users.append(user)
+        elif has_legacy_fk:
+            # Ensure legacy FK points to this database
+            db.session.execute(
+                text("UPDATE database_user SET database_id = :dbid WHERE username = :u"),
+                {'dbid': database.id, 'u': user.username}
+            )
         
         db.session.commit()
         
@@ -537,16 +665,64 @@ def associate_database_user(current_user, db_id, user_id):
 @database_bp.route('/api/database-users', methods=['GET'])
 @token_required
 def get_all_database_users(current_user):
-    if not _is_admin(current_user):
-        # Non-admins can't see all database users for security reasons
-        # In a future update, we could show users associated with their owned databases
-        return jsonify({'success': False, 'error': 'Admin privileges required'}), 403
-    
     try:
-        users = DatabaseUser.query.order_by(DatabaseUser.username).all()
+        # Admins: return all database users
+        if _is_admin(current_user):
+            users = DatabaseUser.query.order_by(DatabaseUser.username).all()
+            return jsonify({
+                'success': True,
+                'data': [user.to_dict(include_relations=False) for user in users]
+            })
+
+        # Non-admins: return users associated with databases they own
+        owned_dbs = Database.query.filter_by(owner_id=current_user.id).all()
+        owned_db_ids = [d.id for d in owned_dbs]
+
+        # Detect schema variant
+        assoc_exists = True
+        try:
+            db.session.execute(text('SELECT 1 FROM database_user_association LIMIT 1'))
+        except Exception:
+            assoc_exists = False
+
+        has_legacy_fk = False
+        try:
+            col_info = db.session.execute(text("PRAGMA table_info('database_user')")).fetchall()
+            has_legacy_fk = any(str(row[1]) == 'database_id' for row in col_info)
+        except Exception:
+            has_legacy_fk = False
+
+        user_set = {}
+        if assoc_exists:
+            for d in owned_dbs:
+                for u in d.users:
+                    user_set[u.id] = u
+        elif has_legacy_fk and owned_db_ids:
+            rows = db.session.execute(
+                text("SELECT id, username, host, privileges, status, created_at, updated_at FROM database_user WHERE database_id IN (:ids)").bindparams(ids=tuple(owned_db_ids))
+            )
+            # For SQLite, IN with tuple binding via bindparams may not work; fallback to OR join when needed
+            fetched = []
+            try:
+                fetched = rows.fetchall()
+            except Exception:
+                # Fallback simple approach per id
+                for dbid in owned_db_ids:
+                    part = db.session.execute(
+                        text("SELECT id, username, host, privileges, status, created_at, updated_at FROM database_user WHERE database_id = :id"),
+                        {'id': dbid}
+                    ).fetchall()
+                    fetched.extend(part)
+            for r in fetched:
+                # Create lightweight objects, but better to re-query via ORM by id to keep to_dict consistent
+                u = DatabaseUser.query.get(r[0])
+                if u:
+                    user_set[u.id] = u
+
+        users = sorted(user_set.values(), key=lambda u: u.username.lower())
         return jsonify({
             'success': True,
-            'data': [user.to_dict(include_relations=False) for user in users]
+            'data': [u.to_dict(include_relations=False) for u in users]
         })
     except Exception as e:
         return jsonify({

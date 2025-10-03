@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { signup } from '../services/api';
+import api from '../services/api';
 
 const initial = {
   username: '',
@@ -18,12 +19,30 @@ const initial = {
 
 const Signup = () => {
   const [form, setForm] = useState(initial);
+  const [primaryDomain, setPrimaryDomain] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
+  useEffect(() => {
+    const fetchPrimary = async () => {
+      try {
+        const res = await api.get('/public-settings');
+        setPrimaryDomain(res.data?.PRIMARY_DOMAIN || '');
+      } catch (_) {
+        setPrimaryDomain('');
+      }
+    };
+    fetchPrimary();
+  }, []);
+
   const onChange = (e) => {
     const { name, value, type, checked } = e.target;
+    // For locked subdomain field, name will be 'subdomain'
+    if (name === 'subdomain') {
+      setForm((prev) => ({ ...prev, domain: value ? `${value}.${primaryDomain}` : '' }));
+      return;
+    }
     setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
@@ -91,8 +110,16 @@ const Signup = () => {
               <input name="full_name" value={form.full_name} onChange={onChange} className="input-field mt-1" placeholder="ชื่อ นามสกุล" />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm text-[var(--secondary-text)]">Domain <span className="text-red-500">*</span></label>
-              <input name="domain" value={form.domain} onChange={onChange} className="input-field mt-1" placeholder="example.edu" />
+              <label className="block text-sm text-[var(--secondary-text)]">Subdomain under Primary Domain <span className="text-red-500">*</span></label>
+              <div className="flex items-center gap-2 mt-1">
+                <input name="subdomain" value={form.domain && primaryDomain && form.domain.endsWith(`.${primaryDomain}`) ? form.domain.replace(`.${primaryDomain}`, '') : ''} onChange={onChange} className="input-field flex-1" placeholder="sub" disabled={!primaryDomain} />
+                <span className="text-sm text-[var(--secondary-text)]">.{primaryDomain || '...'}</span>
+              </div>
+              {!primaryDomain && (
+                <p className="text-xs mt-2" style={{ color: 'var(--secondary-text)' }}>
+                  Please ask admin to set PRIMARY_DOMAIN first.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm text-[var(--secondary-text)]">Password</label>

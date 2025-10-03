@@ -26,6 +26,7 @@ CONFIG_KEYS = [
     'REMOTE_DATABASE_PASSWORD',
     'REMOTE_DATABASE_NAME',
     # DNS default for zone creation
+    'PRIMARY_DOMAIN',
     'DNS_DEFAULT_IP',
 ]
 
@@ -98,3 +99,12 @@ def save_settings():
                 os.environ[key] = str(data[key])
 
     return jsonify({'message': 'Settings saved successfully', 'persisted': True})
+
+
+@settings_bp.route('/public-settings', methods=['GET'])
+def get_public_settings():
+    """Publicly expose safe config such as PRIMARY_DOMAIN (no auth)."""
+    primary = os.environ.get('PRIMARY_DOMAIN', '')
+    return jsonify({
+        'PRIMARY_DOMAIN': primary
+    })

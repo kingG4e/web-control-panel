@@ -244,8 +244,9 @@ def copy_item(current_user):
             return jsonify({'error': 'sourcePath and destPath are required'}), 400
 
         if domain:
-            # Domain-specific copying - implement in FileService
-            return jsonify({'error': 'Domain-specific file copying not yet implemented'}), 501
+            # Domain-specific copying
+            item_data = file_service.copy_domain_item(domain, source_path, dest_path, current_user.id)
+            return jsonify(item_data)
         else:
             # System file copying - only admin/root users allowed
             if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
@@ -296,8 +297,18 @@ def download_file(current_user):
             return jsonify({'error': 'Path parameter is required'}), 400
 
         if domain:
-            # Domain-specific download - implement in FileService
-            return jsonify({'error': 'Domain-specific file download not yet implemented'}), 501
+            # Domain-specific download
+            # Resolve full path and send file
+            domain_path = file_service.get_domain_path(domain, current_user.id)
+            if not domain_path:
+                return jsonify({'error': 'Domain not found or access denied'}), 404
+            path = sanitize_path(path)
+            full_path = os.path.join(domain_path, path)
+            if not is_safe_path(domain_path, path):
+                return jsonify({'error': 'Invalid path'}), 400
+            if not os.path.exists(full_path) or not os.path.isfile(full_path):
+                return jsonify({'error': 'File not found'}), 404
+            return send_file(full_path, as_attachment=True)
         else:
             # System file download - only admin/root users allowed
             if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
@@ -339,3 +350,71 @@ def get_file_info(current_user):
         return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500 
+
+@files_bp.route('/zip', methods=['POST'])
+@token_required
+def zip_items(current_user):
+    try:
+        init_file_service()
+        data = request.get_json()
+        base_path = data.get('path', '/')
+        items = data.get('items') or []
+        zip_name = data.get('zipName')
+        domain = data.get('domain')
+
+        if domain:
+            result = file_service.zip_domain_items(domain, base_path, items, zip_name, current_user.id)
+        else:
+            if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+                return jsonify({'error': 'Access denied. System zip requires admin privileges.'}), 403
+            result = file_service.zip_items(base_path, items, zip_name)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@files_bp.route('/unzip', methods=['POST'])
+@token_required
+def unzip_item(current_user):
+    try:
+        init_file_service()
+        data = request.get_json()
+        archive_path = data.get('archivePath')
+        destination = data.get('destination')
+        domain = data.get('domain')
+
+        if not archive_path:
+            return jsonify({'error': 'archivePath is required'}), 400
+
+        if domain:
+            result = file_service.unzip_domain_item(domain, archive_path, destination, current_user.id)
+        else:
+            if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+                return jsonify({'error': 'Access denied. System unzip requires admin privileges.'}), 403
+            result = file_service.unzip_item(archive_path, destination)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@files_bp.route('/create-file', methods=['POST'])
+@token_required
+def create_file(current_user):
+    try:
+        init_file_service()
+        data = request.get_json()
+        path = data.get('path')
+        domain = data.get('domain')
+
+        if not path:
+            return jsonify({'error': 'Path is required'}), 400
+
+        if domain:
+            file_data = file_service.create_domain_file(domain, path, current_user.id)
+        else:
+            # System file creation - only admin/root users allowed
+            if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+                return jsonify({'error': 'Access denied. System file creation requires admin privileges.'}), 403
+            file_data = file_service.create_file(path)
+            
+        return jsonify(file_data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

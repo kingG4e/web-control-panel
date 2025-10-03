@@ -1,11 +1,12 @@
 import os
 import shutil
-from typing import List, Dict
+from typing import List, Dict, Optional
 from werkzeug.utils import secure_filename
 from datetime import datetime
 from utils.security import sanitize_path, sanitize_filename, is_safe_path
 from models.virtual_host import VirtualHost
 import stat
+import zipfile
 
 # Import Unix/Linux specific modules
 try:
@@ -394,7 +395,17 @@ class FileService:
                 if not real_full_path.startswith(real_home_dir):
                     raise ValueError("Access denied: Path outside domain directory")
             
-            return self._write_file_content(full_path, content)
+            result = self._write_file_content(full_path, content)
+
+            # Ensure the file ownership is set to the domain user when running as root
+            try:
+                if UNIX_MODULES_AVAILABLE and pwd and grp and os.geteuid() == 0:
+                    user_info = pwd.getpwnam(virtual_host.linux_username)
+                    os.chown(full_path, user_info.pw_uid, user_info.pw_gid)
+            except Exception as e:
+                print(f"Warning: failed to chown written file {full_path}: {e}")
+
+            return result
             
         except Exception as e:
             raise Exception(f"Error writing domain file: {str(e)}")
@@ -429,7 +440,7 @@ class FileService:
                 raise ValueError("Domain not found or access denied")
                 
             home_dir = f"/home/{virtual_host.linux_username}"
-            return self._upload_file_to_directory(home_dir, path, file)
+            return self._upload_file_to_directory(home_dir, path, file, owner_username=virtual_host.linux_username)
             
         except Exception as e:
             raise Exception(f"Error uploading domain file: {str(e)}")
@@ -479,6 +490,157 @@ class FileService:
             
         except Exception as e:
             raise Exception(f"Error getting domain file info: {str(e)}")
+
+    def zip_domain_items(self, domain: str, base_path: str, item_names: List[str], zip_name: Optional[str], user_id: int) -> Dict:
+        """Create a zip archive from one or more items in a domain directory"""
+        try:
+            # Import here to avoid circular import
+            from models.user import User
+            from utils.permissions import can_access_virtual_host
+
+            current_user = User.query.get(user_id)
+            if not current_user:
+                raise ValueError("User not found")
+
+            if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
+                virtual_host = VirtualHost.query.filter_by(domain=domain).first()
+            else:
+                virtual_host = VirtualHost.query.filter_by(domain=domain, user_id=user_id).first()
+                if not virtual_host:
+                    virtual_host = VirtualHost.query.filter_by(domain=domain, linux_username=current_user.username).first()
+                    if virtual_host and not can_access_virtual_host(current_user, virtual_host):
+                        virtual_host = None
+
+            if not virtual_host:
+                raise ValueError("Domain not found or access denied")
+
+            home_dir = f"/home/{virtual_host.linux_username}"
+            base_path = sanitize_path(base_path) if base_path else ''
+            base_full_path = os.path.join(home_dir, base_path)
+
+            # Security check
+            if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+                real_home = os.path.realpath(home_dir)
+                if not os.path.realpath(base_full_path).startswith(real_home):
+                    raise ValueError("Access denied: Path outside domain directory")
+
+            if not os.path.isdir(base_full_path):
+                raise ValueError("Base path must be a directory")
+
+            if not item_names:
+                raise ValueError("No items specified to zip")
+
+            archive_name = zip_name or 'archive.zip'
+            if not archive_name.lower().endswith('.zip'):
+                archive_name += '.zip'
+            archive_path = os.path.join(base_full_path, archive_name)
+
+            with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for name in item_names:
+                    item_rel = sanitize_path(name)
+                    item_full = os.path.join(base_full_path, item_rel)
+                    if not os.path.exists(item_full):
+                        raise FileNotFoundError(f"Item not found: {name}")
+                    if os.path.isdir(item_full):
+                        # Add directory recursively
+                        for dirpath, dirnames, filenames in os.walk(item_full):
+                            for filename in filenames:
+                                filepath = os.path.join(dirpath, filename)
+                                arcname = os.path.relpath(filepath, base_full_path)
+                                zf.write(filepath, arcname)
+                    else:
+                        arcname = os.path.relpath(item_full, base_full_path)
+                        zf.write(item_full, arcname)
+
+            # Ensure ownership of the created archive
+            try:
+                if UNIX_MODULES_AVAILABLE and pwd and grp and os.geteuid() == 0:
+                    user_info = pwd.getpwnam(virtual_host.linux_username)
+                    os.chown(archive_path, user_info.pw_uid, user_info.pw_gid)
+            except Exception as e:
+                print(f"Warning: failed to chown archive {archive_path}: {e}")
+
+            stat_info = os.stat(archive_path)
+            return {
+                'name': os.path.basename(archive_path),
+                'path': os.path.relpath(archive_path, home_dir).replace(os.sep, '/'),
+                'size': stat_info.st_size,
+                'modifiedAt': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
+            }
+        except Exception as e:
+            raise Exception(f"Error creating zip: {str(e)}")
+
+    def unzip_domain_item(self, domain: str, archive_path: str, destination: Optional[str], user_id: int) -> Dict:
+        """Extract a zip archive within a domain directory"""
+        try:
+            # Import here to avoid circular import
+            from models.user import User
+            from utils.permissions import can_access_virtual_host
+
+            current_user = User.query.get(user_id)
+            if not current_user:
+                raise ValueError("User not found")
+
+            if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
+                virtual_host = VirtualHost.query.filter_by(domain=domain).first()
+            else:
+                virtual_host = VirtualHost.query.filter_by(domain=domain, user_id=user_id).first()
+                if not virtual_host:
+                    virtual_host = VirtualHost.query.filter_by(domain=domain, linux_username=current_user.username).first()
+                    if virtual_host and not can_access_virtual_host(current_user, virtual_host):
+                        virtual_host = None
+
+            if not virtual_host:
+                raise ValueError("Domain not found or access denied")
+
+            home_dir = f"/home/{virtual_host.linux_username}"
+            archive_rel = sanitize_path(archive_path)
+            archive_full = os.path.join(home_dir, archive_rel)
+
+            if destination:
+                dest_rel = sanitize_path(destination)
+                dest_full = os.path.join(home_dir, dest_rel)
+            else:
+                dest_full = os.path.dirname(archive_full)
+
+            # Security checks
+            if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+                real_home = os.path.realpath(home_dir)
+                if not os.path.realpath(archive_full).startswith(real_home) or not os.path.realpath(dest_full).startswith(real_home):
+                    raise ValueError("Access denied: Path outside domain directory")
+
+            if not os.path.exists(archive_full) or not os.path.isfile(archive_full):
+                raise FileNotFoundError("Archive not found")
+            if not archive_full.lower().endswith('.zip'):
+                raise ValueError("Only .zip archives are supported")
+
+            os.makedirs(dest_full, exist_ok=True)
+            with zipfile.ZipFile(archive_full, 'r') as zf:
+                # Prevent Zip Slip by validating paths
+                for member in zf.infolist():
+                    member_path = os.path.normpath(os.path.join(dest_full, member.filename))
+                    if not member_path.startswith(os.path.realpath(dest_full)):
+                        raise Exception("Unsafe path detected in archive")
+                zf.extractall(dest_full)
+
+            # Ensure ownership of extracted files
+            try:
+                if UNIX_MODULES_AVAILABLE and pwd and grp and os.geteuid() == 0:
+                    user_info = pwd.getpwnam(virtual_host.linux_username)
+                    for dirpath, dirnames, filenames in os.walk(dest_full):
+                        os.chown(dirpath, user_info.pw_uid, user_info.pw_gid)
+                        for name in filenames:
+                            os.chown(os.path.join(dirpath, name), user_info.pw_uid, user_info.pw_gid)
+            except Exception as e:
+                print(f"Warning: failed to chown extracted files in {dest_full}: {e}")
+
+            stat_info = os.stat(dest_full)
+            return {
+                'destination': dest_full,
+                'modifiedAt': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
+            }
+        except Exception as e:
+            raise Exception(f"Error extracting zip: {str(e)}")
 
     def get_file_info(self, path: str) -> Dict:
         """Get detailed information about a file or directory"""
@@ -579,8 +741,8 @@ class FileService:
             'permissions': self._get_file_permissions(full_path)
         }
 
-    def _upload_file_to_directory(self, base_dir: str, path: str, file) -> Dict:
-        """Internal method to upload file to directory"""
+    def _upload_file_to_directory(self, base_dir: str, path: str, file, owner_username: Optional[str] = None) -> Dict:
+        """Internal method to upload file to directory. Optionally chown to owner_username."""
         filename = secure_filename(file.filename)
         path = sanitize_path(path) if path else ''
         
@@ -593,6 +755,15 @@ class FileService:
         
         file_path = os.path.join(upload_dir, filename)
         file.save(file_path)
+
+        # Adjust ownership to target user if specified and running as root
+        try:
+            if owner_username and UNIX_MODULES_AVAILABLE and pwd and grp and os.geteuid() == 0:
+                user_info = pwd.getpwnam(owner_username)
+                os.chown(file_path, user_info.pw_uid, user_info.pw_gid)
+        except Exception as e:
+            # Non-fatal: log and continue
+            print(f"Warning: failed to chown uploaded file {file_path} to {owner_username}: {e}")
         
         stat_info = os.stat(file_path)
         return {
@@ -844,36 +1015,169 @@ class FileService:
             'permissions': self._get_file_permissions(full_new_path)
         }
 
-    def copy_item(self, source_path: str, dest_path: str) -> Dict:
-        """Copy a file or directory"""
-        source_path = sanitize_path(source_path)
-        dest_path = sanitize_path(dest_path)
-        
-        source_full_path = os.path.join(self.root_dir, source_path)
-        dest_full_path = os.path.join(self.root_dir, dest_path)
-        
-        if not is_safe_path(self.root_dir, source_path) or not is_safe_path(self.root_dir, dest_path):
+    def zip_items(self, path: str, item_names: List[str], zip_name: Optional[str] = None) -> Dict:
+        """Create a zip archive from one or more items under the system root"""
+        path = sanitize_path(path) if path else ''
+        base_dir = os.path.join(self.root_dir, path)
+
+        if not is_safe_path(self.root_dir, path):
             raise ValueError("Invalid path")
-        
-        if not os.path.exists(source_full_path):
-            raise FileNotFoundError(f"Source not found: {source_path}")
-        
-        if os.path.exists(dest_full_path):
-            raise ValueError(f"Destination already exists: {dest_path}")
-        
-        if os.path.isdir(source_full_path):
-            shutil.copytree(source_full_path, dest_full_path)
-        else:
-            shutil.copy2(source_full_path, dest_full_path)
-        
-        stat_info = os.stat(dest_full_path)
+        if not os.path.isdir(base_dir):
+            raise ValueError("Base path must be a directory")
+        if not item_names:
+            raise ValueError("No items specified to zip")
+
+        archive_name = zip_name or 'archive.zip'
+        if not archive_name.lower().endswith('.zip'):
+            archive_name += '.zip'
+        archive_path = os.path.join(base_dir, archive_name)
+
+        with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for name in item_names:
+                item_rel = sanitize_path(name)
+                item_full = os.path.join(base_dir, item_rel)
+                if not os.path.exists(item_full):
+                    raise FileNotFoundError(f"Item not found: {name}")
+                if os.path.isdir(item_full):
+                    for dirpath, dirnames, filenames in os.walk(item_full):
+                        for filename in filenames:
+                            filepath = os.path.join(dirpath, filename)
+                            arcname = os.path.relpath(filepath, base_dir)
+                            zf.write(filepath, arcname)
+                else:
+                    arcname = os.path.relpath(item_full, base_dir)
+                    zf.write(item_full, arcname)
+
+        stat_info = os.stat(archive_path)
         return {
-            'name': os.path.basename(dest_full_path),
-            'size': stat_info.st_size if not os.path.isdir(dest_full_path) else None,
+            'name': os.path.basename(archive_path),
+            'path': os.path.relpath(archive_path, self.root_dir).replace(os.sep, '/'),
+            'size': stat_info.st_size,
             'modifiedAt': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
         }
 
+    def unzip_item(self, archive_path: str, destination: Optional[str] = None) -> Dict:
+        """Extract a zip archive under the system root"""
+        archive_path = sanitize_path(archive_path)
+        archive_full = os.path.join(self.root_dir, archive_path)
+
+        if not is_safe_path(self.root_dir, archive_path):
+            raise ValueError("Invalid path")
+        if not os.path.exists(archive_full) or not os.path.isfile(archive_full):
+            raise FileNotFoundError("Archive not found")
+        if not archive_full.lower().endswith('.zip'):
+            raise ValueError("Only .zip archives are supported")
+
+        if destination:
+            dest_rel = sanitize_path(destination)
+            dest_full = os.path.join(self.root_dir, dest_rel)
+            if not is_safe_path(self.root_dir, dest_rel):
+                raise ValueError("Invalid destination path")
+        else:
+            dest_full = os.path.dirname(archive_full)
+
+        os.makedirs(dest_full, exist_ok=True)
+        with zipfile.ZipFile(archive_full, 'r') as zf:
+            for member in zf.infolist():
+                member_path = os.path.normpath(os.path.join(dest_full, member.filename))
+                if not member_path.startswith(os.path.realpath(dest_full)):
+                    raise Exception("Unsafe path detected in archive")
+            zf.extractall(dest_full)
+
+        stat_info = os.stat(dest_full)
+        return {
+            'destination': os.path.relpath(dest_full, self.root_dir).replace(os.sep, '/'),
+            'modifiedAt': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
+        }
+
+    def _create_empty_file(self, full_path: str) -> Dict:
+        """Internal method to create an empty file"""
+        if os.path.exists(full_path):
+            raise ValueError("File already exists")
+        
+        dir_path = os.path.dirname(full_path)
+        os.makedirs(dir_path, exist_ok=True)
+        
+        # Create an empty file
+        with open(full_path, 'w') as f:
+            pass
+            
+        stat_info = os.stat(full_path)
+        return {
+            'name': os.path.basename(full_path),
+            'type': self._get_file_type(os.path.basename(full_path)),
+            'size': stat_info.st_size,
+            'modifiedAt': datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
+            'permissions': self._get_file_permissions(full_path)
+        }
+
+    def create_file(self, path: str) -> Dict:
+        """Create a new empty file in the system root"""
+        path = sanitize_path(path)
+        full_path = os.path.join(self.root_dir, path)
+        
+        if not is_safe_path(self.root_dir, path):
+            raise ValueError("Invalid path")
+
+        return self._create_empty_file(full_path)
+
     # Domain-based file operations
+    def create_domain_file(self, domain: str, path: str, user_id: int) -> Dict:
+        """Create a new empty file for a specific domain"""
+        try:
+            # Import here to avoid circular import
+            from models.user import User
+            from utils.permissions import can_access_virtual_host
+            
+            current_user = User.query.get(user_id)
+            if not current_user:
+                raise ValueError("User not found")
+            
+            # Admin/root users can access any domain
+            if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
+                virtual_host = VirtualHost.query.filter_by(domain=domain).first()
+            else:
+                # First try to find virtual host owned by user
+                virtual_host = VirtualHost.query.filter_by(domain=domain, user_id=user_id).first()
+                
+                # If not found, try to find virtual host with matching linux_username
+                if not virtual_host:
+                    virtual_host = VirtualHost.query.filter_by(domain=domain, linux_username=current_user.username).first()
+                    
+                    # Check if user can access this virtual host
+                    if virtual_host and not can_access_virtual_host(current_user, virtual_host):
+                        virtual_host = None
+                        
+            if not virtual_host:
+                raise ValueError("Domain not found or access denied")
+                
+            home_dir = f"/home/{virtual_host.linux_username}"
+            path = sanitize_path(path)
+            full_path = os.path.join(home_dir, path)
+            
+            # Security check (skip for admin/root)
+            if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+                real_full_path = os.path.realpath(full_path)
+                real_home_dir = os.path.realpath(home_dir)
+                
+                if not real_full_path.startswith(real_home_dir):
+                    raise ValueError("Access denied: Path outside domain directory")
+            
+            result = self._create_empty_file(full_path)
+
+            # Ensure the file ownership is set to the domain user when running as root
+            try:
+                if UNIX_MODULES_AVAILABLE and pwd and grp and os.geteuid() == 0:
+                    user_info = pwd.getpwnam(virtual_host.linux_username)
+                    os.chown(full_path, user_info.pw_uid, user_info.pw_gid)
+            except Exception as e:
+                print(f"Warning: failed to chown created file {full_path}: {e}")
+
+            return result
+            
+        except Exception as e:
+            raise Exception(f"Error creating domain file: {str(e)}")
+
     def create_domain_directory(self, domain: str, path: str, user_id: int) -> Dict:
         """Create directory for a specific domain"""
         try:
@@ -919,6 +1223,13 @@ class FileService:
                 raise ValueError(f"Directory already exists: {path}")
             
             os.makedirs(full_path, exist_ok=True)
+            # Set ownership to the domain's linux user if running as root
+            try:
+                if UNIX_MODULES_AVAILABLE and pwd and grp and os.geteuid() == 0:
+                    user_info = pwd.getpwnam(virtual_host.linux_username)
+                    os.chown(full_path, user_info.pw_uid, user_info.pw_gid)
+            except Exception as e:
+                print(f"Warning: failed to chown created directory {full_path}: {e}")
             
             stat_info = os.stat(full_path)
             return {
@@ -985,6 +1296,78 @@ class FileService:
         except Exception as e:
             raise Exception(f"Error deleting domain item: {str(e)}")
 
+    def copy_domain_item(self, domain: str, source_path: str, dest_path: str, user_id: int) -> Dict:
+        """Copy a file or directory within a specific domain"""
+        try:
+            # Import here to avoid circular import
+            from models.user import User
+            from utils.permissions import can_access_virtual_host
+
+            current_user = User.query.get(user_id)
+            if not current_user:
+                raise ValueError("User not found")
+
+            # Admin/root users can access any domain
+            if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
+                virtual_host = VirtualHost.query.filter_by(domain=domain).first()
+            else:
+                virtual_host = VirtualHost.query.filter_by(domain=domain, user_id=user_id).first()
+                if not virtual_host:
+                    virtual_host = VirtualHost.query.filter_by(domain=domain, linux_username=current_user.username).first()
+                    if virtual_host and not can_access_virtual_host(current_user, virtual_host):
+                        virtual_host = None
+
+            if not virtual_host:
+                raise ValueError("Domain not found or access denied")
+
+            home_dir = f"/home/{virtual_host.linux_username}"
+            source_path = sanitize_path(source_path)
+            dest_path = sanitize_path(dest_path)
+
+            source_full_path = os.path.join(home_dir, source_path)
+            dest_full_path = os.path.join(home_dir, dest_path)
+
+            # Security check (skip for admin/root)
+            if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
+                real_home = os.path.realpath(home_dir)
+                if not os.path.realpath(source_full_path).startswith(real_home) or not os.path.realpath(dest_full_path).startswith(real_home):
+                    raise ValueError("Access denied: Path outside domain directory")
+
+            if not os.path.exists(source_full_path):
+                raise FileNotFoundError(f"Source not found: {source_path}")
+            if os.path.exists(dest_full_path):
+                raise ValueError(f"Destination already exists: {dest_path}")
+
+            os.makedirs(os.path.dirname(dest_full_path), exist_ok=True)
+
+            if os.path.isdir(source_full_path):
+                shutil.copytree(source_full_path, dest_full_path)
+            else:
+                shutil.copy2(source_full_path, dest_full_path)
+
+            # Ensure ownership to domain user when running as root
+            try:
+                if UNIX_MODULES_AVAILABLE and pwd and grp and os.geteuid() == 0:
+                    user_info = pwd.getpwnam(virtual_host.linux_username)
+                    if os.path.isdir(dest_full_path):
+                        for dirpath, dirnames, filenames in os.walk(dest_full_path):
+                            os.chown(dirpath, user_info.pw_uid, user_info.pw_gid)
+                            for name in filenames:
+                                os.chown(os.path.join(dirpath, name), user_info.pw_uid, user_info.pw_gid)
+                    else:
+                        os.chown(dest_full_path, user_info.pw_uid, user_info.pw_gid)
+            except Exception as e:
+                print(f"Warning: failed to chown copied item {dest_full_path}: {e}")
+
+            stat_info = os.stat(dest_full_path)
+            return {
+                'name': os.path.basename(dest_full_path),
+                'size': stat_info.st_size if not os.path.isdir(dest_full_path) else None,
+                'modifiedAt': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
+            }
+        except Exception as e:
+            raise Exception(f"Error copying domain item: {str(e)}")
+
     def rename_domain_item(self, domain: str, old_path: str, new_path: str, user_id: int) -> Dict:
         """Rename file or directory for a specific domain"""
         try:
@@ -1038,6 +1421,20 @@ class FileService:
             
             os.rename(old_full_path, new_full_path)
             
+            # Ensure ownership for moved target remains with domain user (best effort)
+            try:
+                if UNIX_MODULES_AVAILABLE and pwd and grp and os.geteuid() == 0:
+                    user_info = pwd.getpwnam(virtual_host.linux_username)
+                    if os.path.isdir(new_full_path):
+                        for dirpath, dirnames, filenames in os.walk(new_full_path):
+                            os.chown(dirpath, user_info.pw_uid, user_info.pw_gid)
+                            for name in filenames:
+                                os.chown(os.path.join(dirpath, name), user_info.pw_uid, user_info.pw_gid)
+                    else:
+                        os.chown(new_full_path, user_info.pw_uid, user_info.pw_gid)
+            except Exception as e:
+                print(f"Warning: failed to chown renamed item {new_full_path}: {e}")
+
             stat_info = os.stat(new_full_path)
             return {
                 'name': os.path.basename(new_full_path),

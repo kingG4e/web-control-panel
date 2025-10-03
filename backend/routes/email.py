@@ -8,6 +8,7 @@ import secrets
 from utils.auth import token_required
 from datetime import datetime
 from sqlalchemy import or_
+from werkzeug.security import generate_password_hash
 
 email_bp = Blueprint('email', __name__)
 email_service = EmailService()
@@ -193,6 +194,14 @@ def create_account(current_user, virtual_host_id):
         if not virtual_host:
             return jsonify({'error': 'Virtual Host not found or access denied'}), 404
         
+        # Ensure domain exists in the mail database before proceeding.
+        # This is a critical step.
+        try:
+            mail_db_reader.upsert_domain(domain=virtual_host.domain, status='active')
+        except Exception as e:
+            current_app.logger.error(f"Failed to upsert domain '{virtual_host.domain}' in mail DB: {e}")
+            return jsonify({'error': 'Failed to provision domain in mail database', 'details': str(e)}), 500
+        
         # Get or create EmailDomain
         email_domain = EmailDomain.query.filter_by(domain=virtual_host.domain).first()
         if not email_domain:
@@ -257,15 +266,15 @@ def create_account(current_user, virtual_host_id):
                 data['password'],
                 quota=data.get('quota', 1024)
             )
-        except Exception:
+        except Exception as e:
             # Non-fatal if filesystem creation fails when minimal schema is in use
-            pass
+            current_app.logger.warning(f"Could not create email account on filesystem, but mail DB entry was created. Error: {e}")
         
         # Create account record
         account = EmailAccount(
             domain_id=email_domain.id,
             username=data['username'],
-            password=data['password'],  # Note: In production, encrypt this
+            password=generate_password_hash(data['password']),  # Note: In production, encrypt this
             quota=data.get('quota', 1024)
         )
         

@@ -54,13 +54,14 @@ class QuotaMonitoringService:
             if not os.path.exists(home_dir):
                 return None
             
-            # Fast path: read used/limits from quota output; fallback to du if unavailable
+            # Fast path: read used/limits (and grace) from quota output; fallback to du if unavailable
             quota_usage = self._get_user_quota_usage_and_limits(username)
             if quota_usage.get('used_mb') is not None:
                 usage_mb = quota_usage['used_mb']
                 usage_kb = int(usage_mb * 1024)
                 soft_mb = quota_usage.get('soft_mb')
                 hard_mb = quota_usage.get('hard_mb')
+                grace_text = quota_usage.get('grace')
             else:
                 result = subprocess.run(
                     ['du', '-s', '--block-size=1K', '--one-file-system', home_dir], 
@@ -74,6 +75,7 @@ class QuotaMonitoringService:
                 limits = self._get_user_quota_limits(username)
                 soft_mb = limits.get('soft_mb')
                 hard_mb = limits.get('hard_mb')
+                grace_text = None
 
             return {
                 'username': username,
@@ -83,6 +85,9 @@ class QuotaMonitoringService:
                 'quota_soft_mb': soft_mb,
                 'quota_hard_mb': hard_mb,
                 'quota_usage_percent': self._calculate_usage_percent(usage_mb, soft_mb),
+                'quota_grace': grace_text,
+                'is_exceeded_soft': True if (soft_mb is not None and soft_mb > 0 and usage_mb > soft_mb) else False,
+                'is_exceeded_hard': True if (hard_mb is not None and hard_mb > 0 and usage_mb > hard_mb) else False,
                 'last_updated': datetime.utcnow().isoformat()
             }
             
@@ -120,7 +125,8 @@ class QuotaMonitoringService:
 
             # Try to parse numbers on the same line
             same_line_parts = lines[fs_idx].split()
-            numbers = [p for p in same_line_parts if re.fullmatch(r"\d+", p)]
+            # Accept numeric tokens with optional trailing '*' (means over soft limit on used blocks)
+            numbers = [re.sub(r"\*$", "", p) for p in same_line_parts if re.fullmatch(r"\d+\*?", p)]
             soft_kb = hard_kb = None
             if len(numbers) >= 3:
                 # Layout: <fs> <blocks> <quota-soft> <quota-hard> ...
@@ -133,7 +139,7 @@ class QuotaMonitoringService:
             # If not on the same line, check the following line (wrapped layout)
             if soft_kb is None or hard_kb is None:
                 if fs_idx + 1 < len(lines):
-                    next_line_numbers = [p for p in lines[fs_idx + 1].split() if re.fullmatch(r"\d+", p)]
+                    next_line_numbers = [re.sub(r"\*$", "", p) for p in lines[fs_idx + 1].split() if re.fullmatch(r"\d+\*?", p)]
                     if len(next_line_numbers) >= 3:
                         try:
                             soft_kb = int(next_line_numbers[1])
@@ -156,7 +162,7 @@ class QuotaMonitoringService:
         return {}
 
     def _get_user_quota_usage_and_limits(self, username: str) -> Dict[str, Optional[float]]:
-        """Parse quota output to get used, soft, and hard in MB. Returns empty dict on failure."""
+        """Parse quota output to get used, soft, hard (MB) and grace text. Returns empty dict on failure."""
         if not self.is_linux or not self.quota_path:
             return {}
         try:
@@ -167,9 +173,10 @@ class QuotaMonitoringService:
                 check=False,
                 timeout=8
             )
-            if result.returncode != 0:
-                return {}
+            # Don't check return code - quota returns 1 when user is over limit
             lines = [ln.rstrip() for ln in result.stdout.splitlines() if ln.strip()]
+            
+            # Find filesystem line and data line
             fs_idx = None
             for idx, line in enumerate(lines):
                 if line.lstrip().startswith('/'):
@@ -177,19 +184,61 @@ class QuotaMonitoringService:
                     break
             if fs_idx is None:
                 return {}
-            tokens = lines[fs_idx].split()
-            nums = [int(p) for p in tokens if re.fullmatch(r"\d+", p)]
-            if len(nums) < 3 and fs_idx + 1 < len(lines):
-                tokens2 = lines[fs_idx + 1].split()
-                nums += [int(p) for p in tokens2 if re.fullmatch(r"\d+", p)]
-            if len(nums) < 3:
+            
+            # Look for data line (could be same line or next line)
+            data_line = None
+            if fs_idx + 1 < len(lines):
+                # Check if next line has numeric data
+                next_line = lines[fs_idx + 1].strip()
+                if re.search(r'\d+', next_line):
+                    data_line = next_line
+                else:
+                    # Data might be on the same line as filesystem
+                    fs_line_parts = lines[fs_idx].split()
+                    if len(fs_line_parts) > 1 and re.search(r'\d+', ' '.join(fs_line_parts[1:])):
+                        data_line = ' '.join(fs_line_parts[1:])
+            else:
+                # Only filesystem line, check if data is on same line
+                fs_line_parts = lines[fs_idx].split()
+                if len(fs_line_parts) > 1:
+                    data_line = ' '.join(fs_line_parts[1:])
+            
+            if not data_line:
                 return {}
-            used_kb, soft_kb, hard_kb = nums[0], nums[1], nums[2]
-            return {
+            
+            # Parse the data line: blocks quota limit grace files quota limit grace
+            tokens = data_line.split()
+            if len(tokens) < 4:
+                return {}
+            
+            # Extract block quota info (first 4 tokens)
+            used_str = tokens[0]  # blocks (may have *)
+            soft_str = tokens[1]  # quota
+            hard_str = tokens[2]  # limit
+            grace_str = tokens[3] if len(tokens) > 3 else None  # grace
+            
+            # Parse numbers, removing * if present
+            used_kb = int(re.sub(r'\*$', '', used_str))
+            soft_kb = int(soft_str) if soft_str != '0' else None
+            hard_kb = int(hard_str) if hard_str != '0' else None
+            
+            # Parse grace (skip if it's just numbers or empty)
+            grace_text = None
+            if grace_str and not re.fullmatch(r'\d+', grace_str) and grace_str != '0':
+                grace_text = grace_str
+            
+            result_dict = {
                 'used_mb': round(used_kb / 1024, 2),
-                'soft_mb': round(soft_kb / 1024, 2),
-                'hard_mb': round(hard_kb / 1024, 2),
+                'grace': grace_text
             }
+            
+            if soft_kb is not None:
+                result_dict['soft_mb'] = round(soft_kb / 1024, 2)
+            if hard_kb is not None:
+                result_dict['hard_mb'] = round(hard_kb / 1024, 2)
+                
+            return result_dict
+            
         except Exception as e:
             print(f"Error parsing quota usage for {username}: {e}")
             return {}

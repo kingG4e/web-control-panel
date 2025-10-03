@@ -15,13 +15,19 @@ const QuotaDashboard = () => {
 
             try {
                 setLoading(true);
+                console.log('QuotaDashboard: Fetching quota for user:', user.username);
                 const data = await quotaApi.getUserQuotaUsage(user.username);
+                console.log('QuotaDashboard: API response:', data);
+                
                 if (data && data.storage) {
+                    console.log('QuotaDashboard: Storage data:', data.storage);
                     setQuotaData(data.storage);
                 } else {
+                    console.log('QuotaDashboard: No storage data in response');
                     setError('Quota data is not available.');
                 }
             } catch (err) {
+                console.error('QuotaDashboard: Error fetching quota:', err);
                 setError(err.response?.data?.error || 'Could not fetch quota information.');
             } finally {
                 setLoading(false);
@@ -45,13 +51,34 @@ const QuotaDashboard = () => {
         );
     }
     
-    // Do not render the card if there is an error or no quota is set
-    if (error || !quotaData || quotaData.quota_soft_mb === null) {
+    // Show error message if there's an error
+    if (error) {
+        return (
+            <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+                <div className="flex items-center mb-4">
+                    <FolderIcon className="w-6 h-6 mr-3" style={{ color: '#ef4444' }} />
+                    <h3 className="text-lg font-semibold" style={{ color: 'var(--primary-text)' }}>
+                        Disk Quota
+                    </h3>
+                </div>
+                <p style={{ color: '#ef4444' }}>{error}</p>
+            </div>
+        );
+    }
+    
+    // Do not render the card if no quota is set
+    if (!quotaData || quotaData.quota_soft_mb === null) {
         return null;
     }
 
     const usagePercent = quotaData.quota_usage_percent || 0;
     const strokeColor = getUsageColor(usagePercent);
+
+    const exceededBadge = quotaData.is_exceeded_hard
+        ? { text: 'Exceeded Hard', color: '#ef4444', bg: 'rgba(248,113,113,0.15)' }
+        : quotaData.is_exceeded_soft
+        ? { text: 'Exceeded Soft', color: '#ca8a04', bg: 'rgba(250,204,21,0.15)' }
+        : null;
 
     return (
         <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
@@ -103,6 +130,16 @@ const QuotaDashboard = () => {
                             {quotaData.quota_soft_mb.toFixed(1)} MB
                         </span>
                     </div>
+                    {exceededBadge && (
+                        <div className="mt-3 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: exceededBadge.bg, color: exceededBadge.color }}>
+                            {exceededBadge.text}
+                        </div>
+                    )}
+                    {quotaData.quota_grace && (
+                        <div className="mt-2 text-xs" style={{ color: 'var(--secondary-text)' }}>
+                            Grace: {quotaData.quota_grace}
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

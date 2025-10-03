@@ -414,7 +414,7 @@ const Dashboard = () => {
         </div>
 
         {/* User Quota Card - only for non-admins */}
-        {!stats.isAdmin && (
+        {user && !user.is_admin && (
             <div className="mb-8">
                 <QuotaDashboard />
             </div>

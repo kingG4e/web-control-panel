@@ -277,6 +277,14 @@ export const virtualHosts = {
       return response.data;
     }
     throw new Error(response.data.error || 'Failed to delete virtual host');
+  },
+
+  createForExistingUser: async (data) => {
+    const response = await api.post('/virtual-hosts/existing-user', data);
+    if (response.data.success) {
+      return response.data.data;
+    }
+    throw new Error(response.data.error || 'Failed to create virtual host for existing user');
   }
 };
 
@@ -602,6 +610,30 @@ export const fileApi = {
         const data = { sourcePath, destPath };
         if (domain) data.domain = domain;
         const response = await api.post('/files/copy', data);
+        return response.data;
+    },
+    
+    // Zip items
+    zipItems: async (path, items, zipName, domain = null) => {
+        const data = { path: path || '/', items, zipName };
+        if (domain) data.domain = domain;
+        const response = await api.post('/files/zip', data);
+        return response.data;
+    },
+
+    // Unzip archive
+    unzip: async (archivePath, destination, domain = null) => {
+        const data = { archivePath, destination };
+        if (domain) data.domain = domain;
+        const response = await api.post('/files/unzip', data);
+        return response.data;
+    },
+
+    // Create new file
+    createFile: async (path, domain = null) => {
+        const data = { path };
+        if (domain) data.domain = domain;
+        const response = await api.post('/files/create-file', data);
         return response.data;
     },
     

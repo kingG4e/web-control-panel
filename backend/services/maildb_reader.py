@@ -1,8 +1,11 @@
 import os
 from typing import List, Dict, Optional, Tuple
+import logging
 
 import mysql.connector
 from mysql.connector import Error
+
+log = logging.getLogger(__name__)
 
 
 class MailDbReader:
@@ -21,6 +24,7 @@ class MailDbReader:
         self.password = os.environ.get('MYSQL_POSTFIX_PASSWORD', os.environ.get('MYSQL_PASSWORD', 'King_73260'))
         self.database = os.environ.get('MYSQL_POSTFIX_DB', os.environ.get('MYSQL_DATABASE', 'mail'))
         self._users_table: Optional[str] = None
+        log.info(f"MailDbReader initial config: host={self.host}, port={self.port}, user={self.user}, db={self.database}")
         # Track explicit env overrides so map files won't override them
         self._env_overrides = {
             'host': 'MYSQL_HOST' in os.environ,
@@ -31,15 +35,22 @@ class MailDbReader:
         }
         # Try to load connection details from Postfix map files if available
         self._try_load_from_postfix_maps()
+        log.info(f"MailDbReader config after postfix maps: host={self.host}, port={self.port}, user={self.user}, db={self.database}")
 
     def _connect(self):
-        return mysql.connector.connect(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
-            database=self.database,
-        )
+        try:
+            conn = mysql.connector.connect(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+            )
+            log.info(f"Successfully connected to mail DB: {self.database} on {self.host}")
+            return conn
+        except Error as e:
+            log.error(f"Failed to connect to mail DB {self.database} on {self.host}: {e}")
+            raise
 
     def _try_load_from_postfix_maps(self) -> None:
         """Attempt to parse Postfix MySQL map files for connection info and users table.
@@ -264,6 +275,58 @@ class MailDbReader:
                 except Exception:
                     pass
             raise Exception(f"MailDbWriter upsert error: {e}")
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def upsert_domain(self, domain: str, status: str = 'active') -> None:
+        """Create or update a domain in the mail database's domain table."""
+        conn = None
+        cursor = None
+        try:
+            conn = self._connect()
+            # Assuming the table is 'email_domain' as per standard mail schemas.
+            # A more robust implementation might check for table existence.
+            table_name = 'email_domain'
+            cursor = conn.cursor()
+
+            # Use INSERT ... ON DUPLICATE KEY UPDATE for idempotency.
+            # This ensures that if the domain already exists, its status is updated.
+            query = f"""
+                INSERT INTO {table_name} (domain, status, created_at)
+                VALUES (%s, %s, NOW())
+                ON DUPLICATE KEY UPDATE status=VALUES(status)
+            """
+            cursor.execute(query, (domain, status))
+            conn.commit()
+            log.info(f"Successfully upserted and committed domain '{domain}' to mail DB.")
+        except Error as e:
+            log.warning(f"UPSERT for domain '{domain}' failed, trying DELETE then INSERT. Error: {e}")
+            try:
+                # Fallback: delete+insert
+                cursor.execute(f"DELETE FROM {table_name} WHERE domain=%s", (domain,))
+                cursor.execute(
+                    f"INSERT INTO {table_name} (domain, status, created_at) VALUES (%s, %s, NOW())",
+                    (domain, status),
+                )
+                conn.commit()
+                log.info(f"Successfully upserted domain '{domain}' via fallback method.")
+            except Error as e2:
+                log.error(f"Error during upsert_domain fallback for '{domain}': {e2}")
+                if conn:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                raise Exception(f"MailDbWriter upsert_domain error (fallback failed): {e2}")
         finally:
             if cursor:
                 try:

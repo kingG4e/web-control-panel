@@ -2,7 +2,7 @@ import os
 import subprocess
 from datetime import datetime
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error, errorcode
 from utils.validators import is_safe_database_name
 
 ALLOWED_PRIVILEGES = [
@@ -59,32 +59,71 @@ class MySQLService:
             raise Exception(f'Failed to delete database: {str(e)}')
 
     def create_user(self, username, password, host='%'):
-        """Create a new MySQL user"""
+        """Create a new MySQL user. If the user already exists, update the password."""
         try:
             conn = mysql.connector.connect(**self.config)
             cursor = conn.cursor()
-            
-            # Create user
-            cursor.execute("CREATE USER %s@%s IDENTIFIED BY %s", (username, host, password))
-            
+
+            try:
+                # Prefer idempotent creation where supported
+                cursor.execute("CREATE USER IF NOT EXISTS %s@%s IDENTIFIED BY %s", (username, host, password))
+                conn.commit()
+            except Error as e:
+                # 1396: Operation CREATE USER failed (user may already exist)
+                if getattr(e, 'errno', None) == 1396 or 'Operation CREATE USER failed' in str(e):
+                    # Attempt to update existing user's password
+                    cursor.execute("ALTER USER %s@%s IDENTIFIED BY %s", (username, host, password))
+                    conn.commit()
+                else:
+                    raise
+
             cursor.close()
             conn.close()
-            
         except Error as e:
             raise Exception(f'Failed to create user: {str(e)}')
 
-    def delete_user(self, username, host='%'):
-        """Delete a MySQL user"""
+    def alter_user_password(self, username: str, password: str, host: str = '%'):
+        """Alter an existing MySQL user's password."""
         try:
             conn = mysql.connector.connect(**self.config)
             cursor = conn.cursor()
-            
-            # Drop user
-            cursor.execute("DROP USER %s@%s", (username, host))
-            
+            cursor.execute("ALTER USER %s@%s IDENTIFIED BY %s", (username, host, password))
+            conn.commit()
             cursor.close()
             conn.close()
-            
+        except Error as e:
+            raise Exception(f'Failed to alter user password: {str(e)}')
+
+    def rename_user_host(self, username: str, old_host: str, new_host: str):
+        """Rename user's host part. MySQL supports RENAME USER 'u'@'old' TO 'u'@'new'."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+            cursor.execute("RENAME USER %s@%s TO %s@%s", (username, old_host, username, new_host))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Error as e:
+            raise Exception(f'Failed to rename user host: {str(e)}')
+
+    def delete_user(self, username, host='%'):
+        """Delete a MySQL user (no error if missing)."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+
+            try:
+                cursor.execute("DROP USER IF EXISTS %s@%s", (username, host))
+                conn.commit()
+            except Error as e:
+                # 1397: Operation DROP USER failed (ignore if doesn't exist)
+                if getattr(e, 'errno', None) == 1397 or 'Operation DROP USER failed' in str(e):
+                    pass
+                else:
+                    raise
+
+            cursor.close()
+            conn.close()
         except Error as e:
             raise Exception(f'Failed to delete user: {str(e)}')
 
@@ -105,6 +144,7 @@ class MySQLService:
                 raise Exception(f'Invalid database name: {database}')
             cursor.execute(f"GRANT {privileges} ON `{database}`.* TO %s@%s", (username, host))
             cursor.execute("FLUSH PRIVILEGES")
+            conn.commit()
             
             cursor.close()
             conn.close()
@@ -123,6 +163,7 @@ class MySQLService:
                 raise Exception(f'Invalid database name: {database}')
             cursor.execute(f"REVOKE ALL PRIVILEGES ON `{database}`.* FROM %s@%s", (username, host))
             cursor.execute("FLUSH PRIVILEGES")
+            conn.commit()
             
             cursor.close()
             conn.close()

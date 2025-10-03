@@ -254,6 +254,9 @@ const QuotaUsageTable = ({ users, onRefresh, onEditQuota }) => {
                                 Status
                             </th>
                             <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--secondary-text)' }}>
+                                Grace
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--secondary-text)' }}>
                                 Last Updated
                             </th>
                             <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--secondary-text)' }}>
@@ -282,9 +285,13 @@ const QuotaUsageTable = ({ users, onRefresh, onEditQuota }) => {
                                     <QuotaUsageBar usage={user.usage_mb} quota={user.quota_soft_mb} />
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap border-t" style={{ borderColor: 'var(--border-color)' }}>
-                                    {user.quota_usage_percent > 100 ? (
+                                    {user.is_exceeded_hard ? (
                                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: 'rgba(248,113,113,0.15)', color: '#ef4444' }}>
-                                            Exceeded
+                                            Exceeded Hard
+                                        </span>
+                                    ) : user.is_exceeded_soft ? (
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: 'rgba(250,204,21,0.15)', color: '#ca8a04' }}>
+                                            Exceeded Soft
                                         </span>
                                     ) : user.quota_usage_percent > 95 ? (
                                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: 'rgba(248,113,113,0.15)', color: '#ef4444' }}>
@@ -299,6 +306,9 @@ const QuotaUsageTable = ({ users, onRefresh, onEditQuota }) => {
                                             Normal
                                         </span>
                                     )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm border-t" style={{ color: 'var(--primary-text)', borderColor: 'var(--border-color)' }}>
+                                    {user.quota_grace ? user.quota_grace : <span style={{ color: 'var(--secondary-text)' }}>-</span>}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm border-t" style={{ color: 'var(--secondary-text)', borderColor: 'var(--border-color)' }}>
                                     {new Date(user.last_updated).toLocaleString()}
