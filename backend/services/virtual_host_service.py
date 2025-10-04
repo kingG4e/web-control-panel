@@ -6,6 +6,7 @@ from models import VirtualHost, VirtualHostAlias
 from models.email import EmailDomain
 from models.base import db
 from .mail_db_sync_service import MailDBSyncService
+from .nginx_service import NginxService
 
 class VirtualHostService(BaseService):
     def __init__(self):
@@ -16,12 +17,21 @@ class VirtualHostService(BaseService):
 
     def create_virtual_host(self, data: Dict) -> VirtualHost:
         try:
-            # Create virtual host record
+            # Extract non-model flags before creating DB record
+            skip_email_provision = bool(data.pop('skip_email_provision', False))
+
+            # Create virtual host record (model expects only real columns)
             virtual_host = super().create(data)
 
             # Create document root directory if it doesn't exist
             os.makedirs(virtual_host.document_root, exist_ok=True)
             os.chmod(virtual_host.document_root, 0o755)
+
+            # Create default index using the same template as normal creation
+            try:
+                NginxService()._create_default_index(virtual_host.document_root, virtual_host)
+            except Exception:
+                pass
 
             # Create Nginx configuration
             self._create_nginx_config(virtual_host)
@@ -32,27 +42,29 @@ class VirtualHostService(BaseService):
             # Reload Nginx
             self._reload_nginx()
 
-            # Ensure EmailDomain exists for this virtual host (mail integration)
-            try:
-                existing = EmailDomain.query.filter_by(domain=virtual_host.domain).first()
-                if not existing:
-                    email_domain = EmailDomain(
-                        domain=virtual_host.domain,
-                        virtual_host_id=virtual_host.id,
-                        status='active'
-                    )
-                    db.session.add(email_domain)
-                    db.session.commit()
-                # Also upsert to server mail DB
+            # Optionally skip email provisioning if requested by caller
+            if not skip_email_provision:
+                # Ensure EmailDomain exists for this virtual host (mail integration)
                 try:
-                    self.mail_sync.ensure_schema()
-                    self.mail_sync.upsert_domain(virtual_host.domain, 'active')
+                    existing = EmailDomain.query.filter_by(domain=virtual_host.domain).first()
+                    if not existing:
+                        email_domain = EmailDomain(
+                            domain=virtual_host.domain,
+                            virtual_host_id=virtual_host.id,
+                            status='active'
+                        )
+                        db.session.add(email_domain)
+                        db.session.commit()
+                    # Also upsert to server mail DB
+                    try:
+                        self.mail_sync.ensure_schema()
+                        self.mail_sync.upsert_domain(virtual_host.domain, 'active')
+                    except Exception:
+                        pass
                 except Exception:
+                    db.session.rollback()
+                    # Non-fatal: email domain creation should not block vhost creation
                     pass
-            except Exception:
-                db.session.rollback()
-                # Non-fatal: email domain creation should not block vhost creation
-                pass
 
             return virtual_host
         except Exception as e:

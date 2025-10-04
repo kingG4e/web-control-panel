@@ -82,7 +82,13 @@ const AdminApprovals = () => {
           want_ssl: item.want_ssl,
           want_dns: item.want_dns,
           want_email: item.want_email,
-          want_mysql: item.want_mysql
+          want_mysql: item.want_mysql,
+          // Add email account details if they exist on the item
+          email_account: item.email_username ? {
+            username: item.email_username,
+            password: '', // Always blank for security
+            quota: item.email_quota || 1024
+          } : { username: '', password: '', quota: 1024 }
       }
     });
     setEditModalOpen(true);
@@ -90,7 +96,19 @@ const AdminApprovals = () => {
 
   const handleEditFormChange = (e) => {
     const { name, value, type, checked } = e.target;
-    if (name.startsWith('options.')) {
+    if (name.startsWith('options.email_account.')) {
+        const fieldName = name.split('.')[2];
+        setEditFormData(prev => ({
+            ...prev,
+            options: {
+                ...prev.options,
+                email_account: {
+                    ...prev.options.email_account,
+                    [fieldName]: value
+                }
+            }
+        }));
+    } else if (name.startsWith('options.')) {
         const optionName = name.split('.')[1];
         setEditFormData(prev => ({
             ...prev,
@@ -107,17 +125,24 @@ const AdminApprovals = () => {
 
     setProcessingIds(prev => new Set([...prev, editTarget.id]));
     try {
-        const { data } = await signup.update(editTarget.id, editFormData);
-        // Update item in local state to reflect changes immediately
-        setItems(prevItems => prevItems.map(item => item.id === data.id ? data : item));
-        setEditModalOpen(false);
-        setEditTarget(null);
+        const response = await signup.update(editTarget.id, editFormData);
+        if (response.success) {
+            const updatedItem = response.data;
+            // Update item in local state to reflect changes immediately
+            setItems(prevItems => prevItems.map(item => item.id === updatedItem.id ? updatedItem : item));
+            setEditModalOpen(false);
+            setEditTarget(null);
+        } else {
+            throw new Error(response.error || 'Failed to update request.');
+        }
     } catch (e) {
         setError(e.message || 'Failed to update request');
     } finally {
         setProcessingIds(prev => {
             const next = new Set(prev);
-            next.delete(editTarget.id);
+            if (editTarget) {
+                next.delete(editTarget.id);
+            }
             return next;
         });
     }
@@ -299,6 +324,12 @@ const AdminApprovals = () => {
                       <div><strong className="text-[var(--secondary-text)]">Email:</strong> {r.email || '-'}</div>
                       <div><strong className="text-[var(--secondary-text)]">Storage:</strong> {r.storage_quota_mb ? `${r.storage_quota_mb} MB` : '-'}</div>
                       <div><strong className="text-[var(--secondary-text)]">Services:</strong> {['SSL','DNS','Email','MySQL'].filter((_, i) => [r.want_ssl, r.want_dns, r.want_email, r.want_mysql][i]).join(', ') || 'None'}</div>
+                      {r.want_email && r.email_username && (
+                        <div><strong className="text-[var(--secondary-text)]">Email (requested):</strong> {r.email_username}@{r.domain} {r.email_quota ? `(${r.email_quota}MB)` : ''}</div>
+                      )}
+                      {r.want_mysql && (r.db_name || r.db_username) && (
+                        <div><strong className="text-[var(--secondary-text)]">Database (requested):</strong> {r.db_name || '-'} {r.db_username ? `as ${r.db_username}` : ''}</div>
+                      )}
                       <div><strong className="text-[var(--secondary-text)]">Submitted:</strong> {r.created_at ? new Date(r.created_at).toLocaleString() : '-'}</div>
                        {r.approved_at && (
                         <div><strong className="text-[var(--secondary-text)]">Processed:</strong> {new Date(r.approved_at).toLocaleString()}</div>
@@ -461,6 +492,38 @@ const AdminApprovals = () => {
                             <CheckboxField label="MySQL" name="options.want_mysql" checked={editFormData.options?.want_mysql} onChange={handleEditFormChange} />
                         </div>
                     </div>
+
+                    {/* Conditional Email Account Fields */}
+                    {editFormData.options?.want_email && (
+                        <div className="pt-2 border-t border-[var(--border-color)] mt-4">
+                            <label className="block text-sm mb-2 text-[var(--secondary-text)]">Email Account Details</label>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <InputField 
+                                    label="Email Username" 
+                                    name="options.email_account.username" 
+                                    value={editFormData.options?.email_account?.username || ''} 
+                                    onChange={handleEditFormChange} 
+                                    placeholder="user"
+                                />
+                                <InputField 
+                                    label="Password" 
+                                    name="options.email_account.password" 
+                                    value={editFormData.options?.email_account?.password || ''} 
+                                    onChange={handleEditFormChange} 
+                                    type="password"
+                                    placeholder="Leave blank to keep"
+                                />
+                                <InputField 
+                                    label="Quota (MB)" 
+                                    name="options.email_account.quota" 
+                                    value={editFormData.options?.email_account?.quota || ''} 
+                                    onChange={handleEditFormChange} 
+                                    type="number"
+                                    placeholder="1024"
+                                />
+                            </div>
+                        </div>
+                    )}
                  </form>
             )}
         </ModalSection>

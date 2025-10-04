@@ -188,19 +188,17 @@ const Database = () => {
       );
       setUserDomains(userVirtualHosts);
 
-      // Fetch all databases and filter for user's databases
-      const allDatabases = await dbApi.getDatabases();
+      // Fetch databases (backend now filters correctly for the current user)
+      const dbResponse = await dbApi.getDatabases();
       
-      // Handle response format
       let databaseList = [];
-      if (allDatabases.success && Array.isArray(allDatabases.data)) {
-        databaseList = allDatabases.data;
-      } else if (Array.isArray(allDatabases)) {
-        databaseList = allDatabases;
+      if (dbResponse.success && Array.isArray(dbResponse.data)) {
+        databaseList = dbResponse.data;
+      } else if (Array.isArray(dbResponse)) {
+        // Fallback for older API versions
+        databaseList = dbResponse;
       }
       
-      // The backend now correctly filters databases for the current user.
-      // No additional frontend filtering is needed.
       setUserDatabases(databaseList);
       setDatabases(databaseList);
     } catch (err) {
@@ -408,6 +406,25 @@ const Database = () => {
     }
   };
 
+  const handleSyncDatabases = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await api.post('/databases/sync');
+      if (response.data.success) {
+        alert(`Successfully imported ${response.data.imported_count} new databases.`);
+        fetchUserData(); // Refresh the list
+      } else {
+        throw new Error(response.data.error || 'Sync failed');
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to sync databases with server.');
+      console.error('Sync error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Manage Users Modal helpers
   const openManageUsers = async (db) => {
     try {
@@ -538,13 +555,24 @@ const Database = () => {
       title="Database Management"
       description="Manage your databases securely"
       actions={
-        <button
-          onClick={() => setShowForm(true)}
-          className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
-        >
-          <PlusIcon className="w-4 h-4 mr-2" />
-          Create Database
-        </button>
+        <div className="flex items-center space-x-2">
+          {user?.role === 'admin' && (
+            <Button
+              variant="secondary"
+              onClick={handleSyncDatabases}
+              icon={<ArrowPathIcon className="w-4 h-4" />}
+            >
+              Sync with Server
+            </Button>
+          )}
+          <button
+            onClick={() => setShowForm(true)}
+            className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
+          >
+            <PlusIcon className="w-4 h-4 mr-2" />
+            Create Database
+          </button>
+        </div>
       }
     >
       <div className="space-y-6">

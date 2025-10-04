@@ -14,7 +14,13 @@ const initial = {
   want_dns: false,
   want_email: false,
   want_mysql: false,
-  storage_quota_mb: ''
+  storage_quota_mb: '',
+  email_username: '',
+  email_password: '',
+  email_quota: '',
+  db_name: '',
+  db_username: '',
+  db_password: ''
 };
 
 const Signup = () => {
@@ -70,7 +76,15 @@ const Signup = () => {
         want_dns: form.want_dns,
         want_email: form.want_email,
         want_mysql: form.want_mysql,
-        storage_quota_mb: form.storage_quota_mb ? Number(form.storage_quota_mb) : undefined
+        storage_quota_mb: form.storage_quota_mb ? Number(form.storage_quota_mb) : undefined,
+        // Email details
+        email_username: form.want_email && form.email_username ? form.email_username : undefined,
+        email_password: form.want_email && form.email_password ? form.email_password : undefined,
+        email_quota: form.want_email && form.email_quota ? Number(form.email_quota) : undefined,
+        // DB details
+        db_name: form.want_mysql && form.db_name ? `db_${form.db_name}` : undefined,
+        db_username: form.want_mysql && form.db_username ? form.db_username : undefined,
+        db_password: form.want_mysql && form.db_password ? form.db_password : undefined
       };
       await signup.submit(payload);
       setSuccess('Request submitted. Please wait for admin approval.');
@@ -157,6 +171,50 @@ const Signup = () => {
                 ))}
               </div>
             </div>
+
+          {/* Conditional: Email defaults */}
+          {form.want_email && (
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm text-[var(--secondary-text)]">Email Username</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <input name="email_username" value={form.email_username || ''} onChange={onChange} className="input-field flex-1" placeholder="user" />
+                  <span className="text-sm text-[var(--secondary-text)]">@{form.domain || primaryDomain}</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-[var(--secondary-text)]">Email Password (optional)</label>
+                <input type="password" name="email_password" value={form.email_password || ''} onChange={onChange} className="input-field mt-1" placeholder="••••••••" />
+              </div>
+              <div>
+                <label className="block text-sm text-[var(--secondary-text)]">Quota (MB)</label>
+                <input type="number" name="email_quota" value={form.email_quota || ''} onChange={onChange} className="input-field mt-1" placeholder="1024" />
+              </div>
+            </div>
+          )}
+
+          {/* Conditional: Database defaults */}
+          {form.want_mysql && (
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm text-[var(--secondary-text)]">Database Name</label>
+                <div className="flex mt-1">
+                  <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-[var(--border-color)] bg-[var(--secondary-bg)] text-[var(--secondary-text)] text-sm">
+                    db_
+                  </span>
+                  <input name="db_name" value={form.db_name || ''} onChange={onChange} className="input-field rounded-l-none" placeholder="mydatabase" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-[var(--secondary-text)]">DB Username</label>
+                <input name="db_username" value={form.db_username || ''} onChange={onChange} className="input-field mt-1" placeholder="db_user" />
+              </div>
+              <div>
+                <label className="block text-sm text-[var(--secondary-text)]">DB Password (optional)</label>
+                <input type="password" name="db_password" value={form.db_password || ''} onChange={onChange} className="input-field mt-1" placeholder="••••••••" />
+              </div>
+            </div>
+          )}
 
             <div className="md:col-span-2">
               <label className="block text-sm text-[var(--secondary-text)]">Storage Quota (MB)</label>

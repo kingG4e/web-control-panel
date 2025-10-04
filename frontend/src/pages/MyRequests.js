@@ -14,7 +14,13 @@ const MyRequests = () => {
     want_dns: false,
     want_email: false,
     want_mysql: false,
-    storage_quota_mb: ''
+    storage_quota_mb: '',
+    email_username: '',
+    email_password: '',
+    email_quota: '',
+    db_name: '',
+    db_username: '',
+    db_password: ''
   });
 
   useEffect(() => {
@@ -49,7 +55,13 @@ const MyRequests = () => {
       want_dns: request.want_dns,
       want_email: request.want_email,
       want_mysql: request.want_mysql,
-      storage_quota_mb: request.storage_quota_mb || ''
+      storage_quota_mb: request.storage_quota_mb || '',
+      email_username: request.email_username || '',
+      email_password: '',
+      email_quota: request.email_quota || '',
+      db_name: request.db_name ? request.db_name.replace(/^db_/, '') : '',
+      db_username: request.db_username || '',
+      db_password: request.db_password || ''
     });
     setShowForm(true);
   };
@@ -68,19 +80,21 @@ const MyRequests = () => {
         want_dns: formData.want_dns,
         want_email: formData.want_email,
         want_mysql: formData.want_mysql,
-        storage_quota_mb: formData.storage_quota_mb ? Number(formData.storage_quota_mb) : undefined
+        storage_quota_mb: formData.storage_quota_mb ? Number(formData.storage_quota_mb) : undefined,
+        email_username: formData.want_email && formData.email_username ? formData.email_username : undefined,
+        email_password: formData.want_email && formData.email_password ? formData.email_password : undefined,
+        email_quota: formData.want_email && formData.email_quota ? Number(formData.email_quota) : undefined,
+        db_name: formData.want_mysql && formData.db_name ? `db_${formData.db_name}` : undefined,
+        db_username: formData.want_mysql && formData.db_username ? formData.db_username : undefined,
+        db_password: formData.want_mysql && formData.db_password ? formData.db_password : undefined
       };
       
       if (editingRequest) {
         await signup.update(editingRequest.id, payload);
         alert('Update request submitted successfully. It will be reviewed by an admin.');
       } else {
-        const createPayload = {
-          ...payload,
-          username: user.username, // Username is already known by backend
-          password: 'temp_password', // Will be handled by admin
-        };
-        await signup.submit(createPayload);
+        // Logged-in users should use the additional request endpoint to avoid username conflicts
+        await signup.submitAdditional(payload);
         alert('Request submitted successfully');
       }
 
@@ -92,7 +106,13 @@ const MyRequests = () => {
         want_dns: false,
         want_email: false,
         want_mysql: false,
-        storage_quota_mb: ''
+        storage_quota_mb: '',
+        email_username: '',
+        email_password: '',
+        email_quota: '',
+        db_name: '',
+        db_username: '',
+        db_password: ''
       });
       loadRequests();
     } catch (err) {
@@ -125,7 +145,13 @@ const MyRequests = () => {
                 want_dns: false,
                 want_email: false,
                 want_mysql: false,
-                storage_quota_mb: ''
+                storage_quota_mb: '',
+                email_username: '',
+                email_password: '',
+                email_quota: '',
+                db_name: '',
+                db_username: '',
+                db_password: ''
               });
               setShowForm(true);
             }
@@ -193,6 +219,100 @@ const MyRequests = () => {
               />
             </div>
 
+            {/* Email Account Fields - Only show when Email is selected */}
+            {formData.want_email && (
+              <>
+                <div>
+                  <label className="block text-sm text-[var(--secondary-text)]">Email Username</label>
+                  <div className="flex">
+                    <input 
+                      name="email_username" 
+                      value={formData.email_username} 
+                      onChange={onChange} 
+                      className="input-field mt-1 rounded-r-none border-r-0" 
+                      placeholder="user" 
+                      required={false}
+                    />
+                    <div className="px-3 py-2 rounded-r border border-l-0 bg-[var(--secondary-bg)] border-[var(--border-color)] text-[var(--secondary-text)] flex items-center">
+                      @{formData.domain || 'domain.com'}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-[var(--secondary-text)]">Email Password</label>
+                  <input 
+                    name="email_password" 
+                    type="password"
+                    value={formData.email_password} 
+                    onChange={onChange} 
+                    className="input-field mt-1" 
+                    placeholder="••••••••" 
+                    required={false}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm text-[var(--secondary-text)]">Email Quota (MB)</label>
+                  <input 
+                    name="email_quota" 
+                    type="number"
+                    value={formData.email_quota} 
+                    onChange={onChange} 
+                    className="input-field mt-1" 
+                    placeholder="1024" 
+                    min="1"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Database Fields - Only show when MySQL is selected */}
+            {formData.want_mysql && (
+              <>
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm text-[var(--secondary-text)]">Database Name</label>
+                    <div className="flex mt-1">
+                      <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-[var(--border-color)] bg-[var(--secondary-bg)] text-[var(--secondary-text)] text-sm">
+                        db_
+                      </span>
+                      <input 
+                        name="db_name" 
+                        value={formData.db_name} 
+                        onChange={onChange} 
+                        className="input-field rounded-l-none" 
+                        placeholder="mydatabase" 
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-[var(--secondary-text)]">Database Username</label>
+                    <input 
+                      name="db_username" 
+                      value={formData.db_username} 
+                      onChange={onChange} 
+                      className="input-field mt-1" 
+                      placeholder="my_user" 
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-[var(--secondary-text)]">Database Password</label>
+                    <input 
+                      name="db_password" 
+                      type="password"
+                      value={formData.db_password} 
+                      onChange={onChange} 
+                      className="input-field mt-1" 
+                      placeholder="••••••••" 
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
             <div className="md:col-span-2 flex justify-end space-x-3 pt-2">
               <button 
                 type="button" 
@@ -255,6 +375,16 @@ const MyRequests = () => {
                       {request.want_email && <span className="px-2 py-1 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">Email</span>}
                       {request.want_mysql && <span className="px-2 py-1 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">MySQL</span>}
                     </div>
+                    {request.want_email && (request.email_username || request.email_quota) && (
+                      <div className="mt-2 text-xs text-[var(--secondary-text)]">
+                        Email requested: <span className="text-[var(--primary-text)]">{request.email_username || '-'}@{request.domain}</span> {request.email_quota ? `(${request.email_quota}MB)` : ''}
+                      </div>
+                    )}
+                    {request.want_mysql && (request.db_name || request.db_username) && (
+                      <div className="mt-2 text-xs text-[var(--secondary-text)]">
+                        Database requested: <span className="text-[var(--primary-text)]">{request.db_name || '-'}</span> {request.db_username ? `as ${request.db_username}` : ''}
+                      </div>
+                    )}
                   </div>
                 )}
 

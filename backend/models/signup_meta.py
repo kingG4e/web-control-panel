@@ -28,7 +28,7 @@ class SignupMeta(db.Model):
 
     def to_dict(self):
         opts = self.options_json or {}
-        return {
+        result = {
             'id': self.id,
             'user_id': self.user_id,
             'domain': self.domain,
@@ -45,5 +45,21 @@ class SignupMeta(db.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
         }
+        
+        # Add email account details if present
+        if opts.get('email_account'):
+            email_account = opts['email_account']
+            result['email_username'] = email_account.get('username')
+            result['email_quota'] = email_account.get('quota', 1024)
+            # Don't include password in response for security
+        
+        # Add DB account details if present
+        if opts.get('db_account'):
+            db_account = opts['db_account']
+            result['db_name'] = db_account.get('name')
+            result['db_username'] = db_account.get('username')
+            # Don't include password in response for security
+            
+        return result
 
 

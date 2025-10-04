@@ -66,17 +66,48 @@ def submit_signup_request():
         db.session.add(user)
         db.session.flush()
 
+        # Build options including requested services and requested defaults
+        options_json = {
+            'want_ssl': bool(data.get('want_ssl')),
+            'want_dns': bool(data.get('want_dns')),
+            'want_email': bool(data.get('want_email')),
+            'want_mysql': bool(data.get('want_mysql')),
+        }
+        # Email account details (if email is requested)
+        if data.get('want_email') and (data.get('email_username') or data.get('email_password')):
+            options_json['email_account'] = {
+                'username': (data.get('email_username') or '').strip(),
+                'password': data.get('email_password') or None,
+                'quota': data.get('email_quota', 1024)
+            }
+        # DB details
+        if data.get('want_mysql') and (data.get('db_name') or data.get('db_username')):
+            options_json['db_account'] = {
+                'name': (data.get('db_name') or '').strip(),
+                'username': (data.get('db_username') or '').strip(),
+                'password': data.get('db_password') or None
+            }
+        # Optional requested defaults (email/db). These are just stored for admin review.
+        if data.get('email_defaults'):
+            options_json['email_defaults'] = {
+                'username': (data['email_defaults'].get('username') or '').strip(),
+                'quota': data['email_defaults'].get('quota'),
+                # Do not store raw password if empty
+                'password': data['email_defaults'].get('password') or None
+            }
+        if data.get('db_defaults'):
+            options_json['db_defaults'] = {
+                'name': (data['db_defaults'].get('name') or '').strip(),
+                'username': (data['db_defaults'].get('username') or '').strip(),
+                'password': data['db_defaults'].get('password') or None
+            }
+
         meta = SignupMeta(
             user_id=user.id,
             domain=domain,
             full_name=(data.get('full_name') or None),
             server_password_enc=encrypt_text(data['password']),
-            options_json={
-                'want_ssl': bool(data.get('want_ssl')),
-                'want_dns': bool(data.get('want_dns')),
-                'want_email': bool(data.get('want_email')),
-                'want_mysql': bool(data.get('want_mysql')),
-            },
+            options_json=options_json,
             storage_quota_mb=data.get('storage_quota_mb')
         )
         db.session.add(meta)
@@ -163,6 +194,19 @@ def update_signup_request(current_user, req_id):
         if 'storage_quota_mb' in data:
             req.storage_quota_mb = data['storage_quota_mb']
         
+        # Update service options directly (for MyRequests.js compatibility)
+        if 'want_ssl' in data or 'want_dns' in data or 'want_email' in data or 'want_mysql' in data:
+            options = req.options_json or {}
+            if 'want_ssl' in data:
+                options['want_ssl'] = bool(data['want_ssl'])
+            if 'want_dns' in data:
+                options['want_dns'] = bool(data['want_dns'])
+            if 'want_email' in data:
+                options['want_email'] = bool(data['want_email'])
+            if 'want_mysql' in data:
+                options['want_mysql'] = bool(data['want_mysql'])
+            req.options_json = options
+        
         # Update service options in options_json
         if 'options' in data:
             options = req.options_json or {}
@@ -172,7 +216,68 @@ def update_signup_request(current_user, req_id):
                 'want_email': bool(data['options'].get('want_email', options.get('want_email'))),
                 'want_mysql': bool(data['options'].get('want_mysql', options.get('want_mysql'))),
             })
+            # Email account updates
+            if 'email_account' in data['options']:
+                ea = data['options']['email_account'] or {}
+                
+                # Ensure email_account key exists to avoid errors
+                if 'email_account' not in options:
+                    options['email_account'] = {}
+                
+                # Update username if provided
+                if 'username' in ea:
+                    options['email_account']['username'] = (ea.get('username') or '').strip()
+                
+                # Update quota if provided
+                if 'quota' in ea:
+                    try:
+                        # Use provided quota, fallback to existing, then to default
+                        quota_val = ea.get('quota')
+                        options['email_account']['quota'] = int(quota_val) if quota_val else (options.get('email_account', {}).get('quota', 1024))
+                    except (ValueError, TypeError):
+                        options['email_account']['quota'] = options.get('email_account', {}).get('quota', 1024)
+
+                # Only update password if a new, non-empty password is provided
+                if ea.get('password'):
+                    options['email_account']['password'] = ea.get('password')
+                
+            # DB account updates
+            if 'db_account' in data['options']:
+                da = data['options']['db_account'] or {}
+                options['db_account'] = {
+                    'name': (da.get('name') or '').strip(),
+                    'username': (da.get('username') or '').strip(),
+                    'password': da.get('password') or None
+                }
+            # Optional defaults updates
+            if 'email_defaults' in data['options']:
+                ed = data['options']['email_defaults'] or {}
+                options['email_defaults'] = {
+                    'username': (ed.get('username') or '').strip(),
+                    'quota': ed.get('quota'),
+                    'password': ed.get('password') or None
+                }
+            if 'db_defaults' in data['options']:
+                dd = data['options']['db_defaults'] or {}
+                options['db_defaults'] = {
+                    'name': (dd.get('name') or '').strip(),
+                    'username': (dd.get('username') or '').strip(),
+                    'password': dd.get('password') or None
+                }
             req.options_json = options
+        else:
+            # Handle direct email account fields (for MyRequests.js compatibility)
+            if 'email_username' in data or 'email_password' in data or 'email_quota' in data:
+                options = req.options_json or {}
+                if not options.get('email_account'):
+                    options['email_account'] = {}
+                if 'email_username' in data:
+                    options['email_account']['username'] = (data.get('email_username') or '').strip()
+                if 'email_password' in data:
+                    options['email_account']['password'] = data.get('email_password') or None
+                if 'email_quota' in data:
+                    options['email_account']['quota'] = data.get('email_quota', 1024)
+                req.options_json = options
 
         db.session.commit()
         
@@ -237,32 +342,61 @@ def submit_additional_request(current_user):
     if not domain:
         return jsonify({'error': 'Invalid domain'}), 400
 
-    # Check if domain already used anywhere or in pending requests
-    domain_taken = (
-        VirtualHost.query.filter_by(domain=domain).first()
-        or VirtualHostAlias.query.filter_by(domain=domain).first()
-        or EmailDomain.query.filter_by(domain=domain).first()
-        or DNSZone.query.filter_by(domain_name=domain).first()
-        or SignupMeta.query.filter(SignupMeta.domain == domain, SignupMeta.status == 'pending').first()
-    )
-    if domain_taken:
-        return jsonify({'error': 'Domain already exists'}), 409
+    # Allow using an existing domain if it belongs to the current user
+    owned_vhost = VirtualHost.query.filter_by(domain=domain).first()
+    owns_domain = bool(owned_vhost and (
+        owned_vhost.user_id == current_user.id or owned_vhost.linux_username == current_user.username
+    ))
+
+    if not owns_domain:
+        # Check if domain already used elsewhere or pending by someone else
+        domain_taken = (
+            VirtualHost.query.filter_by(domain=domain).first()
+            or VirtualHostAlias.query.filter_by(domain=domain).first()
+            or EmailDomain.query.filter_by(domain=domain).first()
+            or DNSZone.query.filter_by(domain_name=domain).first()
+            or SignupMeta.query.filter(
+                SignupMeta.domain == domain,
+                SignupMeta.status == 'pending',
+                SignupMeta.user_id != current_user.id
+            ).first()
+        )
+        if domain_taken:
+            return jsonify({'error': 'Domain already exists'}), 409
     
     try:
         # Generate a server password for this additional request
         server_password = linux_service.generate_secure_password()
         
+        # Build options including email account details
+        options_json = {
+            'want_ssl': bool(data.get('want_ssl')),
+            'want_dns': bool(data.get('want_dns')),
+            'want_email': bool(data.get('want_email')),
+            'want_mysql': bool(data.get('want_mysql')),
+        }
+        # Email account details (if email is requested)
+        if data.get('want_email') and (data.get('email_username') or data.get('email_password')):
+            options_json['email_account'] = {
+                'username': (data.get('email_username') or '').strip(),
+                'password': data.get('email_password') or None,
+                'quota': data.get('email_quota', 1024)
+            }
+        
+        # DB details
+        if data.get('want_mysql') and (data.get('db_name') or data.get('db_username')):
+            options_json['db_account'] = {
+                'name': (data.get('db_name') or '').strip(),
+                'username': (data.get('db_username') or '').strip(),
+                'password': data.get('db_password') or None
+            }
+
         meta = SignupMeta(
             user_id=current_user.id,
             domain=domain,
             full_name=(data.get('full_name') or None),
             server_password_enc=encrypt_text(server_password),
-            options_json={
-                'want_ssl': bool(data.get('want_ssl')),
-                'want_dns': bool(data.get('want_dns')),
-                'want_email': bool(data.get('want_email')),
-                'want_mysql': bool(data.get('want_mysql')),
-            },
+            options_json=options_json,
             storage_quota_mb=data.get('storage_quota_mb')
         )
         db.session.add(meta)
@@ -301,44 +435,95 @@ def approve_signup_request(current_user, req_id):
             except Exception:
                 pass
 
-        # Create Linux system user
-        password_plain = decrypt_text(req.server_password_enc) if req.server_password_enc else ''
-        # Use domain if provided for comment/home setup
-        success, message, _ = linux_service.create_user(user.username, req.domain or user.username, password_plain)
-        if not success:
-            db.session.rollback()
-            return jsonify({'error': f'Linux user creation failed: {message}'}), 500
-        # Mark as system user for authentication and resource ownership
-        try:
+        # --- Smart Provisioning: Check for existing resources ---
+        linux_user_exists = linux_service.user_exists(user.username)
+        vhost_exists = VirtualHost.query.filter_by(domain=req.domain).first()
+
+        # Create Linux system user only if it doesn't exist
+        if not linux_user_exists:
+            password_plain = decrypt_text(req.server_password_enc) if req.server_password_enc else ''
+            success, message, _ = linux_service.create_user(user.username, req.domain or user.username, password_plain)
+            if not success:
+                db.session.rollback()
+                return jsonify({'error': f'Linux user creation failed: {message}'}), 500
             user.is_system_user = True
             db.session.add(user)
-        except Exception:
-            pass
+        else:
+            req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"Linux user '{user.username}' exists."
 
-        # Provision MySQL database/user if requested
+        # MySQL: do not auto-provision on approval; Database.js UI will handle creation later
         if (req.options_json or {}).get('want_mysql'):
             try:
-                db_name = f"{user.username}"
-                mysql_service.create_database(db_name)
-                mysql_service.create_user(user.username, password_plain)
-                mysql_service.grant_privileges(user.username, db_name)
-            except Exception as e:
-                req.admin_comment = f"MySQL provisioning failed: {e}"
+                # Record intent only; actual DB/user will be created via Database UI after approval
+                note = 'MySQL requested (creation deferred to Database UI)'
+                req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + note
+            except Exception:
+                pass
 
-        # Create Virtual Host (required domain)
-        try:
-            if not req.domain:
-                raise Exception('Domain is required to create virtual host')
-            document_root = f"/home/{user.username}/public_html"
-            vhost_service.create_virtual_host({
-                'domain': req.domain,
-                'document_root': document_root,
-                'linux_username': user.username,
-                'user_id': user.id,
-                'php_version': None
-            })
-        except Exception as e:
-            req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"VHost create failed: {e}"
+        # Create Virtual Host only if it doesn't exist
+        if not vhost_exists:
+            try:
+                if not req.domain:
+                    raise Exception('Domain is required to create virtual host')
+                domain_part = (req.domain.split('.')[0] or '').strip()
+                safe_part = ''.join(c for c in domain_part if c.isalnum()) or user.username
+                document_root = f"/home/{user.username}/{safe_part}/public_html"
+                vhost_service.create_virtual_host({
+                    'domain': req.domain,
+                    'document_root': document_root,
+                    'linux_username': user.username,
+                    'user_id': user.id,
+                    'php_version': '8.1',
+                    'skip_email_provision': True if (req.options_json or {}).get('want_email') else False
+                })
+            except Exception as e:
+                req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"VHost create failed: {e}"
+        else:
+            req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"VHost for '{req.domain}' exists."
+
+        # Auto-provision MySQL database and user if details are provided
+        opts = req.options_json or {}
+        if opts.get('want_mysql') and opts.get('db_account'):
+            db_account = opts['db_account']
+            db_name = db_account.get('name')
+            db_username = db_account.get('username')
+            db_password = db_account.get('password')
+
+            if db_name and db_username and db_password:
+                try:
+                    # Enforce db_ prefix for consistency
+                    if not db_name.startswith('db_'):
+                        db_name = f"db_{db_name}"
+
+                    # 1. Create Database
+                    mysql_service.create_database(name=db_name)
+                    
+                    # 2. Check if user exists, create if not
+                    user_exists = mysql_service.user_exists(username=db_username, host='%')
+                    if not user_exists:
+                        mysql_service.create_user(username=db_username, password=db_password, host='%')
+                    
+                    # 3. Grant Privileges
+                    mysql_service.grant_privileges(username=db_username, database=db_name, host='%')
+                    
+                    # 4. Save to app DB
+                    from models.database import Database as AppDatabase, DatabaseUser
+                    new_app_db = AppDatabase(name=db_name, db_type='mysql', owner_id=user.id, associated_domain=req.domain)
+                    db.session.add(new_app_db)
+                    db.session.flush()
+
+                    new_db_user = DatabaseUser(database_id=new_app_db.id, username=db_username, host='%')
+                    db.session.add(new_db_user)
+
+                    req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"DB '{db_name}' and user '{db_username}' created."
+
+                except Exception as e:
+                    req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"DB creation failed: {e}"
+            else:
+                # Details not provided, defer to UI
+                note = 'MySQL requested (creation deferred to Database UI)'
+                req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + note
+
 
         # Provision DNS zone (always)
         try:
@@ -357,10 +542,19 @@ def approve_signup_request(current_user, req_id):
                 db.session.flush()
 
                 default_ip = get_dns_default_ip()
-                # Create only essential records automatically
+                # Create full template records (match normal vhost creation)
                 base_records = [
+                    # NS
                     DNSRecord(zone_id=zone.id, name='@',   record_type='NS',    content=f"ns1.{zone.domain_name}.", ttl=3600, status='active'),
-                    DNSRecord(zone_id=zone.id, name='ns1', record_type='A',     content=default_ip,                   ttl=3600, status='active')
+                    # ns1 A
+                    DNSRecord(zone_id=zone.id, name='ns1', record_type='A',     content=default_ip,                   ttl=3600, status='active'),
+                    # root A
+                    DNSRecord(zone_id=zone.id, name='@',   record_type='A',     content=default_ip,                   ttl=3600, status='active'),
+                    # www CNAME
+                    DNSRecord(zone_id=zone.id, name='www', record_type='CNAME', content=f"{zone.domain_name}.",      ttl=3600, status='active'),
+                    # MX + mail A
+                    DNSRecord(zone_id=zone.id, name='@',   record_type='MX',    content=f"mail.{zone.domain_name}.", priority=10, ttl=3600, status='active'),
+                    DNSRecord(zone_id=zone.id, name='mail',record_type='A',     content=default_ip,                   ttl=3600, status='active')
                 ]
 
                 for r in base_records:
@@ -387,6 +581,78 @@ def approve_signup_request(current_user, req_id):
                     (req.admin_comment + ' | ' if req.admin_comment else '') +
                     f"Quota set failed: {e}"
                 )
+
+        # Create email account if requested
+        try:
+            opts = req.options_json or {}
+            if opts.get('want_email') and opts.get('email_account'):
+                email_account = opts['email_account']
+                if email_account.get('username') and email_account.get('password'):
+                    # Import email service here to avoid circular imports
+                    from services.email_service import EmailService
+                    from models.email import EmailDomain
+                    from services.maildb_reader import MailDbReader
+                    import crypt
+                    import secrets
+                    
+                    email_service = EmailService()
+                    mail_db_reader = MailDbReader()
+                    
+                    # Ensure domain exists in mail database
+                    mail_db_reader.upsert_domain(domain=req.domain, status='active')
+                    
+                    # Get or create EmailDomain
+                    email_domain = EmailDomain.query.filter_by(domain=req.domain).first()
+                    if not email_domain:
+                        email_domain = EmailDomain(
+                            domain=req.domain,
+                            virtual_host_id=None,  # Will be updated later when VHost is created
+                            status='active'
+                        )
+                        db.session.add(email_domain)
+                        db.session.flush()
+                    
+                    # Create account in mail DB
+                    full_email = f"{email_account['username']}@{req.domain}"
+                    maildir = f"{req.domain}/{email_account['username']}/"
+                    
+                    # Build SHA-512-CRYPT password hash
+                    salt = f"$6${secrets.token_hex(8)}"
+                    hashed = crypt.crypt(email_account['password'], salt)
+                    password_hash = f"{{SHA512-CRYPT}}{hashed}"
+                    
+                    mail_db_reader.upsert_user(
+                        email=full_email,
+                        maildir=maildir,
+                        status='active',
+                        quota=email_account.get('quota', 1024),
+                        password_hash=password_hash
+                    )
+                    
+                    # Also create account in email system (filesystem / Dovecot)
+                    email_service.create_account(
+                        email_account['username'],
+                        req.domain,
+                        email_account['password'],
+                        quota=email_account.get('quota', 1024)
+                    )
+
+                    # Create account record in app DB to make it "managed"
+                    from models.email import EmailAccount
+                    from werkzeug.security import generate_password_hash
+                    
+                    app_db_account = EmailAccount(
+                        domain_id=email_domain.id,
+                        username=email_account['username'],
+                        password=generate_password_hash(email_account['password']),
+                        quota=email_account.get('quota', 1024)
+                    )
+                    db.session.add(app_db_account)
+                    
+                    req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"Email account {full_email} created successfully"
+        except Exception as e:
+            # Not fatal; capture in admin comment for visibility
+            req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"Email account creation failed: {e}"
 
         # Grant domain-level permissions based on requested options (DNS always granted)
         try:

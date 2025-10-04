@@ -104,6 +104,32 @@ const FileManager = () => {
     return user?.role === 'admin' || user?.is_admin;
   }, [user]);
 
+  // Currently selected domain object
+  const selectedDomain = useMemo(() => {
+    return domains.find(d => d.domain === currentDomain) || null;
+  }, [domains, currentDomain]);
+
+  // Absolute document root path (from API if available, with safe fallback)
+  const absoluteDocRoot = useMemo(() => {
+    if (selectedDomain?.document_root) return selectedDomain.document_root;
+    if (domainStructure?.document_root) return domainStructure.document_root;
+    const linuxUser = domainStructure?.linux_username;
+    const prefix = (currentDomain || '').split('.')[0];
+    if (linuxUser && prefix) return `/home/${linuxUser}/${prefix}`;
+    return '';
+  }, [selectedDomain, domainStructure, currentDomain]);
+
+  // Relative path from the user's home to the document root (used by file browser)
+  const relativeDocRoot = useMemo(() => {
+    const home = domainStructure?.home_directory || (domainStructure?.linux_username ? `/home/${domainStructure.linux_username}` : '');
+    if (absoluteDocRoot && home && absoluteDocRoot.startsWith(home)) {
+      let rel = absoluteDocRoot.slice(home.length);
+      if (rel.startsWith('/')) rel = rel.slice(1);
+      return rel; // may be '' if doc root equals home
+    }
+    return '';
+  }, [absoluteDocRoot, domainStructure]);
+
   // Memoize filtered and sorted files
   const filteredFiles = useMemo(() => {
     let filtered = files.filter(file => 
@@ -195,6 +221,16 @@ const FileManager = () => {
   useEffect(() => {
     loadDomainStructure();
   }, [loadDomainStructure]);
+
+  // When domain structure (and doc root) is available, default to document root in the browser
+  useEffect(() => {
+    if (currentDomain) {
+      const target = relativeDocRoot || '';
+      if (currentPath !== target) {
+        setCurrentPath(target);
+      }
+    }
+  }, [currentDomain, relativeDocRoot]);
 
   // Update URL when domain changes
   useEffect(() => {
@@ -360,7 +396,7 @@ const FileManager = () => {
         ))}
       </select>
       
-      {currentDomain && domainStructure && (
+      {currentDomain && (
         <div className="flex items-center space-x-2 text-sm px-3 py-1 rounded-md border"
              style={{ 
                backgroundColor: 'var(--secondary-bg)', 
@@ -368,7 +404,9 @@ const FileManager = () => {
                color: 'var(--secondary-text)' 
              }}>
           <GlobeAltIcon className="w-4 h-4" />
-          <span>/{domainStructure.linux_username}</span>
+          <span className="font-mono truncate max-w-[28rem]" title={absoluteDocRoot || ''}>
+            {absoluteDocRoot || '...'}
+          </span>
         </div>
       )}
     </div>
@@ -381,7 +419,7 @@ const FileManager = () => {
     return (
       <nav className="flex items-center space-x-2 text-sm mb-4" style={{ color: 'var(--secondary-text)' }}>
         <button
-          onClick={() => setCurrentPath('')}
+          onClick={() => setCurrentPath(relativeDocRoot || '')}
           className="flex items-center space-x-1 px-2 py-1 rounded hover:bg-opacity-20 transition-colors"
           style={{ 
             backgroundColor: !currentPath ? 'var(--accent-color)' : 'transparent',
@@ -425,45 +463,45 @@ const FileManager = () => {
   const QuickAccessButtons = () => {
     if (!currentDomain || !domainStructure) return null;
 
-    const quickDirs = [
+    const items = [];
+    // Always include Document Root shortcut
+    items.push({ label: 'Document Root', path: relativeDocRoot || '', icon: GlobeAltIcon, color: 'text-blue-500', exists: true });
+
+    // Add common directories only if they exist under this domain root
+    const dirMap = domainStructure.directories || {};
+    const candidates = [
       { name: 'public_html', icon: GlobeAltIcon, color: 'text-blue-500' },
       { name: 'logs', icon: DocumentTextIcon, color: 'text-yellow-500' },
       { name: 'mail', icon: DocumentIcon, color: 'text-green-500' },
       { name: 'cgi-bin', icon: CubeIcon, color: 'text-purple-500' }
     ];
 
+    candidates.forEach(({ name, icon, color }) => {
+      const dirInfo = dirMap[name];
+      if (dirInfo && dirInfo.exists) {
+        items.push({ label: name, path: name, icon, color, exists: true });
+      }
+    });
+
     return (
       <div className="flex flex-wrap gap-2 mb-4">
-        {quickDirs.map(({ name, icon: Icon, color }) => {
-          const dirInfo = domainStructure.directories[name];
-          if (!dirInfo?.exists) return null;
-
-          return (
-            <button
-              key={name}
-              onClick={() => setCurrentPath(name)}
-              className={`flex items-center space-x-2 px-3 py-2 rounded-md border transition-colors hover:opacity-80 ${
-                currentPath === name ? 'ring-2 ring-blue-500' : ''
-              }`}
-              style={{
-                backgroundColor: 'var(--secondary-bg)',
-                borderColor: 'var(--border-color)',
-                color: 'var(--primary-text)'
-              }}
-            >
-              <Icon className={`w-4 h-4 ${color}`} />
-              <span className="text-sm">{name}</span>
-              {dirInfo.size && (
-                <span className="text-xs px-1 py-0.5 rounded" style={{ 
-                  backgroundColor: 'var(--tertiary-bg)', 
-                  color: 'var(--secondary-text)' 
-                }}>
-                  {formatSize(dirInfo.size)}
-                </span>
-              )}
-            </button>
-          );
-        })}
+        {items.map(({ label, path, icon: Icon, color }) => (
+          <button
+            key={label}
+            onClick={() => setCurrentPath(path)}
+            className={`flex items-center space-x-2 px-3 py-2 rounded-md border transition-colors hover:opacity-80 ${
+              currentPath === path ? 'ring-2 ring-blue-500' : ''
+            }`}
+            style={{
+              backgroundColor: 'var(--secondary-bg)',
+              borderColor: 'var(--border-color)',
+              color: 'var(--primary-text)'
+            }}
+          >
+            <Icon className={`w-4 h-4 ${color}`} />
+            <span className="text-sm">{label}</span>
+          </button>
+        ))}
       </div>
     );
   };

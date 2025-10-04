@@ -266,3 +266,34 @@ class MySQLService:
         """Get all databases owned by a specific user"""
         from models.database import Database
         return Database.query.filter_by(owner_id=user_id).all() 
+
+    def list_databases(self):
+        """List all databases on the server, excluding system databases."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+            cursor.execute("SHOW DATABASES")
+            databases = [db[0] for db in cursor.fetchall()]
+            cursor.close()
+            conn.close()
+            
+            # Filter out system databases
+            system_dbs = ['information_schema', 'mysql', 'performance_schema', 'sys']
+            return [db for db in databases if db not in system_dbs]
+        except Error as e:
+            raise Exception(f'Failed to list databases: {str(e)}')
+
+    def user_exists(self, username, host='%'):
+        """Check if a MySQL user exists."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM mysql.user WHERE user = %s AND host = %s", (username, host))
+            result = cursor.fetchone()
+            conn.close()
+            return result is not None
+        except Error as e:
+            # In case of error, it's safer to assume user might not exist
+            # or there's a connection issue. Logging the error is important.
+            print(f"Error checking if user exists: {e}")
+            return False 

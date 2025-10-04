@@ -225,11 +225,16 @@ const CreateVirtualHost = () => {
 
   useEffect(() => {
     if (creationMode === 'existingUser' && formData.custom_username && formData.domain) {
-      const domainPart = formData.domain.split('.')[0];
-      setDocumentRoot(`/home/${formData.custom_username}/${domainPart}`);
+      const domainPart = (formData.domain || '').split('.')[0];
+      const safe = domainPart.replace(/[^a-zA-Z0-9]/g, '');
+      setDocumentRoot(`/home/${formData.custom_username}/${safe}/public_html`);
     } else if (creationMode === 'newUser') {
       const user = formData.username_mode === 'custom' ? formData.custom_username : generatedUsername;
-      setDocumentRoot(`/home/${user}/public_html`);
+      const domainPart = (formData.domain || '').split('.')[0];
+      const safe = domainPart.replace(/[^a-zA-Z0-9]/g, '');
+      setDocumentRoot(`/home/${user}/${safe}/public_html`);
+    } else {
+      setDocumentRoot('');
     }
   }, [creationMode, formData.custom_username, formData.domain, formData.username_mode, generatedUsername]);
 
@@ -884,7 +889,7 @@ const CreateVirtualHost = () => {
                         color: 'var(--primary-text)',
                         border: '1px solid var(--border-color)'
                       }}>
-                        {documentRoot || '/home/user/new_site'}
+                        {documentRoot || '/home/user/example/public_html'}
                       </div>
                       <p className="text-xs mt-1" style={{ color: 'var(--secondary-text)' }}>
                         This directory will be automatically created for your new site.

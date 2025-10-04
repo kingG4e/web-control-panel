@@ -92,7 +92,20 @@ def create_subdomain_virtual_host(current_user):
         if not linux_username:
             linux_username = linux_user_service.generate_username_from_domain(domain)
 
-        doc_root = _get_document_root_path(linux_username)
+        # Use per-domain document root under user's home with public_html
+        domain_part = re.sub(r'[^a-zA-Z0-9]', '', domain.split('.')[0])
+        doc_root = f"/home/{linux_username}/{domain_part}/public_html"
+
+        # Ensure directory exists and set ownership (create parent and public_html)
+        try:
+            os.makedirs(doc_root, exist_ok=True)
+            os.chmod(doc_root, 0o755)
+            if not linux_user_service.is_development:
+                import pwd
+                user_info = pwd.getpwnam(linux_username)
+                os.chown(doc_root, user_info.pw_uid, user_info.pw_gid)
+        except Exception as e:
+            print(f"Warning: Could not prepare document root for subdomain {domain}: {e}")
 
         # Ensure Linux user
         linux_password = data.get('linux_password') or _generate_secure_password(14)
@@ -581,9 +594,10 @@ def create_virtual_host(current_user):
             # User already has virtual hosts, we'll create another one
             print(f"User {linux_username} already has {len(existing_user_hosts)} virtual host(s), creating additional one")
         
-        # Get document root path
-        doc_root = _get_document_root_path(linux_username)
-        
+        # Use per-domain document root for new user with public_html
+        domain_part = re.sub(r'[^a-zA-Z0-9]', '', domain.split('.')[0])
+        doc_root = f"/home/{linux_username}/{domain_part}/public_html"
+
         user_password = data['linux_password']
         home_directory = f'/home/{linux_username}'
         
@@ -614,6 +628,18 @@ def create_virtual_host(current_user):
         # Create cgi-bin folder
         if _create_cgi_bin_folder(home_directory):
             response_data['services_created'].append('CGI-bin folder')
+
+        # Ensure document root exists for this domain and owned by the new user
+        try:
+            os.makedirs(doc_root, exist_ok=True)
+            os.chmod(doc_root, 0o755)
+            if not linux_user_service.is_development:
+                import pwd
+                user_info = pwd.getpwnam(linux_username)
+                os.chown(doc_root, user_info.pw_uid, user_info.pw_gid)
+            print(f"✓ Document root prepared at {doc_root}")
+        except Exception as e:
+            print(f"Warning: Could not prepare document root {doc_root}: {e}")
 
         # Best-effort: set storage quota if provided
         if 'storage_quota_mb' in data and data['storage_quota_mb']:
@@ -1339,9 +1365,9 @@ def create_virtual_host_for_existing_user(current_user):
         data['domain'] = domain
         data['linux_username'] = linux_username
         
-        # Determine document root
+        # Determine document root (unique per domain label under user's home with public_html)
         domain_part = re.sub(r'[^a-zA-Z0-9]', '', domain.split('.')[0])
-        doc_root = f"/home/{linux_username}/{domain_part}"
+        doc_root = f"/home/{linux_username}/{domain_part}/public_html"
 
         # Validate domain format
         domain_pattern = r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
@@ -1397,9 +1423,22 @@ def create_virtual_host_for_existing_user(current_user):
                     'requested_username': linux_username
                 }), 403
         
-        # Get document root path
-        doc_root = _get_document_root_path(linux_username)
-        
+        # Use per-domain document root for existing user as well with public_html
+        domain_part = re.sub(r'[^a-zA-Z0-9]', '', domain.split('.')[0])
+        doc_root = f"/home/{linux_username}/{domain_part}/public_html"
+
+        # Ensure document root exists with correct ownership
+        try:
+            os.makedirs(doc_root, exist_ok=True)
+            os.chmod(doc_root, 0o755)
+            if not linux_user_service.is_development:
+                import pwd
+                user_info = pwd.getpwnam(linux_username)
+                os.chown(doc_root, user_info.pw_uid, user_info.pw_gid)
+            print(f"✓ Document root prepared at {doc_root}")
+        except Exception as e:
+            print(f"Warning: Could not prepare document root {doc_root}: {e}")
+
         # Initialize response data
         response_data = {
             'domain': domain,
@@ -1482,6 +1521,8 @@ def create_virtual_host_for_existing_user(current_user):
                 os.makedirs(f"{maildir_path}/tmp", exist_ok=True)
                 # Set proper permissions
                 if not linux_user_service.is_development:
+                    import pwd
+                    user_info = pwd.getpwnam(linux_username)
                     os.chown(maildir_path, user_info.pw_uid, user_info.pw_gid)
                     for subdir in ['cur', 'new', 'tmp']:
                         os.chown(f"{maildir_path}/{subdir}", user_info.pw_uid, user_info.pw_gid)

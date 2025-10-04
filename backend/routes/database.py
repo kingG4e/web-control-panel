@@ -35,30 +35,9 @@ def get_databases(current_user):
             joinedload(Database.backups)
         )
         
-        # Non-admins see only their own databases or databases associated with their domains
+        # Non-admins see only their own databases
         if not _is_admin(current_user):
-            current_app.logger.info(f"Filtering databases for non-admin user: {current_user.username} (ID: {current_user.id})")
-            
-            # Find the Linux username associated with the current panel user
-            app_user = User.query.get(current_user.id)
-            if not app_user:
-                 return jsonify({'success': False, 'error': 'User not found'}), 404
-
-            linux_username = app_user.username # Assuming panel username matches linux username
-
-            current_app.logger.info(f"Panel user '{app_user.username}' is associated with Linux user '{linux_username}'")
-
-            # Find domains associated with that Linux user
-            user_domains = [vh.domain for vh in VirtualHost.query.filter_by(linux_username=linux_username).all()]
-            current_app.logger.info(f"Found domains for Linux user '{linux_username}': {user_domains}")
-            
-            # Filter databases where the current user is the direct owner OR the associated domain belongs to their linux user
-            query = query.filter(
-                or_(
-                    Database.owner_id == current_user.id,
-                    Database.associated_domain.in_(user_domains)
-                )
-            )
+            query = query.filter(Database.owner_id == current_user.id)
         
         # Apply search filter if provided
         if search:
@@ -91,6 +70,59 @@ def get_databases(current_user):
             'success': False,
             'error': str(e)
         }), 500
+
+@database_bp.route('/api/databases/sync', methods=['POST'])
+@token_required
+@admin_required
+def sync_databases(current_user):
+    """Sync databases from MySQL server to the application database."""
+    try:
+        # 1. Get all databases from the MySQL server
+        server_dbs = mysql_service.list_databases()
+        
+        # Only consider databases that start with 'db_'
+        server_dbs = [name for name in server_dbs if name.startswith('db_')]
+        
+        # 2. Get all databases known to our application
+        app_dbs = [db.name for db in Database.query.all()]
+        
+        # 3. Find the difference
+        new_dbs = [db_name for db_name in server_dbs if db_name not in app_dbs]
+        
+        imported_count = 0
+        if new_dbs:
+            for db_name in new_dbs:
+                try:
+                    # Compute size best-effort
+                    try:
+                        size_mb = mysql_service.get_database_size(db_name)
+                    except Exception:
+                        size_mb = None
+
+                    # For imported DBs, assign ownership to the syncing admin
+                    new_db_record = Database(
+                        name=db_name,
+                        owner_id=current_user.id,
+                        status='active',
+                        size=size_mb
+                    )
+                    db.session.add(new_db_record)
+                    imported_count += 1
+                except Exception as import_e:
+                    current_app.logger.error(f"Failed to import database '{db_name}': {import_e}")
+            
+            db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'Sync completed. Imported {imported_count} new databases.',
+            'imported_count': imported_count,
+            'new_dbs': new_dbs
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @database_bp.route('/api/databases/<int:id>', methods=['GET'])
 @token_required
