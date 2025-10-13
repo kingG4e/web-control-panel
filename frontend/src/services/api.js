@@ -450,14 +450,43 @@ export const database = {
         return response.data;
     },
     
-    // New function to get all database users
+    // New function to get all database users from MySQL server
     getAllUsers: async () => {
         const response = await api.get('/database-users');
         return response.data;
     },
 
+    // Create database user on MySQL server
+    createDbUser: async (data) => {
+        const response = await api.post('/database-users', data);
+        return response.data;
+    },
+
+    // Update database user on MySQL server
+    updateDbUser: async (userId, data) => {
+        const response = await api.put(`/database-users/${userId}`, data);
+        return response.data;
+    },
+
+    // Delete database user from MySQL server
+    deleteDbUser: async (userId) => {
+        const response = await api.delete(`/database-users/${userId}`);
+        return response.data;
+    },
+
     associateUser: async (dbId, userId) => {
         const response = await api.post(`/databases/${dbId}/users/${userId}`);
+        return response.data;
+    },
+
+    // MySQL privileges management
+    checkMysqlPrivileges: async () => {
+        const response = await api.get('/mysql/check-privileges');
+        return response.data;
+    },
+
+    fixMysqlPrivileges: async () => {
+        const response = await api.post('/mysql/fix-privileges');
         return response.data;
     },
 

@@ -57,14 +57,19 @@ server {
             document_root = virtual_host.document_root
             os.makedirs(document_root, exist_ok=True)
 
-            # Set proper permissions
+            # Set proper permissions for www-data access
             if hasattr(virtual_host, 'linux_username') and virtual_host.linux_username:
-                # If linux_username is available, use it for ownership
-                subprocess.run(['chown', '-R', f'{virtual_host.linux_username}:{virtual_host.linux_username}', document_root], check=True)
+                # Set ownership to user:www-data for proper web access
+                subprocess.run(['chown', '-R', f'{virtual_host.linux_username}:www-data', document_root], check=True)
+                print(f"Set ownership: {document_root} -> {virtual_host.linux_username}:www-data")
             else:
                 # Fallback to www-data if no specific user is associated yet
                 subprocess.run(['chown', '-R', 'www-data:www-data', document_root], check=True)
+                print(f"Set ownership: {document_root} -> www-data:www-data")
+            
+            # Set directory permissions to 755 (readable by www-data)
             subprocess.run(['chmod', '-R', '755', document_root], check=True)
+            print(f"Set permissions: {document_root} -> 755")
 
             # Generate configuration
             config_content = Template(self.template).render(
@@ -299,12 +304,15 @@ server {
         with open(index_path, 'w') as f:
             f.write(index_content)
 
-        # Set proper permissions
+        # Set proper permissions for www-data access
         if hasattr(virtual_host, 'linux_username') and virtual_host.linux_username:
-            subprocess.run(['chown', f'{virtual_host.linux_username}:{virtual_host.linux_username}', index_path], check=True)
+            subprocess.run(['chown', f'{virtual_host.linux_username}:www-data', index_path], check=True)
+            print(f"Set index.html ownership: {index_path} -> {virtual_host.linux_username}:www-data")
         else:
             subprocess.run(['chown', 'www-data:www-data', index_path], check=True)
-        subprocess.run(['chmod', '644', index_path], check=True) 
+            print(f"Set index.html ownership: {index_path} -> www-data:www-data")
+        subprocess.run(['chmod', '644', index_path], check=True)
+        print(f"Set index.html permissions: {index_path} -> 644") 
 
     def _reload_nginx(self):
         """Validate configuration and reload Nginx with fallbacks, raising detailed errors on failure."""

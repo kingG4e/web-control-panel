@@ -24,15 +24,15 @@ const menuGroups = [
                     </svg>
                 )
             },
-            {
-                name: 'System Information',
-                path: '/system-info',
-                icon: (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                )
-            }
+            // {
+            //     name: 'System Information',
+            //     path: '/system-info',
+            //     icon: (
+            //         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            //             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            //         </svg>
+            //     )
+            // }
         ]
     },
     {
@@ -97,6 +97,15 @@ const menuGroups = [
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                     </svg>
                 )
+            },
+            {
+                name: 'Quota Management',
+                path: '/admin/quota',
+                icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                )
             }
         ]
     },
@@ -126,24 +135,15 @@ const menuGroups = [
                     </svg>
                 )
             },
-            {
-                name: 'Quota Management',
-                path: '/admin/quota',
-                icon: (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                )
-            },
-            {
-                name: 'Network Configuration',
-                path: '/network',
-                icon: (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
-                    </svg>
-                )
-            },
+            // {
+            //     name: 'Network Configuration',
+            //     path: '/network',
+            //     icon: (
+            //         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            //             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+            //         </svg>
+            //     )
+            // },
             {
                 name: 'Admin Settings',
                 path: '/admin/settings',
@@ -197,10 +197,22 @@ const Sidebar = ({ isOpen, setIsOpen, isMobile, isPendingUser }) => {
         items: group.items.filter(item => item.path !== '/my-requests')
       };
     }
+    if (group.title === 'Servers' && !isAdmin) {
+      return {
+        ...group,
+        items: group.items.filter(item => item.path !== '/dns')
+      };
+    }
+    if (group.title === 'Services' && !isAdmin) {
+      return {
+        ...group,
+        items: group.items.filter(item => item.path !== '/admin/quota')
+      };
+    }
     if (group.title === 'System Settings' && !isAdmin) {
       return {
         ...group,
-        items: group.items.filter(item => !['/users', '/admin/quota', '/admin/settings'].includes(item.path))
+        items: group.items.filter(item => !['/users', '/admin/settings'].includes(item.path))
       };
     }
     if (group.title === 'Admin' && !isAdmin) {

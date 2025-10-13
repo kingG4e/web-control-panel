@@ -45,10 +45,6 @@ def _generate_secure_password(length=12):
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
-def _get_document_root_path(linux_username):
-    """Generate document root path"""
-    return f'/home/{linux_username}/public_html'
-
 
 @virtual_host_bp.route('/api/subdomains', methods=['POST'])
 @token_required
@@ -91,6 +87,12 @@ def create_subdomain_virtual_host(current_user):
         linux_username = data.get('linux_username')
         if not linux_username:
             linux_username = linux_user_service.generate_username_from_domain(domain)
+        else:
+            # Validate provided username
+            if not re.match(r'^[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?$', linux_username):
+                return jsonify({'success': False, 'error': 'Invalid Linux username format'}), 400
+            if linux_user_service.user_exists(linux_username) and linux_username != current_user.username:
+                return jsonify({'success': False, 'error': f'Linux user "{linux_username}" already exists'}), 409
 
         # Use per-domain document root under user's home with public_html
         domain_part = re.sub(r'[^a-zA-Z0-9]', '', domain.split('.')[0])
@@ -99,11 +101,23 @@ def create_subdomain_virtual_host(current_user):
         # Ensure directory exists and set ownership (create parent and public_html)
         try:
             os.makedirs(doc_root, exist_ok=True)
-            os.chmod(doc_root, 0o755)
             if not linux_user_service.is_development:
                 import pwd
+                import grp
                 user_info = pwd.getpwnam(linux_username)
-                os.chown(doc_root, user_info.pw_uid, user_info.pw_gid)
+                www_data_info = grp.getgrnam('www-data')
+                
+                # ตั้งสิทธิ์โฟลเดอร์ domain ให้ www-data เข้าได้ (711)
+                domain_dir = os.path.dirname(doc_root)
+                if domain_dir != f'/home/{linux_username}':
+                    os.chown(domain_dir, user_info.pw_uid, user_info.pw_gid)
+                    os.chmod(domain_dir, 0o711)
+                    print(f"Set domain directory permissions: {domain_dir} -> 711")
+                
+                # ตั้งสิทธิ์ public_html ให้ www-data อ่าน+เข้าได้ (755)
+                os.chown(doc_root, user_info.pw_uid, www_data_info.gr_gid)
+                os.chmod(doc_root, 0o755)
+                print(f"Set public_html permissions: {doc_root} -> 755")
         except Exception as e:
             print(f"Warning: Could not prepare document root for subdomain {domain}: {e}")
 
@@ -413,11 +427,11 @@ def _create_mysql_database(domain, linux_username):
         # Create database
         mysql_service.create_database(db_name)
         
-        # Create user
-        mysql_service.create_user(db_user, db_password)
+        # Create user with host='%' to allow connections from any host
+        mysql_service.create_user(db_user, db_password, host='%')
         
-        # Grant privileges
-        mysql_service.grant_privileges(db_user, db_name)
+        # Grant privileges with matching host
+        mysql_service.grant_privileges(db_user, db_name, host='%')
         
         return db_name, db_user, db_password
     except Exception as e:
@@ -425,6 +439,77 @@ def _create_mysql_database(domain, linux_username):
         return None, None, None
 
 
+
+def _set_public_html_permissions(doc_root, linux_username):
+    """ตั้งสิทธิ์ไฟล์และโฟลเดอร์ใน public_html ให้ถูกต้อง"""
+    try:
+        if not linux_user_service.is_development:
+            import pwd
+            import grp
+            user_info = pwd.getpwnam(linux_username)
+            www_data_info = grp.getgrnam('www-data')
+            
+            # ตั้งสิทธิ์โฟลเดอร์ทั้งหมดใน public_html เป็น 755
+            for root, dirs, files in os.walk(doc_root):
+                for d in dirs:
+                    dir_path = os.path.join(root, d)
+                    os.chown(dir_path, user_info.pw_uid, www_data_info.gr_gid)
+                    os.chmod(dir_path, 0o755)
+                    print(f"Set directory permissions: {dir_path} -> 755")
+                
+                # ตั้งสิทธิ์ไฟล์ทั้งหมดใน public_html เป็น 644
+                for f in files:
+                    file_path = os.path.join(root, f)
+                    os.chown(file_path, user_info.pw_uid, www_data_info.gr_gid)
+                    os.chmod(file_path, 0o644)
+                    print(f"Set file permissions: {file_path} -> 644")
+    except Exception as e:
+        print(f"Warning: Could not set public_html file permissions: {e}")
+
+def _fix_existing_virtual_host_permissions(virtual_host):
+    """แก้ไขสิทธิ์ของ virtual host ที่มีอยู่แล้ว"""
+    try:
+        if linux_user_service.is_development:
+            print(f"Development mode: Would fix permissions for {virtual_host.domain}")
+            return True
+            
+        import pwd
+        import grp
+        import subprocess
+        
+        user_info = pwd.getpwnam(virtual_host.linux_username)
+        www_data_info = grp.getgrnam('www-data')
+        
+        # ตั้งสิทธิ์ home directory ให้ www-data เข้าได้ (711)
+        home_dir = f'/home/{virtual_host.linux_username}'
+        os.chown(home_dir, user_info.pw_uid, user_info.pw_gid)
+        os.chmod(home_dir, 0o711)
+        print(f"Fixed home directory permissions: {home_dir} -> 711")
+        
+        # ตั้งสิทธิ์โฟลเดอร์ domain ให้ www-data เข้าได้ (711)
+        # ต้องตั้งสิทธิ์ทุกโฟลเดอร์ใน path
+        current_path = home_dir
+        path_parts = virtual_host.document_root.replace(home_dir, '').strip('/').split('/')
+        
+        for part in path_parts[:-1]:  # ไม่รวม public_html
+            current_path = os.path.join(current_path, part)
+            if os.path.exists(current_path):
+                os.chown(current_path, user_info.pw_uid, user_info.pw_gid)
+                os.chmod(current_path, 0o711)
+                print(f"Fixed directory permissions: {current_path} -> 711")
+        
+        # ตั้งสิทธิ์ public_html ให้ www-data อ่าน+เข้าได้ (755)
+        os.chown(virtual_host.document_root, user_info.pw_uid, www_data_info.gr_gid)
+        os.chmod(virtual_host.document_root, 0o755)
+        print(f"Fixed public_html permissions: {virtual_host.document_root} -> 755")
+        
+        # ตั้งสิทธิ์ไฟล์และโฟลเดอร์ใน public_html
+        _set_public_html_permissions(virtual_host.document_root, virtual_host.linux_username)
+        
+        return True
+    except Exception as e:
+        print(f"Warning: Could not fix existing virtual host permissions: {e}")
+        return False
 
 def _auto_fix_virtual_host(virtual_host):
     """Auto-fix virtual host to prevent PHP-related errors"""
@@ -586,8 +671,28 @@ def create_virtual_host(current_user):
             }), 409
         
         # Generate Linux username from domain
-        linux_username = linux_user_service.generate_username_from_domain(domain)
-        
+        # Use provided linux_username if available, otherwise generate from domain
+        linux_username = data.get('linux_username')
+        if not linux_username:
+            linux_username = linux_user_service.generate_username_from_domain(domain)
+        else:
+            # Validate provided username (basic alphanumeric check, adjust as needed)
+            if not re.match(r'^[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?$', linux_username):
+                return jsonify({
+                    'success': False,
+                    'error': 'รูปแบบชื่อผู้ใช้ Linux ไม่ถูกต้อง ต้องเป็นตัวอักษรพิมพ์เล็ก ตัวเลข หรือขีดกลางเท่านั้น',
+                    'error_code': 'INVALID_LINUX_USERNAME_FORMAT'
+                }), 400
+            # Also check if the provided username already exists as a system user
+            if linux_user_service.user_exists(linux_username):
+                # Allow if it's the current user's username (for multi-domain hosting)
+                if linux_username != current_user.username:
+                    return jsonify({
+                        'success': False,
+                        'error': f'ชื่อผู้ใช้ Linux "{linux_username}" มีอยู่ในระบบแล้ว กรุณาเลือกชื่ออื่น',
+                        'error_code': 'LINUX_USERNAME_EXISTS'
+                    }), 409
+
         # Check if username already exists in database (but allow multiple virtual hosts per user)
         existing_user_hosts = VirtualHost.query.filter_by(linux_username=linux_username).all()
         if existing_user_hosts:
@@ -616,7 +721,7 @@ def create_virtual_host(current_user):
         
         # ขั้นตอนที่ 1: สร้าง Linux user + home directory
         print("Step 1: Creating Linux user + home directory...")
-        success, message, password = linux_user_service.create_user(linux_username, domain, user_password)
+        success, message, password = linux_user_service.create_user(linux_username, domain, user_password, skip_public_html_creation=True)
         if not success:
             raise Exception(f'Failed to create Linux user: {message}')
         
@@ -632,11 +737,32 @@ def create_virtual_host(current_user):
         # Ensure document root exists for this domain and owned by the new user
         try:
             os.makedirs(doc_root, exist_ok=True)
-            os.chmod(doc_root, 0o755)
             if not linux_user_service.is_development:
                 import pwd
+                import grp
+                import subprocess
                 user_info = pwd.getpwnam(linux_username)
-                os.chown(doc_root, user_info.pw_uid, user_info.pw_gid)
+                www_data_info = grp.getgrnam('www-data')
+                
+                # ตรวจสอบและแก้ไขสิทธิ์ home directory ให้แน่ใจ
+                home_dir = f'/home/{linux_username}'
+                try:
+                    subprocess.run(['chmod', '711', home_dir], check=True)
+                    print(f"Ensured home directory permissions: {home_dir} -> 711")
+                except Exception as e:
+                    print(f"Warning: Could not ensure home directory permissions: {e}")
+                
+                # ตั้งสิทธิ์โฟลเดอร์ domain ให้ www-data เข้าได้ (711)
+                domain_dir = os.path.dirname(doc_root)
+                if domain_dir != home_dir:
+                    os.chown(domain_dir, user_info.pw_uid, user_info.pw_gid)
+                    os.chmod(domain_dir, 0o711)
+                    print(f"Set domain directory permissions: {domain_dir} -> 711")
+                
+                # ตั้งสิทธิ์ public_html ให้ www-data อ่าน+เข้าได้ (755)
+                os.chown(doc_root, user_info.pw_uid, www_data_info.gr_gid)
+                os.chmod(doc_root, 0o755)
+                print(f"Set public_html permissions: {doc_root} -> 755")
             print(f"✓ Document root prepared at {doc_root}")
         except Exception as e:
             print(f"Warning: Could not prepare document root {doc_root}: {e}")
@@ -798,6 +924,9 @@ def create_virtual_host(current_user):
             _auto_fix_virtual_host(virtual_host)
         except Exception as e:
             print(f"Warning: Auto-fix failed: {e}")
+        
+        # ตั้งสิทธิ์ไฟล์ใน public_html ให้ถูกต้อง
+        _set_public_html_permissions(doc_root, linux_username)
         
         # Prepare success message
         services_count = len(response_data['services_created'])
@@ -1101,7 +1230,12 @@ def delete_virtual_host(current_user, id):
             domain_prefix = domain.replace('.', '_').replace('-', '_')
             
             # Check Database model for databases owned by the user
-            user_databases = Database.query.filter_by(owner_id=virtual_host.user_id).all()
+            # Note: Database model may not exist, skip if not available
+            try:
+                from models.database import Database
+                user_databases = Database.query.filter_by(owner_id=virtual_host.user_id).all()
+            except ImportError:
+                user_databases = []
             deleted_db_count = 0
             
             for database in user_databases:
@@ -1252,6 +1386,92 @@ def admin_transfer_virtual_host(current_user, id):
             'error': str(e)
         }), 500
 
+@virtual_host_bp.route('/api/virtual-hosts/<int:id>/fix-permissions', methods=['POST'])
+@token_required
+@check_virtual_host_permission('update')
+def fix_virtual_host_permissions(current_user, id):
+    """แก้ไขสิทธิ์ของ virtual host ที่มีอยู่แล้ว"""
+    try:
+        virtual_host = VirtualHost.query.get(id)
+        if not virtual_host:
+            return jsonify({
+                'success': False,
+                'error': 'Virtual host not found'
+            }), 404
+        
+        # Permission check
+        if not can_access_virtual_host(current_user, virtual_host):
+            return jsonify({
+                'success': False,
+                'error': 'Access denied. You can only fix permissions for your own virtual hosts.'
+            }), 403
+        
+        # Fix permissions
+        success = _fix_existing_virtual_host_permissions(virtual_host)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Permissions fixed successfully for {virtual_host.domain}'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to fix permissions. Check server logs for details.'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@virtual_host_bp.route('/api/virtual-hosts/fix-all-permissions', methods=['POST'])
+@token_required
+def fix_all_virtual_hosts_permissions(current_user):
+    """แก้ไขสิทธิ์ของ virtual hosts ทั้งหมด"""
+    try:
+        # Admin/root can fix all virtual hosts
+        if current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root':
+            virtual_hosts = VirtualHost.query.all()
+        else:
+            # Regular users can only fix their own virtual hosts
+            virtual_hosts = VirtualHost.query.filter(
+                (VirtualHost.linux_username == current_user.username) | 
+                (VirtualHost.user_id == current_user.id)
+            ).all()
+        
+        fixed_count = 0
+        failed_count = 0
+        results = []
+        
+        for virtual_host in virtual_hosts:
+            try:
+                success = _fix_existing_virtual_host_permissions(virtual_host)
+                if success:
+                    fixed_count += 1
+                    results.append(f"✅ {virtual_host.domain} - Fixed")
+                else:
+                    failed_count += 1
+                    results.append(f"❌ {virtual_host.domain} - Failed")
+            except Exception as e:
+                failed_count += 1
+                results.append(f"❌ {virtual_host.domain} - Error: {str(e)}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Fixed {fixed_count} virtual hosts, {failed_count} failed',
+            'results': results,
+            'fixed_count': fixed_count,
+            'failed_count': failed_count
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @virtual_host_bp.route('/api/admin/cleanup-duplicate-services/<domain>', methods=['DELETE'])
 @token_required
 def cleanup_duplicate_services(current_user, domain):
@@ -1361,13 +1581,21 @@ def create_virtual_host_for_existing_user(current_user):
         
         # Sanitize domain name and username
         domain = str(data['domain']).strip().lower()
-        linux_username = str(data['linux_username']).strip()
+        linux_username = str(data['linux_username']).strip().lower()
         data['domain'] = domain
         data['linux_username'] = linux_username
         
         # Determine document root (unique per domain label under user's home with public_html)
         domain_part = re.sub(r'[^a-zA-Z0-9]', '', domain.split('.')[0])
         doc_root = f"/home/{linux_username}/{domain_part}/public_html"
+
+        # Validate provided username (basic alphanumeric check, adjust as needed)
+        if not re.match(r'^[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?$', linux_username):
+            return jsonify({
+                'success': False,
+                'error': 'รูปแบบชื่อผู้ใช้ Linux ไม่ถูกต้อง ต้องเป็นตัวอักษรพิมพ์เล็ก ตัวเลข หรือขีดกลางเท่านั้น',
+                'error_code': 'INVALID_LINUX_USERNAME_FORMAT'
+            }), 400
 
         # Validate domain format
         domain_pattern = r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
@@ -1430,11 +1658,23 @@ def create_virtual_host_for_existing_user(current_user):
         # Ensure document root exists with correct ownership
         try:
             os.makedirs(doc_root, exist_ok=True)
-            os.chmod(doc_root, 0o755)
             if not linux_user_service.is_development:
                 import pwd
+                import grp
                 user_info = pwd.getpwnam(linux_username)
-                os.chown(doc_root, user_info.pw_uid, user_info.pw_gid)
+                www_data_info = grp.getgrnam('www-data')
+                
+                # ตั้งสิทธิ์โฟลเดอร์ domain ให้ www-data เข้าได้ (711)
+                domain_dir = os.path.dirname(doc_root)
+                if domain_dir != f'/home/{linux_username}':
+                    os.chown(domain_dir, user_info.pw_uid, user_info.pw_gid)
+                    os.chmod(domain_dir, 0o711)
+                    print(f"Set domain directory permissions: {domain_dir} -> 711")
+                
+                # ตั้งสิทธิ์ public_html ให้ www-data อ่าน+เข้าได้ (755)
+                os.chown(doc_root, user_info.pw_uid, www_data_info.gr_gid)
+                os.chmod(doc_root, 0o755)
+                print(f"Set public_html permissions: {doc_root} -> 755")
             print(f"✓ Document root prepared at {doc_root}")
         except Exception as e:
             print(f"Warning: Could not prepare document root {doc_root}: {e}")
@@ -1589,6 +1829,9 @@ def create_virtual_host_for_existing_user(current_user):
             _auto_fix_virtual_host(virtual_host)
         except Exception as e:
             print(f"Warning: Auto-fix failed: {e}")
+        
+        # ตั้งสิทธิ์ไฟล์ใน public_html ให้ถูกต้อง
+        _set_public_html_permissions(doc_root, linux_username)
         
         # Prepare success message
         services_count = len(response_data['services_created'])

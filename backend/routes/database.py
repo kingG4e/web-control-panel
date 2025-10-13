@@ -99,10 +99,19 @@ def sync_databases(current_user):
                     except Exception:
                         size_mb = None
 
-                    # For imported DBs, assign ownership to the syncing admin
+                    # Attempt to infer owner from database name
+                    inferred_owner_id = current_user.id
+                    if db_name.startswith('db_'):
+                        potential_username = db_name[len('db_'):]
+                        # Check if potential_username exists as an application user
+                        matching_user = User.query.filter_by(username=potential_username).first()
+                        if matching_user:
+                            inferred_owner_id = matching_user.id
+
+                    # For imported DBs, assign inferred ownership
                     new_db_record = Database(
                         name=db_name,
-                        owner_id=current_user.id,
+                        owner_id=inferred_owner_id,
                         status='active',
                         size=size_mb
                     )
@@ -286,7 +295,51 @@ def create_database(current_user):
         
         db.session.add(database)
         db.session.commit()
-        
+
+        # Optional: Create database user and grant privileges if username and password are provided
+        if data.get('username') and data.get('password'):
+            db_username = data['username']
+            db_password = data['password']
+            db_host = data.get('host', '%')
+            db_privileges = data.get('privileges', 'ALL PRIVILEGES')
+
+            try:
+                # Ensure MySQL user exists or create it
+                mysql_service.ensure_user_exists(db_username, db_password, host=db_host)
+                # Grant privileges for the newly created database
+                mysql_service.grant_privileges(db_username, database.name, privileges=db_privileges, host=db_host)
+
+                # Save database user to app DB and associate with database
+                from models.database import DatabaseUser
+                from werkzeug.security import generate_password_hash
+                
+                hashed_password = generate_password_hash(db_password)
+                db_user_record = DatabaseUser.query.filter_by(username=db_username, host=db_host).first()
+                
+                if not db_user_record:
+                    db_user_record = DatabaseUser(
+                        username=db_username,
+                        password=hashed_password,
+                        host=db_host,
+                        privileges=db_privileges
+                    )
+                    db.session.add(db_user_record)
+                    db.session.flush() # Flush to get an ID for association
+                else:
+                    # Update existing user's password if it changed (and is not a system user)
+                    if not db_user_record.is_system_user and db_user_record.password != hashed_password:
+                        db_user_record.password = hashed_password
+                    
+                # Associate user with the database (using modern schema with association table)
+                if db_user_record not in database.users:
+                    database.users.append(db_user_record)
+                
+                db.session.commit() # Commit association and potential user updates
+                
+            except Exception as user_creation_error:
+                # Log the error but don't fail the database creation if user creation fails
+                print(f"Warning: Failed to create or grant privileges to database user '{db_username}': {user_creation_error}")
+
         return jsonify({
             'success': True,
             'data': database.to_dict(include_relations=False)
@@ -485,10 +538,11 @@ def create_database_user(current_user, id):
 
         # Check if user already exists in our panel's database
         user = DatabaseUser.query.filter_by(username=data['username']).first()
+        user_exists = user is not None
 
         if not user:
             # If user does not exist, create them in MySQL and in our panel's DB
-            mysql_service.create_user(
+            mysql_service.ensure_user_exists(
                 data['username'],
                 data['password'],
                 host=data.get('host', '%')
@@ -548,12 +602,21 @@ def create_database_user(current_user, id):
                     )
         
         # Grant privileges for the specific database in MySQL
-        mysql_service.grant_privileges(
-            data['username'],
-            database.name,
-            privileges=data.get('privileges', 'ALL PRIVILEGES'),
-            host=data.get('host', '%')
-        )
+        try:
+            mysql_service.grant_privileges(
+                data['username'],
+                database.name,
+                privileges=data.get('privileges', 'ALL PRIVILEGES'),
+                host=data.get('host', '%')
+            )
+        except Exception as grant_error:
+            # If granting privileges fails, clean up the created user and re-raise
+            if not user_exists:
+                try:
+                    mysql_service.delete_user(data['username'], data.get('host', '%'))
+                except:
+                    pass  # Ignore cleanup errors
+            raise Exception(f'Failed to grant privileges to user: {str(grant_error)}')
         
         # Associate user with the database
         if assoc_exists:
@@ -657,17 +720,48 @@ def mysql_root_connect(current_user):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-@database_bp.route('/api/databases/<int:db_id>/users/<int:user_id>', methods=['POST'])
+@database_bp.route('/api/databases/<int:db_id>/users/<string:username>', methods=['POST'])
 @token_required
-def associate_database_user(current_user, db_id, user_id):
+def associate_database_user(current_user, db_id, username):
     """Associate an existing user with a database."""
     database = Database.query.get_or_404(db_id)
     
     # Ownership/Admin check
     if not _is_admin(current_user) and database.owner_id != current_user.id:
         return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
+    # Parse username and host from the string (format: "username@host")
+    if '@' in username:
+        user_username, host = username.split('@', 1)
+    else:
+        user_username = username
+        host = '%'
         
-    user = DatabaseUser.query.get_or_404(user_id)
+    user = DatabaseUser.query.filter_by(username=user_username, host=host).first()
+    if not user:
+        # Check if user exists in MySQL but not in application database
+        try:
+            # Verify user exists in MySQL
+            mysql_users = mysql_service.list_users()
+            mysql_user = next((u for u in mysql_users if u['username'] == user_username and u['host'] == host), None)
+            
+            if not mysql_user:
+                return jsonify({'success': False, 'error': f'User {username} not found in MySQL'}), 404
+            
+            # Create DatabaseUser record in application database
+            from werkzeug.security import generate_password_hash
+            user = DatabaseUser(
+                username=user_username,
+                password=generate_password_hash('temp_password'),  # Temporary password, will be updated when user logs in
+                host=host,
+                privileges='ALL PRIVILEGES'
+            )
+            db.session.add(user)
+            db.session.flush()  # Get the ID
+            print(f"Created DatabaseUser record for {username} in application database")
+            
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Failed to create user record: {str(e)}'}), 500
     
     # Check if association already exists
     if user in database.users:
@@ -675,12 +769,14 @@ def associate_database_user(current_user, db_id, user_id):
         
     try:
         # Grant privileges for the specific database in MySQL
+        print(f"Granting privileges: user={user.username}, host={user.host}, database={database.name}, privileges={user.privileges}")
         mysql_service.grant_privileges(
             user.username,
             database.name,
             privileges=user.privileges, # Use user's default privileges
             host=user.host
         )
+        print(f"Successfully granted privileges to {user.username}@{user.host} for database {database.name}")
         
         # Create the association in our database
         database.users.append(user)
@@ -688,74 +784,225 @@ def associate_database_user(current_user, db_id, user_id):
         
         return jsonify({
             'success': True,
-            'message': f'Successfully associated user {user.username} with database {database.name}'
+            'message': f'Successfully associated user {user.username} with database {database.name} and granted privileges'
         }), 200
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        print(f"Error granting privileges to {user.username}@{user.host} for database {database.name}: {str(e)}")
+        return jsonify({'success': False, 'error': f'Failed to grant privileges: {str(e)}'}), 500
 
 @database_bp.route('/api/database-users', methods=['GET'])
 @token_required
 def get_all_database_users(current_user):
+    """Get database users from MySQL server"""
     try:
-        # Admins: return all database users
-        if _is_admin(current_user):
-            users = DatabaseUser.query.order_by(DatabaseUser.username).all()
-            return jsonify({
-                'success': True,
-                'data': [user.to_dict(include_relations=False) for user in users]
-            })
-
-        # Non-admins: return users associated with databases they own
-        owned_dbs = Database.query.filter_by(owner_id=current_user.id).all()
-        owned_db_ids = [d.id for d in owned_dbs]
-
-        # Detect schema variant
-        assoc_exists = True
-        try:
-            db.session.execute(text('SELECT 1 FROM database_user_association LIMIT 1'))
-        except Exception:
-            assoc_exists = False
-
-        has_legacy_fk = False
-        try:
-            col_info = db.session.execute(text("PRAGMA table_info('database_user')")).fetchall()
-            has_legacy_fk = any(str(row[1]) == 'database_id' for row in col_info)
-        except Exception:
-            has_legacy_fk = False
-
-        user_set = {}
-        if assoc_exists:
-            for d in owned_dbs:
-                for u in d.users:
-                    user_set[u.id] = u
-        elif has_legacy_fk and owned_db_ids:
-            rows = db.session.execute(
-                text("SELECT id, username, host, privileges, status, created_at, updated_at FROM database_user WHERE database_id IN (:ids)").bindparams(ids=tuple(owned_db_ids))
-            )
-            # For SQLite, IN with tuple binding via bindparams may not work; fallback to OR join when needed
-            fetched = []
-            try:
-                fetched = rows.fetchall()
-            except Exception:
-                # Fallback simple approach per id
-                for dbid in owned_db_ids:
-                    part = db.session.execute(
-                        text("SELECT id, username, host, privileges, status, created_at, updated_at FROM database_user WHERE database_id = :id"),
-                        {'id': dbid}
-                    ).fetchall()
-                    fetched.extend(part)
-            for r in fetched:
-                # Create lightweight objects, but better to re-query via ORM by id to keep to_dict consistent
-                u = DatabaseUser.query.get(r[0])
-                if u:
-                    user_set[u.id] = u
-
-        users = sorted(user_set.values(), key=lambda u: u.username.lower())
+        # Get users directly from MySQL server
+        users = mysql_service.list_users()
+        
+        # Add created_at field for compatibility with frontend
+        for user in users:
+            if 'password_last_changed' in user and user['password_last_changed']:
+                user['created_at'] = user['password_last_changed'].isoformat() if hasattr(user['password_last_changed'], 'isoformat') else str(user['password_last_changed'])
+            else:
+                user['created_at'] = datetime.utcnow().isoformat()
+            
+            # Add id field for compatibility
+            user['id'] = f"{user['username']}@{user['host']}"
+        
         return jsonify({
             'success': True,
-            'data': [u.to_dict(include_relations=False) for u in users]
+            'data': users
         })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/database-users', methods=['POST'])
+@token_required
+def create_mysql_database_user(current_user):
+    """Create a new database user on MySQL server"""
+    if not _is_admin(current_user):
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+    
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['username', 'password']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        username = data['username']
+        password = data['password']
+        host = data.get('host', '%')
+        
+        # Create user on MySQL server
+        mysql_service.create_user(username, password, host)
+        
+        # Get user privileges if specified
+        if 'privileges' in data and 'database' in data:
+            mysql_service.grant_privileges(username, data['database'], data['privileges'], host)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Database user {username}@{host} created successfully'
+        }), 201
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/list-mysql-databases', methods=['GET'])
+def list_mysql_databases():
+    """List all databases in MySQL for debugging"""
+    try:
+        databases = mysql_service.list_databases()
+        return jsonify({
+            'success': True,
+            'data': databases
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/test-grant-privileges', methods=['POST'])
+def test_grant_privileges():
+    """Test grant privileges for debugging"""
+    try:
+        data = request.get_json()
+        username = data.get('username', 'test3')
+        database = data.get('database', 'db_test4')
+        host = data.get('host', '%')
+        
+        print(f"Testing grant privileges: {username}@{host} on {database}")
+        mysql_service.grant_privileges(username, database, 'ALL PRIVILEGES', host)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully granted privileges to {username}@{host} on {database}'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/check-user-privileges/<string:username>', methods=['GET'])
+def check_user_privileges(username):
+    """Check user privileges in MySQL for debugging"""
+    
+    try:
+        # Parse username and host
+        if '@' in username:
+            user_username, host = username.split('@', 1)
+        else:
+            user_username = username
+            host = '%'
+        
+        # Get user privileges from MySQL
+        import mysql.connector
+        conn = mysql.connector.connect(**mysql_service.config)
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT User, Host FROM mysql.user WHERE User = %s AND Host = %s", (user_username, host))
+        user_exists = cursor.fetchone()
+        
+        if not user_exists:
+            cursor.close()
+            conn.close()
+            return jsonify({
+                'success': False,
+                'error': f'User {username} does not exist in MySQL'
+            })
+        
+        # Get privileges for all databases
+        cursor.execute("SHOW GRANTS FOR %s@%s", (user_username, host))
+        grants = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'username': user_username,
+                'host': host,
+                'grants': [grant[0] for grant in grants]
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/database-users/<string:user_id>', methods=['PUT'])
+@token_required
+def update_mysql_database_user(current_user, user_id):
+    """Update a database user on MySQL server"""
+    if not _is_admin(current_user):
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+    
+    try:
+        data = request.get_json()
+        
+        # Parse user_id (format: username@host)
+        if '@' not in user_id:
+            return jsonify({'error': 'Invalid user ID format'}), 400
+        
+        username, host = user_id.split('@', 1)
+        
+        # Update password if provided
+        if 'password' in data and data['password']:
+            mysql_service.alter_user_password(username, data['password'], host)
+        
+        # Update host if provided
+        if 'host' in data and data['host'] != host:
+            mysql_service.rename_user_host(username, host, data['host'])
+            host = data['host']
+        
+        return jsonify({
+            'success': True,
+            'message': f'Database user {username}@{host} updated successfully'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/database-users/<string:user_id>', methods=['DELETE'])
+@token_required
+def delete_mysql_database_user(current_user, user_id):
+    """Delete a database user from MySQL server"""
+    if not _is_admin(current_user):
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+    
+    try:
+        # Parse user_id (format: username@host)
+        if '@' not in user_id:
+            return jsonify({'error': 'Invalid user ID format'}), 400
+        
+        username, host = user_id.split('@', 1)
+        
+        # Delete user from MySQL server
+        mysql_service.delete_user(username, host)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Database user {username}@{host} deleted successfully'
+        }), 200
+        
     except Exception as e:
         return jsonify({
             'success': False,
@@ -904,6 +1151,50 @@ def get_phpmyadmin_status(current_user):
                 'message': 'phpMyAdmin is available' if is_installed else 'phpMyAdmin is not installed'
             }
         })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/mysql/check-privileges', methods=['GET'])
+@token_required
+@admin_required
+def check_mysql_privileges(current_user):
+    """Check MySQL root user privileges"""
+    try:
+        privileges_info = mysql_service.check_root_privileges()
+        
+        return jsonify({
+            'success': True,
+            'data': privileges_info
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@database_bp.route('/api/mysql/fix-privileges', methods=['POST'])
+@token_required
+@admin_required
+def fix_mysql_privileges(current_user):
+    """Attempt to fix MySQL root user privileges"""
+    try:
+        result = mysql_service.fix_root_privileges()
+        
+        if result:
+            return jsonify({
+                'success': True,
+                'message': 'MySQL root privileges have been updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to update MySQL root privileges'
+            }), 500
         
     except Exception as e:
         return jsonify({

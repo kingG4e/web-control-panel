@@ -75,6 +75,7 @@ const Database = () => {
     username: '',
     password: '',
     domain: '',
+    owner_id: '', // For admin to specify database owner
     // Connection settings
     host: 'localhost',
     port: '3306',
@@ -100,15 +101,21 @@ const Database = () => {
   const [mysqlError, setMysqlError] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [dbToDelete, setDbToDelete] = useState(null); // For delete confirmation
+  const [mysqlPrivileges, setMysqlPrivileges] = useState(null); // MySQL privileges info
+  const [checkingPrivileges, setCheckingPrivileges] = useState(false);
+  const [fixingPrivileges, setFixingPrivileges] = useState(false);
 
   const [allDbUsers, setAllDbUsers] = useState([]);
   const [userSelectionMode, setUserSelectionMode] = useState('create'); // 'create' or 'existing'
   const [selectedDbUserId, setSelectedDbUserId] = useState('');
-  const [manageUsersOpen, setManageUsersOpen] = useState(false);
-  const [manageUsersDb, setManageUsersDb] = useState(null);
-  const [manageUsers, setManageUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]); // For admin to select database owner
+  const [manageUsersOpen, setManageUsersOpen] = useState(false); // For database users management modal
   const [editingUser, setEditingUser] = useState(null);
   const [editingUserForm, setEditingUserForm] = useState({ password: '', host: '%' });
+  const [showEditUserModal, setShowEditUserModal] = useState(false);
+  const [showDeleteUserModal, setShowDeleteUserModal] = useState(false);
+  const [userToEdit, setUserToEdit] = useState(null);
+  const [userToDelete, setUserToDelete] = useState(null);
 
   // Debounced search function
   const debouncedSearch = useCallback(
@@ -156,9 +163,9 @@ const Database = () => {
     }
   }, [user]);
 
-  // Fetch DB users when the form is opened (admins get all; non-admins get users of owned databases)
+  // Fetch DB users when the form is opened (admins only)
   useEffect(() => {
-    if (showForm) {
+    if (showForm && user?.role === 'admin') {
       const fetchUsers = async () => {
         try {
           const res = await dbApi.getAllUsers();
@@ -174,7 +181,50 @@ const Database = () => {
       };
       fetchUsers();
     }
-  }, [showForm]);
+  }, [showForm, user]);
+
+  // Fetch all users for admin to select database owner
+  useEffect(() => {
+    if (showForm && user?.role === 'admin') {
+      const fetchAllUsers = async () => {
+        try {
+          const res = await api.get('/users');
+          if (res.data && Array.isArray(res.data)) {
+            setAllUsers(res.data);
+          }
+        } catch (err) {
+          console.error("Failed to fetch users:", err);
+        }
+      };
+      fetchAllUsers();
+    }
+  }, [showForm, user]);
+
+  // Fetch database users on page load (admins only)
+  useEffect(() => {
+    if (user?.role === 'admin') {
+      const fetchDbUsers = async () => {
+        try {
+          const res = await dbApi.getAllUsers();
+          if (res.success && Array.isArray(res.data)) {
+            setAllDbUsers(res.data);
+          } else if (Array.isArray(res)) {
+            setAllDbUsers(res);
+          }
+        } catch (err) {
+          console.error("Failed to fetch database users:", err);
+        }
+      };
+      fetchDbUsers();
+    }
+  }, [user]);
+
+  // Set form data when edit modal opens
+  useEffect(() => {
+    if (showEditUserModal && userToEdit) {
+      setEditingUserForm({ password: '', host: userToEdit.host || '%' });
+    }
+  }, [showEditUserModal, userToEdit]);
 
 
   const fetchUserData = async () => {
@@ -243,7 +293,7 @@ const Database = () => {
           name: formData.name,
           charset: formData.charset,
           collation: formData.collation,
-          owner_id: user.id,
+          owner_id: formData.owner_id || user.id, // Use specified owner_id or current user
           associated_domain: formData.domain || null,
         };
         const newDbResponse = await dbApi.createDatabase(dbData);
@@ -257,9 +307,11 @@ const Database = () => {
             const createUserRes = await dbApi.createUser(newDb.id, {
               username: formData.username,
               password: formData.password,
+              host: '%',
             });
             if (!createUserRes?.success) {
-              throw new Error(createUserRes?.error || 'Failed to create database user');
+              const errorMsg = createUserRes?.error || 'Failed to create database user';
+              throw new Error(errorMsg);
             }
           } else if (userSelectionMode === 'existing' && selectedDbUserId) {
             // Associate an existing user
@@ -285,6 +337,7 @@ const Database = () => {
         username: '',
         password: '',
         domain: '',
+        owner_id: '',
         host: 'localhost',
         port: '3306',
         use_ssl: true,
@@ -303,7 +356,8 @@ const Database = () => {
       fetchUserData();
     } catch (err) {
       console.error('Failed to save database:', err);
-      setError(err.message || err.response?.data?.error || 'Failed to save database');
+      const errorMessage = err.message || err.response?.data?.error || 'Failed to save database';
+      setError(errorMessage);
     }
   };
 
@@ -389,20 +443,49 @@ const Database = () => {
   };
 
   // ฟังก์ชันสำหรับเปิด phpMyAdmin
-  const handleViewPhpMyAdmin = async (database) => {
+  const handleViewPhpMyAdmin = (database) => {
+    // Get default IP from environment or use localhost as fallback
+    const defaultIP = process.env.REACT_APP_DEFAULT_IP || 'localhost';
+    const phpmyadminUrl = `http://${defaultIP}/phpmyadmin`;
+    
+    // เปิด phpMyAdmin ในแท็บใหม่
+    window.open(phpmyadminUrl, '_blank');
+  };
+
+  // ฟังก์ชันสำหรับตรวจสอบ MySQL privileges
+  const handleCheckMysqlPrivileges = async () => {
+    setCheckingPrivileges(true);
     try {
-      const res = await api.get(`/databases/${database.id}/phpmyadmin`);
-      const data = res.data;
-      
-      if (data.success) {
-        // เปิด phpMyAdmin ในแท็บใหม่
-        window.open(data.data.url, '_blank');
+      const result = await dbApi.checkMysqlPrivileges();
+      if (result.success) {
+        setMysqlPrivileges(result.data);
       } else {
-        setError(data.error || 'Failed to open phpMyAdmin');
+        setError(result.error || 'Failed to check MySQL privileges');
       }
     } catch (err) {
-      setError('Failed to connect to phpMyAdmin');
-      console.error('phpMyAdmin error:', err);
+      setError(err.message || 'Failed to check MySQL privileges');
+    } finally {
+      setCheckingPrivileges(false);
+    }
+  };
+
+  // ฟังก์ชันสำหรับแก้ไข MySQL privileges
+  const handleFixMysqlPrivileges = async () => {
+    setFixingPrivileges(true);
+    try {
+      const result = await dbApi.fixMysqlPrivileges();
+      if (result.success) {
+        setError(null);
+        alert('MySQL privileges have been fixed successfully!');
+        // Refresh privileges info
+        handleCheckMysqlPrivileges();
+      } else {
+        setError(result.error || 'Failed to fix MySQL privileges');
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to fix MySQL privileges');
+    } finally {
+      setFixingPrivileges(false);
     }
   };
 
@@ -425,73 +508,9 @@ const Database = () => {
     }
   };
 
-  // Manage Users Modal helpers
-  const openManageUsers = async (db) => {
-    try {
-      setManageUsersDb(db);
-      setManageUsersOpen(true);
-      const res = await dbApi.getUsers(db.id);
-      if (res.success && Array.isArray(res.data)) {
-        setManageUsers(res.data);
-      } else if (Array.isArray(res)) {
-        setManageUsers(res);
-      }
-    } catch (e) {
-      console.error('Failed to fetch database users for db', db.id, e);
-      setError('Failed to load database users');
-    }
-  };
 
-  const closeManageUsers = () => {
-    setManageUsersOpen(false);
-    setManageUsersDb(null);
-    setManageUsers([]);
-    setEditingUser(null);
-    setEditingUserForm({ password: '', host: '%' });
-  };
 
-  const startEditUser = (u) => {
-    setEditingUser(u);
-    setEditingUserForm({ password: '', host: u.host || '%' });
-  };
 
-  const saveEditUser = async () => {
-    if (!manageUsersDb || !editingUser) return;
-    try {
-      const payload = {};
-      if (editingUserForm.password) payload.password = editingUserForm.password;
-      if (editingUserForm.host && editingUserForm.host !== editingUser.host) payload.host = editingUserForm.host;
-      if (Object.keys(payload).length === 0) {
-        setEditingUser(null);
-        return;
-      }
-      const res = await dbApi.updateUser(manageUsersDb.id, editingUser.id, payload);
-      if (!res?.success) throw new Error(res?.error || 'Update failed');
-      // refresh list
-      const list = await dbApi.getUsers(manageUsersDb.id);
-      const newList = list?.data || list;
-      if (Array.isArray(newList)) setManageUsers(newList);
-      setEditingUser(null);
-      setEditingUserForm({ password: '', host: '%' });
-    } catch (e) {
-      console.error('Failed to update user', e);
-      setError(e.message || 'Failed to update user');
-    }
-  };
-
-  const revokeUser = async (u) => {
-    if (!manageUsersDb) return;
-    try {
-      const res = await dbApi.deleteUser(manageUsersDb.id, u.id);
-      if (!res?.success) throw new Error(res?.error || 'Revoke failed');
-      const list = await dbApi.getUsers(manageUsersDb.id);
-      const newList = list?.data || list;
-      if (Array.isArray(newList)) setManageUsers(newList);
-    } catch (e) {
-      console.error('Failed to revoke user', e);
-      setError(e.message || 'Failed to revoke user');
-    }
-  };
 
   const DatabaseActions = () => (
     <div className="flex items-center space-x-2">
@@ -565,13 +584,41 @@ const Database = () => {
               Sync with Server
             </Button>
           )}
-          <button
-            onClick={() => setShowForm(true)}
-            className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
-          >
-            <PlusIcon className="w-4 h-4 mr-2" />
-            Create Database
-          </button>
+          {user?.role === 'admin' && (
+            <button
+              onClick={() => {
+                setFormData({
+                  name: '',
+                  type: 'mysql',
+                  charset: 'utf8mb4',
+                  collation: 'utf8mb4_unicode_ci',
+                  username: '',
+                  password: '',
+                  domain: '',
+                  owner_id: '',
+                  host: 'localhost',
+                  port: '3306',
+                  use_ssl: true,
+                  ssl_mode: 'REQUIRED',
+                  ssl_ca: '',
+                  ssl_cert: '',
+                  ssl_key: '',
+                  ssl_verify_cert: true,
+                  connection_timeout: 30,
+                  max_connections: 10,
+                  auth_plugin: 'mysql_native_password',
+                  use_compression: true,
+                  use_persistent_connections: true,
+                  auto_reconnect: true,
+                });
+                setShowForm(true);
+              }}
+              className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
+            >
+              <PlusIcon className="w-4 h-4 mr-2" />
+              Create Database
+            </button>
+          )}
         </div>
       }
     >
@@ -608,6 +655,83 @@ const Database = () => {
             </div>
           </div>
         )}
+
+        {/* MySQL Privileges Check - Admin Only */}
+        {user?.role === 'admin' && (
+          <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg flex flex-col md:flex-row items-start gap-4">
+            <div className="flex-1">
+              <h4 className="text-sm font-medium text-gray-700 mb-2">MySQL Privileges Check</h4>
+              <p className="text-xs text-gray-600 mb-3">
+                Check if MySQL root user has necessary privileges to create and manage database users.
+              </p>
+              
+              <div className="flex gap-2 mb-3">
+                <button
+                  onClick={handleCheckMysqlPrivileges}
+                  disabled={checkingPrivileges}
+                  className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {checkingPrivileges ? 'Checking...' : 'Check Privileges'}
+                </button>
+                
+                {mysqlPrivileges && (
+                  <button
+                    onClick={handleFixMysqlPrivileges}
+                    disabled={fixingPrivileges || (mysqlPrivileges.has_create_user && mysqlPrivileges.has_grant_option)}
+                    className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition-colors disabled:opacity-50"
+                  >
+                    {fixingPrivileges ? 'Fixing...' : 'Fix Privileges'}
+                  </button>
+                )}
+              </div>
+
+              {mysqlPrivileges && (
+                <div className="bg-white border border-gray-200 rounded p-3">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="flex items-center">
+                      <span className="mr-2">CREATE USER:</span>
+                      {mysqlPrivileges.has_create_user ? (
+                        <span className="flex items-center text-green-600">
+                          <CheckCircleIcon className="w-4 h-4 mr-1" />
+                          Available
+                        </span>
+                      ) : (
+                        <span className="flex items-center text-red-600">
+                          <XCircleIcon className="w-4 h-4 mr-1" />
+                          Missing
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center">
+                      <span className="mr-2">GRANT OPTION:</span>
+                      {mysqlPrivileges.has_grant_option ? (
+                        <span className="flex items-center text-green-600">
+                          <CheckCircleIcon className="w-4 h-4 mr-1" />
+                          Available
+                        </span>
+                      ) : (
+                        <span className="flex items-center text-red-600">
+                          <XCircleIcon className="w-4 h-4 mr-1" />
+                          Missing
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {(!mysqlPrivileges.has_create_user || !mysqlPrivileges.has_grant_option) && (
+                    <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                      <p className="text-xs text-yellow-800">
+                        <strong>Note:</strong> Missing privileges may cause database user creation to fail. 
+                        Click "Fix Privileges" to attempt automatic resolution.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Error Display */}
         {error && (
           <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start">
@@ -834,13 +958,6 @@ const Database = () => {
                         >
                           <ServerIcon className="w-5 h-5 text-blue-500" />
                         </button>
-                        <button
-                          onClick={() => openManageUsers(db)}
-                          className="p-1 hover:bg-[var(--hover-bg)] rounded transition-colors"
-                          title="Manage Users"
-                        >
-                          <UserIcon className="w-5 h-5 text-[var(--text-secondary)]" />
-                        </button>
                         {canEditDatabase(db) ? (
                           <button 
                             onClick={() => handleEdit(db)}
@@ -884,109 +1001,466 @@ const Database = () => {
           </div>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Database Status */}
-          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6">
+        {/* Database User Management - Admin Only */}
+        {user?.role === 'admin' && (
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-[var(--primary-text)]">Your Database Status</h3>
+              <h3 className="text-lg font-medium text-[var(--primary-text)]">Database Users Management</h3>
               <Button
-                variant="ghost"
+                variant={manageUsersOpen ? "secondary" : "primary"}
                 size="sm"
-                icon={<ArrowPathIcon className="w-4 h-4" />}
-                onClick={fetchUserData}
+                icon={<UserIcon className="w-4 h-4" />}
+                onClick={() => setManageUsersOpen(!manageUsersOpen)}
               >
-                Refresh
+                {manageUsersOpen ? 'Hide Users' : 'Manage Users'}
               </Button>
             </div>
-            <div className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-[var(--secondary-text)]">Total Databases</span>
-                  <span className="text-[var(--primary-text)] font-medium">
-                    {userDatabases.length}
-                  </span>
+            <div className="text-sm text-[var(--secondary-text)] mb-4">
+              Manage existing database users on the server. You can create, edit, or delete database users.
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-[var(--secondary-bg)] rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-[var(--primary-text)] font-medium">Total Users</h4>
+                    <p className="text-[var(--secondary-text)] text-sm">Database users on server</p>
+                  </div>
+                  <div className="text-2xl font-bold text-[var(--primary)]">
+                    {allDbUsers.length}
+                  </div>
                 </div>
-                <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-[var(--secondary-text)]">Your Domains</span>
-                  <span className="text-[var(--primary-text)] font-medium">
-                    {userDomains.length}
-                  </span>
+              </div>
+              <div className="bg-[var(--secondary-bg)] rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-[var(--primary-text)] font-medium">Active Users</h4>
+                    <p className="text-[var(--secondary-text)] text-sm">Currently active</p>
+                  </div>
+                  <div className="text-2xl font-bold text-green-500">
+                    {allDbUsers.filter(user => user.status === 'active').length}
+                  </div>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-[var(--secondary-text)]">Permission Level</span>
-                  <span className="text-[var(--primary-text)] font-medium">
-                    {user?.role === 'admin' ? 'Administrator' : 'Domain Owner'}
-                  </span>
+              </div>
+              <div className="bg-[var(--secondary-bg)] rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-[var(--primary-text)] font-medium">Inactive Users</h4>
+                    <p className="text-[var(--secondary-text)] text-sm">Disabled users</p>
+                  </div>
+                  <div className="text-2xl font-bold text-red-500">
+                    {allDbUsers.filter(user => user.status !== 'active').length}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
+        )}
 
-          {/* Database Types */}
-          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-[var(--primary-text)]">Database Types</h3>
+        {/* Database Users Management Section - Admin Only */}
+        {user?.role === 'admin' && manageUsersOpen && (
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6 mb-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold text-[var(--primary-text)]">Database Users Management</h3>
+              <div className="flex space-x-3">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<UserIcon className="w-4 h-4" />}
+                  onClick={() => {
+                    setEditingUser({ id: null, username: '', password: '', host: '%' });
+                    setEditingUserForm({ password: '', host: '%' });
+                  }}
+                >
+                  Create User
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<ArrowPathIcon className="w-4 h-4" />}
+                  onClick={async () => {
+                    if (user?.role !== 'admin') return;
+                    try {
+                      const res = await dbApi.getAllUsers();
+                      if (res.success && Array.isArray(res.data)) {
+                        setAllDbUsers(res.data);
+                      } else if (Array.isArray(res)) {
+                        setAllDbUsers(res);
+                      }
+                    } catch (err) {
+                      console.error('Failed to refresh users:', err);
+                      setError(err.message || 'Failed to refresh users');
+                    }
+                  }}
+                >
+                  Refresh
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setManageUsersOpen(false)}
+                >
+                  Close
+                </Button>
+              </div>
             </div>
-            <div className="space-y-3">
-              {userDatabases.length > 0 ? (
-                Object.entries(
-                  userDatabases.reduce((acc, db) => ({
-                    ...acc,
-                    [db.type || 'MySQL']: (acc[db.type || 'MySQL'] || 0) + 1
-                  }), {})
-                ).map(([type, count]) => (
-                  <div key={type} className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--secondary-text)]">{type}</span>
-                    <span className="text-[var(--primary-text)]">{count}</span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-[var(--secondary-text)]">No databases available</div>
-              )}
+            
+            {allDbUsers.length === 0 ? (
+              <div className="text-center py-12">
+                <UserIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                <p className="text-[var(--text-secondary)] text-lg mb-2">No database users found</p>
+                <p className="text-[var(--text-secondary)] text-sm">Create your first database user to get started</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-[var(--border-color)] bg-[var(--secondary-bg)]">
+                      <th className="text-left py-3 px-4 text-sm font-medium text-[var(--text-secondary)]">Username</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-[var(--text-secondary)]">Host</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-[var(--text-secondary)]">Created</th>
+                      <th className="text-right py-3 px-4 text-sm font-medium text-[var(--text-secondary)]">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allDbUsers.map((dbUser) => (
+                      <tr key={dbUser.id} className="border-b border-[var(--border-color)] hover:bg-[var(--secondary-bg)]">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center">
+                            <UserIcon className="w-4 h-4 text-[var(--primary)] mr-2" />
+                            <span className="font-medium text-[var(--primary-text)]">{dbUser.username}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-[var(--text-primary)] font-mono text-sm">{dbUser.host}</td>
+                        <td className="py-3 px-4 text-[var(--text-secondary)] text-sm">
+                          {dbUser.created_at ? new Date(dbUser.created_at).toLocaleDateString() : 'Unknown'}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex justify-end space-x-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              icon={<PencilIcon className="w-4 h-4" />}
+                              onClick={() => {
+                                setUserToEdit(dbUser);
+                                setShowEditUserModal(true);
+                              }}
+                              className="text-blue-600 hover:text-blue-700"
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              icon={<TrashIcon className="w-4 h-4" />}
+                              onClick={() => {
+                                setUserToDelete(dbUser);
+                                setShowDeleteUserModal(true);
+                              }}
+                              className="text-red-600 hover:text-red-700"
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Database User Form Section - Admin Only */}
+        {user?.role === 'admin' && editingUser !== null && (
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6 mb-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold text-[var(--primary-text)]">
+                {editingUser?.id ? 'Edit Database User' : 'Create Database User'}
+              </h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEditingUser(null);
+                  setEditingUserForm({ password: '', host: '%' });
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value={editingUser?.username || ''}
+                  onChange={(e) => setEditingUser({ ...editingUser, username: e.target.value })}
+                  className="input-field"
+                  placeholder="database_user"
+                  disabled={editingUser?.id} // Can't change username for existing users
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={editingUserForm.password}
+                  onChange={(e) => setEditingUserForm({ ...editingUserForm, password: e.target.value })}
+                  className="input-field"
+                  placeholder={editingUser?.id ? 'Leave blank to keep current password' : 'Enter password'}
+                  required={!editingUser?.id}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                  Host
+                </label>
+                <select
+                  value={editingUserForm.host}
+                  onChange={(e) => setEditingUserForm({ ...editingUserForm, host: e.target.value })}
+                  className="input-field"
+                >
+                  <option value="%">Any Host (%)</option>
+                  <option value="localhost">Localhost</option>
+                  <option value="127.0.0.1">127.0.0.1</option>
+                </select>
+              </div>
+            </div>
+            
+            <div className="flex justify-end space-x-3 mt-6">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setEditingUser(null);
+                  setEditingUserForm({ password: '', host: '%' });
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  if (user?.role !== 'admin') return;
+                  try {
+                    if (editingUser?.id) {
+                      // Update existing user
+                      const updateData = {
+                        password: editingUserForm.password,
+                        host: editingUserForm.host
+                      };
+                      await dbApi.updateDbUser(editingUser.id, updateData);
+                    } else {
+                      // Create new user
+                      const createData = {
+                        username: editingUser.username,
+                        password: editingUserForm.password,
+                        host: editingUserForm.host
+                      };
+                      await dbApi.createDbUser(createData);
+                    }
+                    
+                    // Refresh users list
+                    const res = await dbApi.getAllUsers();
+                    if (res.success && Array.isArray(res.data)) {
+                      setAllDbUsers(res.data);
+                    } else if (Array.isArray(res)) {
+                      setAllDbUsers(res);
+                    }
+                    
+                    setEditingUser(null);
+                    setEditingUserForm({ password: '', host: '%' });
+                  } catch (err) {
+                    console.error('Failed to save database user:', err);
+                    setError(err.message || 'Failed to save database user');
+                  }
+                }}
+              >
+                {editingUser?.id ? 'Update User' : 'Create User'}
+              </Button>
             </div>
           </div>
+        )}
 
-          {/* Quick Actions */}
-          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6">
-            <h3 className="text-lg font-medium text-[var(--primary-text)] mb-4">Quick Actions</h3>
-            <div className="grid grid-cols-2 gap-3">
+        {/* Edit User Modal - Admin Only */}
+        {user?.role === 'admin' && (
+          <BaseModal
+            isOpen={showEditUserModal}
+            onClose={() => {
+              setShowEditUserModal(false);
+              setUserToEdit(null);
+              setEditingUserForm({ password: '', host: '%' });
+            }}
+            title="Edit Database User"
+          footer={
+            <div className="flex justify-end space-x-3">
               <Button
                 variant="secondary"
-                size="sm"
-                icon={<CircleStackIcon className="w-4 h-4" />}
-                className="justify-start"
-                disabled={selectedDatabases.length === 0}
+                onClick={() => {
+                  setShowEditUserModal(false);
+                  setUserToEdit(null);
+                  setEditingUserForm({ password: '', host: '%' });
+                }}
               >
-                Backup
+                Cancel
               </Button>
               <Button
-                variant="secondary"
-                size="sm"
-                icon={<DocumentTextIcon className="w-4 h-4" />}
-                className="justify-start"
+                variant="primary"
+                onClick={async () => {
+                  if (user?.role !== 'admin') return;
+                  try {
+                    const updateData = {
+                      password: editingUserForm.password,
+                      host: editingUserForm.host
+                    };
+                    await dbApi.updateDbUser(userToEdit.id, updateData);
+                    
+                    // Refresh users list
+                    const res = await dbApi.getAllUsers();
+                    if (res.success && Array.isArray(res.data)) {
+                      setAllDbUsers(res.data);
+                    } else if (Array.isArray(res)) {
+                      setAllDbUsers(res);
+                    }
+                    
+                    setShowEditUserModal(false);
+                    setUserToEdit(null);
+                    setEditingUserForm({ password: '', host: '%' });
+                  } catch (err) {
+                    console.error('Failed to update user:', err);
+                    setError(err.message || 'Failed to update user');
+                  }
+                }}
               >
-                View Logs
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<CommandLineIcon className="w-4 h-4" />}
-                className="justify-start"
-              >
-                Console
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<Cog6ToothIcon className="w-4 h-4" />}
-                className="justify-start"
-              >
-                Settings
+                Update User
               </Button>
             </div>
+          }
+        >
+          <div className="space-y-4 p-6">
+            <div>
+              <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                Username
+              </label>
+              <input
+                type="text"
+                value={userToEdit?.username || ''}
+                className="input-field"
+                disabled
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                New Password
+              </label>
+              <input
+                type="password"
+                value={editingUserForm.password}
+                onChange={(e) => setEditingUserForm({ ...editingUserForm, password: e.target.value })}
+                className="input-field"
+                placeholder="Leave blank to keep current password"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                Host
+              </label>
+              <select
+                value={editingUserForm.host}
+                onChange={(e) => setEditingUserForm({ ...editingUserForm, host: e.target.value })}
+                className="input-field"
+              >
+                <option value="%">Any Host (%)</option>
+                <option value="localhost">Localhost</option>
+                <option value="127.0.0.1">127.0.0.1</option>
+              </select>
+            </div>
+            </div>
+          </BaseModal>
+        )}
+
+        {/* Delete User Modal - Admin Only */}
+        {user?.role === 'admin' && (
+          <BaseModal
+            isOpen={showDeleteUserModal}
+            onClose={() => {
+              setShowDeleteUserModal(false);
+              setUserToDelete(null);
+            }}
+            title="Delete Database User"
+          footer={
+            <div className="flex justify-end space-x-3">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowDeleteUserModal(false);
+                  setUserToDelete(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={async () => {
+                  if (user?.role !== 'admin') return;
+                  try {
+                    await dbApi.deleteDbUser(userToDelete.id);
+                    
+                    // Refresh users list
+                    const res = await dbApi.getAllUsers();
+                    if (res.success && Array.isArray(res.data)) {
+                      setAllDbUsers(res.data);
+                    } else if (Array.isArray(res)) {
+                      setAllDbUsers(res);
+                    }
+                    
+                    setShowDeleteUserModal(false);
+                    setUserToDelete(null);
+                  } catch (err) {
+                    console.error('Failed to delete user:', err);
+                    setError(err.message || 'Failed to delete user');
+                  }
+                }}
+              >
+                Delete User
+              </Button>
+            </div>
+          }
+        >
+          <div className="p-6">
+            <div className="flex items-center mb-4">
+              <div className="flex-shrink-0">
+                <TrashIcon className="w-8 h-8 text-red-500" />
+              </div>
+              <div className="ml-3">
+                <h3 className="text-lg font-medium text-[var(--primary-text)]">
+                  Delete Database User
+                </h3>
+                <p className="text-sm text-[var(--text-secondary)]">
+                  This action cannot be undone.
+                </p>
+              </div>
+            </div>
+            
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <p className="text-sm text-red-800">
+                Are you sure you want to delete the database user <strong>{userToDelete?.username}</strong>?
+                This will permanently remove the user from the MySQL server.
+              </p>
+            </div>
           </div>
-        </div>
+        </BaseModal>
+        )}
 
         {/* Database Form Modal */}
         <BaseModal
@@ -1032,6 +1506,26 @@ const Database = () => {
                     required
                   />
                 </div>
+                
+                {user?.role === 'admin' && (
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
+                      Database Owner
+                    </label>
+                    <select
+                      value={formData.owner_id}
+                      onChange={(e) => setFormData({ ...formData, owner_id: e.target.value })}
+                      className="input-field"
+                    >
+                      <option value="">-- Select Owner (defaults to current user) --</option>
+                      {allUsers.map(userItem => (
+                        <option key={userItem.id} value={userItem.id}>
+                          {userItem.username} ({userItem.email || 'No email'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 
                 <div>
                   <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
@@ -1467,88 +1961,6 @@ const Database = () => {
           </div>
         </BaseModal>
 
-        {/* Manage Users Modal */}
-        <BaseModal
-          isOpen={manageUsersOpen}
-          onClose={closeManageUsers}
-          title={`Manage Users${manageUsersDb ? ` — ${manageUsersDb.name}` : ''}`}
-          footer={
-            <div className="flex justify-end space-x-3">
-              <Button variant="secondary" onClick={closeManageUsers}>
-                Close
-              </Button>
-              {editingUser && (
-                <Button variant="primary" onClick={saveEditUser}>
-                  Save User
-                </Button>
-              )}
-            </div>
-          }
-        >
-          <div className="p-6 space-y-4">
-            {/* List users */}
-            <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-color)] bg-[var(--secondary-bg)]">
-                    <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Username</th>
-                    <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Host</th>
-                    <th className="px-6 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">Privileges</th>
-                    <th className="px-6 py-3 text-right text-sm font-medium text-[var(--text-secondary)]">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {manageUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan="4" className="text-center py-6 text-[var(--text-secondary)]">No users associated</td>
-                    </tr>
-                  ) : (
-                    manageUsers.map(u => (
-                      <tr key={u.id} className="border-b border-[var(--border-color)]">
-                        <td className="px-6 py-3">{u.username}</td>
-                        <td className="px-6 py-3">{u.host || '%'}</td>
-                        <td className="px-6 py-3">{u.privileges}</td>
-                        <td className="px-6 py-3 text-right space-x-2">
-                          <Button size="sm" variant="secondary" onClick={() => startEditUser(u)}>Edit</Button>
-                          <Button size="sm" variant="danger" onClick={() => revokeUser(u)}>Revoke</Button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Edit user inline form */}
-            {editingUser && (
-              <div className="border border-[var(--border-color)] rounded-lg p-4 space-y-3">
-                <div className="text-sm text-[var(--text-secondary)]">Editing: <span className="font-medium text-[var(--text-primary)]">{editingUser.username}</span></div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">New Password</label>
-                    <input
-                      type="password"
-                      value={editingUserForm.password}
-                      onChange={(e) => setEditingUserForm(v => ({ ...v, password: e.target.value }))}
-                      className="input-field"
-                      placeholder="Leave blank to keep current"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Host</label>
-                    <input
-                      type="text"
-                      value={editingUserForm.host}
-                      onChange={(e) => setEditingUserForm(v => ({ ...v, host: e.target.value }))}
-                      className="input-field"
-                      placeholder="%"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </BaseModal>
       </div>
     </PageLayout>
   );

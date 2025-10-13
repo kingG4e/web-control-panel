@@ -24,28 +24,30 @@ class FileService:
         # ใช้ SUDO_USER ถ้ามี หรือใช้ current user
         sudo_user = os.getenv('SUDO_USER')
         current_user = sudo_user if sudo_user else os.getenv('USER')
-        
+
         # ตรวจสอบ environment variable สำหรับ root directory
         root_dir = os.getenv('FILE_MANAGER_ROOT')
-        
+
+        # หากไม่ได้กำหนด FILE_MANAGER_ROOT ให้เริ่มต้นที่ root ('/')
+        # เพื่อให้โหมด System สามารถท่องทั้งระบบไฟล์ได้ (เหมือน file browser/Virtualmin)
         if not root_dir:
-            # ถ้าไม่มี FILE_MANAGER_ROOT ให้ใช้ home directory ของ user
-            if current_user:
-                root_dir = os.path.expanduser(f'~{current_user}')
-            else:
-                # Fallback to current directory if can't determine user
-                root_dir = os.getcwd()
-        
+            root_dir = '/'
+
         # Normalize path for Linux
         self.root_dir = os.path.normpath(root_dir)
-        
-        # Create root directory if it doesn't exist
+
+        # Create root directory if it doesn't exist, and only chown if it was newly created
+        root_existed_before = os.path.exists(self.root_dir)
         os.makedirs(self.root_dir, exist_ok=True)
-        
-        # Set proper ownership if running as root (Unix only)
-        if UNIX_MODULES_AVAILABLE and pwd and os.geteuid() == 0 and current_user:
-            user_info = pwd.getpwnam(current_user)
-            os.chown(self.root_dir, user_info.pw_uid, user_info.pw_gid)
+
+        # Set proper ownership if running as root (Unix only) and directory was created by us
+        if (not root_existed_before) and UNIX_MODULES_AVAILABLE and pwd and os.geteuid() == 0 and current_user:
+            try:
+                user_info = pwd.getpwnam(current_user)
+                os.chown(self.root_dir, user_info.pw_uid, user_info.pw_gid)
+            except Exception as e:
+                # Best-effort: don't fail initialization if chown isn't permitted
+                print(f"Warning: failed to chown root_dir {self.root_dir}: {e}")
 
     def get_domain_path(self, domain: str, user_id: int) -> str:
         """Get the document root path for a specific domain"""
@@ -190,8 +192,9 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
                 
-            # Use document root as base for domain browsing
-            base_dir = virtual_host.document_root or f"/home/{virtual_host.linux_username}"
+            # The base directory for browsing is the Linux user's home directory.
+            # This allows users to see all their files, not just the web root.
+            base_dir = f"/home/{virtual_host.linux_username}"
             
             # Normalize path and ensure it's within the domain's base directory
             if not path or path == '/':
@@ -292,8 +295,9 @@ class FileService:
             except:
                 pass
 
-        # Sort items: folders first, then files, both alphabetically
-        sorted_items = sorted(items, key=lambda x: (x['type'] != 'folder', x['name'].lower()))
+        # Sort items: folders first, then by the full path.
+        # Using the full path ensures a stable sort order, especially when items are added/removed.
+        sorted_items = sorted(items, key=lambda x: (x['type'] != 'folder', x['path'].lower()))
         return sorted_items
 
     def _get_directory_size(self, path: str) -> int:
@@ -340,7 +344,7 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
                 
-            base_dir = virtual_host.document_root or f"/home/{virtual_host.linux_username}"
+            base_dir = f"/home/{virtual_host.linux_username}"
             path = sanitize_path(path)
             full_path = os.path.join(base_dir, path)
             
@@ -386,7 +390,7 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
                 
-            base_dir = virtual_host.document_root or f"/home/{virtual_host.linux_username}"
+            base_dir = f"/home/{virtual_host.linux_username}"
             path = sanitize_path(path)
             full_path = os.path.join(base_dir, path)
             
@@ -442,7 +446,7 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
                 
-            base_dir = virtual_host.document_root or f"/home/{virtual_host.linux_username}"
+            base_dir = f"/home/{virtual_host.linux_username}"
             return self._upload_file_to_directory(base_dir, path, file, owner_username=virtual_host.linux_username)
             
         except Exception as e:
@@ -1154,14 +1158,14 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
                 
-            home_dir = f"/home/{virtual_host.linux_username}"
+            base_dir = f"/home/{virtual_host.linux_username}"
             path = sanitize_path(path)
-            full_path = os.path.join(home_dir, path)
+            full_path = os.path.join(base_dir, path)
             
             # Security check (skip for admin/root)
             if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
                 real_full_path = os.path.realpath(full_path)
-                real_home_dir = os.path.realpath(home_dir)
+                real_home_dir = os.path.realpath(base_dir)
                 
                 if not real_full_path.startswith(real_home_dir):
                     raise ValueError("Access denied: Path outside domain directory")
@@ -1210,14 +1214,14 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
                 
-            home_dir = f"/home/{virtual_host.linux_username}"
+            base_dir = f"/home/{virtual_host.linux_username}"
             path = sanitize_path(path)
-            full_path = os.path.join(home_dir, path)
+            full_path = os.path.join(base_dir, path)
             
             # Security check (skip for admin/root)
             if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
                 real_full_path = os.path.realpath(full_path)
-                real_home_dir = os.path.realpath(home_dir)
+                real_home_dir = os.path.realpath(base_dir)
                 
                 if not real_full_path.startswith(real_home_dir):
                     raise ValueError("Access denied: Path outside domain directory")
@@ -1274,14 +1278,14 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
                 
-            home_dir = f"/home/{virtual_host.linux_username}"
+            base_dir = f"/home/{virtual_host.linux_username}"
             path = sanitize_path(path)
-            full_path = os.path.join(home_dir, path)
+            full_path = os.path.join(base_dir, path)
             
             # Security check (skip for admin/root)
             if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
                 real_full_path = os.path.realpath(full_path)
-                real_home_dir = os.path.realpath(home_dir)
+                real_home_dir = os.path.realpath(base_dir)
                 
                 if not real_full_path.startswith(real_home_dir):
                     raise ValueError("Access denied: Path outside domain directory")
@@ -1323,16 +1327,16 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
 
-            home_dir = f"/home/{virtual_host.linux_username}"
+            base_dir = f"/home/{virtual_host.linux_username}"
             source_path = sanitize_path(source_path)
             dest_path = sanitize_path(dest_path)
 
-            source_full_path = os.path.join(home_dir, source_path)
-            dest_full_path = os.path.join(home_dir, dest_path)
+            source_full_path = os.path.join(base_dir, source_path)
+            dest_full_path = os.path.join(base_dir, dest_path)
 
             # Security check (skip for admin/root)
             if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
-                real_home = os.path.realpath(home_dir)
+                real_home = os.path.realpath(base_dir)
                 if not os.path.realpath(source_full_path).startswith(real_home) or not os.path.realpath(dest_full_path).startswith(real_home):
                     raise ValueError("Access denied: Path outside domain directory")
 
@@ -1400,18 +1404,18 @@ class FileService:
             if not virtual_host:
                 raise ValueError("Domain not found or access denied")
                 
-            home_dir = f"/home/{virtual_host.linux_username}"
+            base_dir = f"/home/{virtual_host.linux_username}"
             old_path = sanitize_path(old_path)
             new_path = sanitize_path(new_path)
             
-            old_full_path = os.path.join(home_dir, old_path)
-            new_full_path = os.path.join(home_dir, new_path)
+            old_full_path = os.path.join(base_dir, old_path)
+            new_full_path = os.path.join(base_dir, new_path)
             
             # Security check for both paths (skip for admin/root)
             if not (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root'):
                 real_old_path = os.path.realpath(old_full_path)
                 real_new_path = os.path.realpath(new_full_path)
-                real_home_dir = os.path.realpath(home_dir)
+                real_home_dir = os.path.realpath(base_dir)
                 
                 if not real_old_path.startswith(real_home_dir) or not real_new_path.startswith(real_home_dir):
                     raise ValueError("Access denied: Path outside domain directory")

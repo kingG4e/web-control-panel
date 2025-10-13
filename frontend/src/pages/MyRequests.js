@@ -8,6 +8,8 @@ const MyRequests = () => {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingRequest, setEditingRequest] = useState(null);
+  const [allDbUsers, setAllDbUsers] = useState([]);
+  const [expandedCard, setExpandedCard] = useState(null);
   const [formData, setFormData] = useState({
     domain: '',
     want_ssl: false,
@@ -20,12 +22,36 @@ const MyRequests = () => {
     email_quota: '',
     db_name: '',
     db_username: '',
-    db_password: ''
+    db_password: '',
+    db_user_mode: 'create',
+    existing_db_user: ''
   });
 
   useEffect(() => {
     loadRequests();
   }, []);
+
+  // Load database users when form opens and user mode is existing
+  useEffect(() => {
+    const loadDbUsers = async () => {
+      if (showForm && formData.db_user_mode === 'existing') {
+        try {
+          const response = await fetch('/api/database-users', {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+          });
+          const result = await response.json();
+          if (result.success && Array.isArray(result.data)) {
+            setAllDbUsers(result.data);
+          }
+        } catch (err) {
+          console.error('Failed to load database users:', err);
+        }
+      }
+    };
+    loadDbUsers();
+  }, [showForm, formData.db_user_mode]);
 
   const loadRequests = async () => {
     try {
@@ -47,24 +73,6 @@ const MyRequests = () => {
     }
   };
 
-  const handleEditClick = (request) => {
-    setEditingRequest(request);
-    setFormData({
-      domain: request.domain,
-      want_ssl: request.want_ssl,
-      want_dns: request.want_dns,
-      want_email: request.want_email,
-      want_mysql: request.want_mysql,
-      storage_quota_mb: request.storage_quota_mb || '',
-      email_username: request.email_username || '',
-      email_password: '',
-      email_quota: request.email_quota || '',
-      db_name: request.db_name ? request.db_name.replace(/^db_/, '') : '',
-      db_username: request.db_username || '',
-      db_password: request.db_password || ''
-    });
-    setShowForm(true);
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -80,13 +88,15 @@ const MyRequests = () => {
         want_dns: formData.want_dns,
         want_email: formData.want_email,
         want_mysql: formData.want_mysql,
-        storage_quota_mb: formData.storage_quota_mb ? Number(formData.storage_quota_mb) : undefined,
+        storage_quota_mb: formData.storage_quota_mb ? Number(formData.storage_quota_mb) : 100,
         email_username: formData.want_email && formData.email_username ? formData.email_username : undefined,
         email_password: formData.want_email && formData.email_password ? formData.email_password : undefined,
-        email_quota: formData.want_email && formData.email_quota ? Number(formData.email_quota) : undefined,
+        email_quota: formData.want_email ? (formData.email_quota ? Number(formData.email_quota) : 100) : undefined,
         db_name: formData.want_mysql && formData.db_name ? `db_${formData.db_name}` : undefined,
-        db_username: formData.want_mysql && formData.db_username ? formData.db_username : undefined,
-        db_password: formData.want_mysql && formData.db_password ? formData.db_password : undefined
+        db_username: formData.want_mysql && formData.db_user_mode === 'create' && formData.db_username ? formData.db_username : undefined,
+        db_password: formData.want_mysql && formData.db_user_mode === 'create' && formData.db_password ? formData.db_password : undefined,
+        db_user_mode: formData.want_mysql ? formData.db_user_mode : undefined,
+        existing_db_user: formData.want_mysql && formData.db_user_mode === 'existing' && formData.existing_db_user ? formData.existing_db_user : undefined
       };
       
       if (editingRequest) {
@@ -112,7 +122,9 @@ const MyRequests = () => {
         email_quota: '',
         db_name: '',
         db_username: '',
-        db_password: ''
+        db_password: '',
+        db_user_mode: 'create',
+        existing_db_user: ''
       });
       loadRequests();
     } catch (err) {
@@ -270,46 +282,98 @@ const MyRequests = () => {
             {/* Database Fields - Only show when MySQL is selected */}
             {formData.want_mysql && (
               <>
-                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm text-[var(--secondary-text)]">Database Name</label>
-                    <div className="flex mt-1">
-                      <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-[var(--border-color)] bg-[var(--secondary-bg)] text-[var(--secondary-text)] text-sm">
-                        db_
-                      </span>
-                      <input 
-                        name="db_name" 
-                        value={formData.db_name} 
-                        onChange={onChange} 
-                        className="input-field rounded-l-none" 
-                        placeholder="mydatabase" 
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm text-[var(--secondary-text)]">Database Username</label>
+                <div className="md:col-span-2">
+                  <label className="block text-sm text-[var(--secondary-text)] mb-2">Database Name</label>
+                  <div className="flex">
+                    <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-[var(--border-color)] bg-[var(--secondary-bg)] text-[var(--secondary-text)] text-sm">
+                      db_
+                    </span>
                     <input 
-                      name="db_username" 
-                      value={formData.db_username} 
+                      name="db_name" 
+                      value={formData.db_name} 
                       onChange={onChange} 
-                      className="input-field mt-1" 
-                      placeholder="my_user" 
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm text-[var(--secondary-text)]">Database Password</label>
-                    <input 
-                      name="db_password" 
-                      type="password"
-                      value={formData.db_password} 
-                      onChange={onChange} 
-                      className="input-field mt-1" 
-                      placeholder="••••••••" 
+                      className="input-field rounded-l-none" 
+                      placeholder="mydatabase" 
                     />
                   </div>
                 </div>
+
+                {/* Database User Selection Mode */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm text-[var(--secondary-text)] mb-3">Database User Access</label>
+                  <div className="space-y-3">
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        name="db_user_mode"
+                        value="create"
+                        checked={formData.db_user_mode === 'create'}
+                        onChange={(e) => setFormData(prev => ({ ...prev, db_user_mode: e.target.value }))}
+                        className="mr-3"
+                      />
+                      <span className="text-sm text-[var(--primary-text)]">Create New Database User</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        name="db_user_mode"
+                        value="existing"
+                        checked={formData.db_user_mode === 'existing'}
+                        onChange={(e) => setFormData(prev => ({ ...prev, db_user_mode: e.target.value }))}
+                        className="mr-3"
+                      />
+                      <span className="text-sm text-[var(--primary-text)]">Use Existing Database User</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Create New User Fields */}
+                {formData.db_user_mode === 'create' && (
+                  <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-[var(--secondary-text)]">Database Username (Optional)</label>
+                      <input 
+                        name="db_username" 
+                        value={formData.db_username} 
+                        onChange={onChange} 
+                        className="input-field mt-1" 
+                        placeholder="my_user (auto-generated if empty)" 
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm text-[var(--secondary-text)]">Database Password (Optional)</label>
+                      <input 
+                        name="db_password" 
+                        type="password"
+                        value={formData.db_password} 
+                        onChange={onChange} 
+                        className="input-field mt-1" 
+                        placeholder="•••••••• (auto-generated if empty)" 
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Select Existing User */}
+                {formData.db_user_mode === 'existing' && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm text-[var(--secondary-text)]">Select Existing Database User</label>
+                    <select 
+                      name="existing_db_user" 
+                      value={formData.existing_db_user} 
+                      onChange={onChange} 
+                      className="input-field mt-1"
+                    >
+                      <option value="">-- Choose a database user --</option>
+                      {allDbUsers.map(user => (
+                        <option key={user.id} value={user.id}>
+                          {user.username}@{user.host} ({user.privileges})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </>
             )}
 
@@ -342,83 +406,94 @@ const MyRequests = () => {
           <p className="text-[var(--secondary-text)]">Loading...</p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {requests.length > 0 ? (
             requests.map((request) => (
-              <div key={request.id} className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg font-semibold text-[var(--primary-text)]">{request.domain || 'No domain specified'}</h3>
-                    <p className="text-sm text-[var(--secondary-text)]">User: {request.username || user?.username}</p>
-                    {request.full_name && (
-                      <p className="text-sm text-[var(--secondary-text)]">Full Name: <span className="text-[var(--primary-text)]">{request.full_name}</span></p>
-                    )}
+              <div 
+                key={request.id} 
+                className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-4 cursor-pointer hover:bg-[var(--hover-bg)] transition-colors duration-200"
+                onClick={() => setExpandedCard(expandedCard === request.id ? null : request.id)}
+              >
+                {/* Card Header - Always Visible */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex-1">
+                    <h3 className="text-base font-semibold text-[var(--primary-text)]">{request.domain || 'No domain specified'}</h3>
+                    <p className="text-xs text-[var(--secondary-text)]">User: {request.username || user?.username}</p>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium border
-                    ${request.status === 'pending' ? 'border-yellow-400/40 text-yellow-500 bg-yellow-500/10' : ''}
-                    ${request.status === 'approved' ? 'border-green-500/40 text-green-500 bg-green-500/10' : ''}
-                    ${request.status === 'rejected' ? 'border-red-500/40 text-red-500 bg-red-500/10' : ''}
-                  `}>
-                    {request.status === 'pending' && 'Pending'}
-                    {request.status === 'approved' && 'Approved'}
-                    {request.status === 'rejected' && 'Rejected'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium border
+                      ${request.status === 'pending' ? 'border-yellow-400/40 text-yellow-500 bg-yellow-500/10' : ''}
+                      ${request.status === 'approved' ? 'border-green-500/40 text-green-500 bg-green-500/10' : ''}
+                      ${request.status === 'rejected' ? 'border-red-500/40 text-red-500 bg-red-500/10' : ''}
+                    `}>
+                      {request.status === 'pending' && 'Pending'}
+                      {request.status === 'approved' && 'Approved'}
+                      {request.status === 'rejected' && 'Rejected'}
+                    </span>
+                    <svg 
+                      className={`w-4 h-4 text-[var(--secondary-text)] transition-transform duration-200 ${expandedCard === request.id ? 'rotate-180' : ''}`}
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
                 </div>
 
-                {/* Services requested */}
-                {(request.want_ssl || request.want_dns || request.want_email || request.want_mysql) && (
-                  <div className="mb-4">
-                    <p className="text-sm text-[var(--secondary-text)] mb-2">Requested Services:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {request.want_ssl && <span className="px-2 py-1 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">SSL</span>}
-                      {request.want_dns && <span className="px-2 py-1 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">DNS Zone</span>}
-                      {request.want_email && <span className="px-2 py-1 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">Email</span>}
-                      {request.want_mysql && <span className="px-2 py-1 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">MySQL</span>}
-                    </div>
-                    {request.want_email && (request.email_username || request.email_quota) && (
-                      <div className="mt-2 text-xs text-[var(--secondary-text)]">
-                        Email requested: <span className="text-[var(--primary-text)]">{request.email_username || '-'}@{request.domain}</span> {request.email_quota ? `(${request.email_quota}MB)` : ''}
-                      </div>
-                    )}
-                    {request.want_mysql && (request.db_name || request.db_username) && (
-                      <div className="mt-2 text-xs text-[var(--secondary-text)]">
-                        Database requested: <span className="text-[var(--primary-text)]">{request.db_name || '-'}</span> {request.db_username ? `as ${request.db_username}` : ''}
-                      </div>
-                    )}
+                {/* Basic Info - Always Visible */}
+                <div className="mb-2">
+                  <div className="flex flex-wrap gap-2">
+                    {request.want_ssl && <span className="px-2 py-0.5 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">SSL</span>}
+                    {request.want_dns && <span className="px-2 py-0.5 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">DNS Zone</span>}
+                    {request.want_email && <span className="px-2 py-0.5 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">Email</span>}
+                    {request.want_mysql && <span className="px-2 py-0.5 bg-[var(--accent-color)]/20 text-[var(--primary-text)] rounded text-xs">MySQL</span>}
                   </div>
-                )}
-
-                {/* Storage quota */}
-                {request.storage_quota_mb && (
-                  <div className="mb-4">
-                    <p className="text-sm text-[var(--secondary-text)]">Storage Space: <span className="text-[var(--primary-text)]">{request.storage_quota_mb} MB</span></p>
-                  </div>
-                )}
-
-                {/* Admin comment */}
-                {request.admin_comment && (
-                  <div className="p-3 bg-[var(--secondary-bg)] rounded border border-[var(--border-color)]">
-                    <p className="text-sm text-[var(--secondary-text)]">Admin Notes:</p>
-                    <p className="text-[var(--primary-text)] text-sm">{request.admin_comment}</p>
-                  </div>
-                )}
-
-                {/* Timestamps */}
-                <div className="mt-4 text-xs text-[var(--secondary-text)] border-t border-[var(--border-color)] pt-2">
-                  <p>Submitted: {new Date(request.created_at).toLocaleString('en-US')}</p>
-                  {request.approved_at && (
-                    <p>Processed: {new Date(request.approved_at).toLocaleString('en-US')}</p>
+                  {request.storage_quota_mb && (
+                    <p className="text-xs text-[var(--secondary-text)] mt-1">Storage: {request.storage_quota_mb} MB</p>
                   )}
                 </div>
 
-                {request.status === 'approved' && (
-                  <div className="mt-4 flex justify-end">
-                    <button
-                      onClick={() => handleEditClick(request)}
-                      className="btn-secondary px-4 py-2"
-                    >
-                      Request Change
-                    </button>
+                {/* Expanded Details - Only visible when clicked */}
+                {expandedCard === request.id && (
+                  <div className="mt-3 pt-3 border-t border-[var(--border-color)] space-y-3">
+                    {request.full_name && (
+                      <div>
+                        <p className="text-xs text-[var(--secondary-text)]">Full Name: <span className="text-[var(--primary-text)]">{request.full_name}</span></p>
+                      </div>
+                    )}
+
+                    {request.want_email && (request.email_username || request.email_quota) && (
+                      <div>
+                        <p className="text-xs text-[var(--secondary-text)]">
+                          Email requested: <span className="text-[var(--primary-text)]">{request.email_username || '-'}@{request.domain}</span> 
+                          {request.email_quota ? ` (${request.email_quota}MB)` : ''}
+                        </p>
+                      </div>
+                    )}
+
+                    {request.want_mysql && (request.db_name || request.db_username || request.existing_db_user) && (
+                      <div>
+                        <p className="text-xs text-[var(--secondary-text)]">
+                          Database requested: <span className="text-[var(--primary-text)]">{request.db_name || '-'}</span> 
+                          {request.existing_db_user ? ` (using existing user)` : request.db_username ? ` as ${request.db_username}` : ''}
+                        </p>
+                      </div>
+                    )}
+
+                    {request.admin_comment && (
+                      <div className="p-2 bg-[var(--secondary-bg)] rounded border border-[var(--border-color)]">
+                        <p className="text-xs text-[var(--secondary-text)] mb-1">Admin Notes:</p>
+                        <p className="text-[var(--primary-text)] text-xs">{request.admin_comment}</p>
+                      </div>
+                    )}
+
+                    <div className="text-xs text-[var(--secondary-text)] space-y-1">
+                      <p>Submitted: {new Date(request.created_at).toLocaleString('en-US')}</p>
+                      {request.approved_at && (
+                        <p>Processed: {new Date(request.approved_at).toLocaleString('en-US')}</p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

@@ -96,6 +96,9 @@ const FileManager = () => {
   const dropZoneRef = useRef(null);
   const [showNewItemDropdown, setShowNewItemDropdown] = useState(false);
   const newItemDropdownRef = useRef(null);
+  const [pathInput, setPathInput] = useState('');
+  const scrollTopRef = useRef(0);
+  const fileListRef = useRef(null);
 
 
 
@@ -129,6 +132,12 @@ const FileManager = () => {
     }
     return '';
   }, [absoluteDocRoot, domainStructure]);
+
+  // Default start path for admin system view (non-locking)
+  const systemDefaultPath = useMemo(() => {
+    if (!isAdminUser) return '';
+    return '/';
+  }, [isAdminUser]);
 
   // Memoize filtered and sorted files
   const filteredFiles = useMemo(() => {
@@ -229,8 +238,13 @@ const FileManager = () => {
       if (currentPath !== target) {
         setCurrentPath(target);
       }
+    } else if (isAdminUser) {
+      const target = systemDefaultPath;
+      if (currentPath !== target) {
+        setCurrentPath(target);
+      }
     }
-  }, [currentDomain, relativeDocRoot]);
+  }, [currentDomain, relativeDocRoot, isAdminUser, systemDefaultPath]);
 
   // Update URL when domain changes
   useEffect(() => {
@@ -248,8 +262,22 @@ const FileManager = () => {
     }
   }, [currentDomain, setSearchParams, user, domains, authLoading, isAdminUser]);
 
+  // Preserve scroll position before file operations
+  const preserveScrollPosition = useCallback(() => {
+    if (fileListRef.current) {
+      scrollTopRef.current = fileListRef.current.scrollTop;
+    }
+  }, []);
+
+  // Restore scroll position after file operations
+  const restoreScrollPosition = useCallback(() => {
+    if (fileListRef.current) {
+      fileListRef.current.scrollTop = scrollTopRef.current;
+    }
+  }, []);
+
   // Optimized directory loading with caching
-  const loadDirectory = useCallback(async (path) => {
+  const loadDirectory = useCallback(async (path, preserveScroll = false) => {
     if (!isConnected) return;
 
     // Prevent non-admin users from querying system root before a domain is selected
@@ -257,7 +285,25 @@ const FileManager = () => {
       return;
     }
     
-    const normalizedPath = path ? normalizePath(path) : '';
+    // Save current scroll position before loading if preserveScroll is true
+    if (preserveScroll) {
+      preserveScrollPosition();
+    }
+    
+    // For system mode (no domain), send path as-is to support absolute paths
+    // For domain mode, normalize as relative path
+    let requestPath = path || '';
+    if (!currentDomain && isAdminUser) {
+      // System mode: preserve absolute paths, convert empty to '/'
+      requestPath = path ? path : '/';
+      // Ensure path starts with / for absolute paths in system mode
+      if (!requestPath.startsWith('/')) {
+        requestPath = '/' + requestPath;
+      }
+    } else {
+      // Domain mode: normalize as relative path
+      requestPath = path ? normalizePath(path) : '';
+    }
     
     try {
       setLoading(true);
@@ -270,7 +316,7 @@ const FileManager = () => {
       );
       
       const response = await Promise.race([
-        fileApi.listDirectory(normalizedPath || '/', currentDomain),
+        fileApi.listDirectory(requestPath, currentDomain),
         timeoutPromise
       ]);
       
@@ -306,7 +352,7 @@ const FileManager = () => {
       
       // Handle directory not found
       if (errorMessage.includes('not found') || errorMessage.includes('Directory not found')) {
-        const pathParts = normalizedPath.split('/').filter(Boolean);
+        const pathParts = requestPath.split('/').filter(Boolean);
         if (pathParts.length > 0) {
           const parentPath = pathParts.slice(0, -1).join('/');
           setCurrentPath(parentPath);
@@ -316,8 +362,13 @@ const FileManager = () => {
       }
     } finally {
       setLoading(false);
+      
+      // Restore scroll position after loading if preserveScroll was true
+      if (preserveScroll) {
+        restoreScrollPosition();
+      }
     }
-  }, [isConnected, currentDomain, isAdminUser]);
+  }, [isConnected, currentDomain, isAdminUser, preserveScrollPosition, restoreScrollPosition]);
 
   // Initial load
   useEffect(() => {
@@ -325,6 +376,35 @@ const FileManager = () => {
       loadDirectory(currentPath);
     }
   }, [currentPath, currentDomain, isConnected, loadDirectory]);
+
+  // Reset scroll position when path changes
+  useEffect(() => {
+    if (fileListRef.current) {
+      fileListRef.current.scrollTop = 0;
+      scrollTopRef.current = 0;
+    }
+  }, [currentPath]);
+
+  // Restore scroll position after files are loaded
+  useEffect(() => {
+    restoreScrollPosition();
+  }, [files, restoreScrollPosition]);
+
+  // Track scroll position on scroll
+  useEffect(() => {
+    const handleScroll = () => {
+      if (fileListRef.current) {
+        scrollTopRef.current = fileListRef.current.scrollTop;
+      }
+    };
+    const scrollElement = fileListRef.current;
+    if (scrollElement) {
+      scrollElement.addEventListener('scroll', handleScroll, { passive: true });
+      return () => {
+        scrollElement.removeEventListener('scroll', handleScroll);
+      };
+    }
+  }, [files]);
 
   // Check connection once
   useEffect(() => {
@@ -350,14 +430,21 @@ const FileManager = () => {
     checkConnection();
   }, [currentDomain, isAdminUser]);
 
-  const handleDomainChange = (domain) => {
+  const handleDomainChange = (domain, newPath = null) => {
     // Prevent non-admin users from selecting system files
     if (!isAdminUser && domain === '') {
       return; // Do nothing, don't allow system file access
     }
     
     setCurrentDomain(domain);
-    setCurrentPath(''); // Reset to root when switching domains
+    
+    // If a new path is explicitly provided, use it.
+    // Otherwise, determine the default path based on the new domain.
+    const pathToSet = newPath !== null
+      ? newPath
+      : (domain === '' && isAdminUser ? systemDefaultPath : '');
+      
+    setCurrentPath(pathToSet);
     setSelectedFile(null);
     setSelectedFiles(new Set());
   };
@@ -374,7 +461,7 @@ const FileManager = () => {
       <select
         value={currentDomain}
         onChange={(e) => handleDomainChange(e.target.value)}
-        className="px-3 py-2 rounded-md border transition-colors focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        className="block w-full max-w-xs pl-3 pr-10 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         style={{
           backgroundColor: 'var(--input-bg)',
           borderColor: 'var(--border-color)',
@@ -396,125 +483,20 @@ const FileManager = () => {
         ))}
       </select>
       
-      {currentDomain && (
-        <div className="flex items-center space-x-2 text-sm px-3 py-1 rounded-md border"
-             style={{ 
-               backgroundColor: 'var(--secondary-bg)', 
-               borderColor: 'var(--border-color)',
-               color: 'var(--secondary-text)' 
-             }}>
-          <GlobeAltIcon className="w-4 h-4" />
-          <span className="font-mono truncate max-w-[28rem]" title={absoluteDocRoot || ''}>
-            {absoluteDocRoot || '...'}
-          </span>
-        </div>
-      )}
+
     </div>
   );
-
-  // Enhanced Breadcrumbs with domain context
-  const Breadcrumbs = () => {
-    const pathParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
-    
-    return (
-      <nav className="flex items-center space-x-2 text-sm mb-4" style={{ color: 'var(--secondary-text)' }}>
-        <button
-          onClick={() => setCurrentPath(relativeDocRoot || '')}
-          className="flex items-center space-x-1 px-2 py-1 rounded hover:bg-opacity-20 transition-colors"
-          style={{ 
-            backgroundColor: !currentPath ? 'var(--accent-color)' : 'transparent',
-            color: !currentPath ? 'white' : 'var(--secondary-text)'
-          }}
-        >
-          <HomeIcon className="w-4 h-4" />
-          <span>{currentDomain ? 'Home' : 'Root'}</span>
-        </button>
-        
-        {pathParts.map((part, index) => {
-          const partPath = pathParts.slice(0, index + 1).join('/');
-          const isLast = index === pathParts.length - 1;
-          
-          return (
-            <React.Fragment key={index}>
-              <span>/</span>
-              <button
-                onClick={() => !isLast && setCurrentPath(partPath)}
-                className={`px-2 py-1 rounded transition-colors ${
-                  isLast 
-                    ? 'font-medium' 
-                    : 'hover:bg-opacity-20'
-                }`}
-                style={{ 
-                  backgroundColor: isLast ? 'var(--accent-color)' : 'transparent',
-                  color: isLast ? 'white' : 'var(--secondary-text)'
-                }}
-                disabled={isLast}
-              >
-                {part}
-              </button>
-            </React.Fragment>
-          );
-        })}
-      </nav>
-    );
-  };
-
-  // Quick access buttons for common directories
-  const QuickAccessButtons = () => {
-    if (!currentDomain || !domainStructure) return null;
-
-    const items = [];
-    // Always include Document Root shortcut
-    items.push({ label: 'Document Root', path: relativeDocRoot || '', icon: GlobeAltIcon, color: 'text-blue-500', exists: true });
-
-    // Add common directories only if they exist under this domain root
-    const dirMap = domainStructure.directories || {};
-    const candidates = [
-      { name: 'public_html', icon: GlobeAltIcon, color: 'text-blue-500' },
-      { name: 'logs', icon: DocumentTextIcon, color: 'text-yellow-500' },
-      { name: 'mail', icon: DocumentIcon, color: 'text-green-500' },
-      { name: 'cgi-bin', icon: CubeIcon, color: 'text-purple-500' }
-    ];
-
-    candidates.forEach(({ name, icon, color }) => {
-      const dirInfo = dirMap[name];
-      if (dirInfo && dirInfo.exists) {
-        items.push({ label: name, path: name, icon, color, exists: true });
-      }
-    });
-
-    return (
-      <div className="flex flex-wrap gap-2 mb-4">
-        {items.map(({ label, path, icon: Icon, color }) => (
-          <button
-            key={label}
-            onClick={() => setCurrentPath(path)}
-            className={`flex items-center space-x-2 px-3 py-2 rounded-md border transition-colors hover:opacity-80 ${
-              currentPath === path ? 'ring-2 ring-blue-500' : ''
-            }`}
-            style={{
-              backgroundColor: 'var(--secondary-bg)',
-              borderColor: 'var(--border-color)',
-              color: 'var(--primary-text)'
-            }}
-          >
-            <Icon className={`w-4 h-4 ${color}`} />
-            <span className="text-sm">{label}</span>
-          </button>
-        ))}
-      </div>
-    );
-  };
 
   // Enhanced File Actions
   const handleSaveFile = async () => {
     try {
       setEditorLoading(true);
+      preserveScrollPosition();
       const filePath = selectedFile.path || (currentPath ? `${currentPath}/${selectedFile.name}` : selectedFile.name);
       await fileApi.writeFile(normalizePath(filePath), fileContent, currentDomain);
       setShowFileEditor(false);
       setError(null);
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, true);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save file');
     } finally {
@@ -526,13 +508,26 @@ const FileManager = () => {
     try {
       setLoading(true);
       setError(null);
+      preserveScrollPosition();
       
-      const path = currentPath ? `${currentPath}/${folderName}` : folderName;
+      // Build path based on mode (system vs domain)
+      let path;
+      if (currentPath) {
+        // Preserve absolute paths in system mode
+        if (currentPath.startsWith('/') && !currentDomain) {
+          path = `${currentPath}/${folderName}`;
+        } else {
+          path = `${currentPath}/${folderName}`;
+        }
+      } else {
+        path = folderName;
+      }
+      
       await fileApi.createDirectory(path, currentDomain);
       
       setShowNewFolderModal(false);
       setNewFolderName('');
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, true);
     } catch (err) {
       console.error('Create folder error:', err);
       const errorMsg = err.response?.data?.error || err.message || 'Failed to create folder';
@@ -547,13 +542,26 @@ const FileManager = () => {
     try {
       setLoading(true);
       setError(null);
+      preserveScrollPosition();
       
-      const path = currentPath ? `${currentPath}/${fileName}` : fileName;
+      // Build path based on mode (system vs domain)
+      let path;
+      if (currentPath) {
+        // Preserve absolute paths in system mode
+        if (currentPath.startsWith('/') && !currentDomain) {
+          path = `${currentPath}/${fileName}`;
+        } else {
+          path = `${currentPath}/${fileName}`;
+        }
+      } else {
+        path = fileName;
+      }
+      
       await fileApi.createFile(path, currentDomain);
       
       setShowNewFileModal(false);
       setNewFileName('');
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, true);
     } catch (err) {
       console.error('Create file error:', err);
       const errorMsg = err.response?.data?.error || err.message || 'Failed to create file';
@@ -568,12 +576,15 @@ const FileManager = () => {
       setLoading(true);
       setError(null);
       
+      // Use current path for upload (preserves absolute paths in system mode)
+      const uploadPath = currentPath || '/';
+      
       const uploadPromises = Array.from(files).map(file => 
-        fileApi.uploadFile(currentPath, file, currentDomain)
+        fileApi.uploadFile(uploadPath, file, currentDomain)
       );
       
       await Promise.all(uploadPromises);
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, true);
     } catch (err) {
       console.error('Upload error:', err);
       const errorMsg = err.response?.data?.error || err.message || 'Failed to upload files';
@@ -716,13 +727,32 @@ const FileManager = () => {
 
   const normalizePath = (path) => {
     if (!path) return '';
-    // Remove leading/trailing slashes and normalize multiple slashes
-    path = path.replace(/^\/+|\/+$/g, '');
+    
+    // For system mode (no domain), preserve absolute paths
+    // This allows admin to browse entire filesystem
+    const isAbsolutePath = path.startsWith('/');
+    
+    // Normalize multiple slashes
     path = path.replace(/\/+/g, '/');
+    
     // Remove any ./ or ../ for security
     path = path.replace(/\/\.\//g, '/');
     path = path.replace(/\/\.\.$/, '');
     path = path.replace(/\/\.\.\//g, '/');
+    
+    // For domain mode (relative paths), remove leading/trailing slashes
+    // For system mode, keep the leading slash if it was an absolute path
+    if (!isAbsolutePath || currentDomain) {
+      path = path.replace(/^\/+|\/+$/g, '');
+    } else {
+      // System mode with absolute path - only remove trailing slashes
+      path = path.replace(/\/+$/, '');
+      // Ensure at least one leading slash for absolute paths
+      if (!path.startsWith('/')) {
+        path = '/' + path;
+      }
+    }
+    
     return path;
   };
 
@@ -787,10 +817,26 @@ const FileManager = () => {
     setSelectedFile(file);
 
     if (file.type === 'folder') {
-      const newPath = currentPath ? `${currentPath}/${file.name}` : file.name;
-      const normalizedNewPath = normalizePath(newPath);
+      // For system mode with absolute paths, use file.path if available
+      // Otherwise construct the path
+      let newPath;
+      if (!currentDomain && file.path) {
+        // System mode: use the absolute path from the file object
+        newPath = file.path.startsWith('/') ? file.path : '/' + file.path;
+      } else if (currentPath) {
+        // Append to current path
+        if (!currentDomain) {
+          // System mode: construct absolute path
+          newPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
+        } else {
+          // Domain mode: relative path
+          newPath = `${currentPath}/${file.name}`;
+        }
+      } else {
+        newPath = file.name;
+      }
       // Navigating to new path
-      setCurrentPath(normalizedNewPath);
+      setCurrentPath(newPath);
     } else if (isTextFile(file.name)) {
       await openFileEditor(file);
     }
@@ -896,7 +942,7 @@ const FileManager = () => {
         setClipboardAction(null);
       }
       
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, true);
     } catch (err) {
       console.error('Paste error:', err);
       const errorMsg = err.response?.data?.error || err.message || 'Failed to paste item';
@@ -933,7 +979,7 @@ const FileManager = () => {
       setShowDeleteConfirm(false);
       setSelectedFile(null);
       setSelectedFiles(new Set());
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, true);
     } catch (err) {
       console.error('Delete error:', err);
       const errorMsg = err.response?.data?.error || err.message || 'Failed to delete item(s)';
@@ -957,7 +1003,7 @@ const FileManager = () => {
       setShowRenameModal(false);
       setNewFileName('');
       setSelectedFile(null);
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, true);
     } catch (err) {
       console.error('Rename error:', err);
       const errorMsg = err.response?.data?.error || err.message || 'Failed to rename item';
@@ -980,14 +1026,87 @@ const FileManager = () => {
     setIsDragging(false);
   };
 
-  const handleDrop = (e) => {
+  // Upload helpers for folder support
+  const buildUploadPath = (relativeDir) => {
+    const base = currentPath || (currentDomain ? '' : '/');
+    const cleanBase = base.replace(/\/+$/,'');
+    const cleanRel = (relativeDir || '').replace(/^\/+|\/+$/g,'');
+    if (!cleanRel) return cleanBase || '/';
+    const joined = `${cleanBase || ''}/${cleanRel}`;
+    // If system mode and base is empty, ensure leading slash
+    if (!currentDomain && !cleanBase) return `/${cleanRel}`;
+    return joined.replace(/\/+/, '/');
+  };
+
+  const traverseEntry = async (entry, parentPath = '') => {
+    return new Promise((resolve) => {
+      if (entry.isFile) {
+        entry.file((file) => {
+          resolve([{ file, relativeDir: parentPath }]);
+        });
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader();
+        const results = [];
+        const readBatch = () => {
+          dirReader.readEntries(async (entries) => {
+            if (!entries.length) return resolve(results);
+            for (const child of entries) {
+              // eslint-disable-next-line no-await-in-loop
+              const childFiles = await traverseEntry(child, parentPath ? `${parentPath}/${entry.name}`.replace(/\/+/, '/') : entry.name);
+              results.push(...childFiles);
+            }
+            readBatch();
+          });
+        };
+        readBatch();
+      } else {
+        resolve([]);
+      }
+    });
+  };
+
+  const extractDroppedItems = async (dataTransfer) => {
+    const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
+    if (!items.length) return Array.from(dataTransfer.files).map((f) => ({ file: f, relativeDir: '' }));
+    const files = [];
+    for (const item of items) {
+      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+      if (!entry) {
+        const file = item.getAsFile && item.getAsFile();
+        if (file) files.push({ file, relativeDir: '' });
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const list = await traverseEntry(entry, '');
+      files.push(...list);
+    }
+    return files;
+  };
+
+  const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
 
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    if (droppedFiles.length > 0) {
-      handleFileUpload(droppedFiles);
+    // Save current scroll position before upload
+    preserveScrollPosition();
+
+    try {
+      const filesWithDirs = await extractDroppedItems(e.dataTransfer);
+      if (!filesWithDirs.length) return;
+      setLoading(true);
+      setError(null);
+      await Promise.all(filesWithDirs.map(({ file, relativeDir }) => {
+        const targetDir = buildUploadPath(relativeDir);
+        return fileApi.uploadFile(targetDir, file, currentDomain);
+      }));
+      await loadDirectory(currentPath, true);
+    } catch (err) {
+      console.error('Upload error:', err);
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to upload files';
+      setError(errorMsg);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1109,13 +1228,15 @@ const FileManager = () => {
           Download
         </button>
         <button
-          onClick={async () => {
-            try {
-              setLoading(true);
-              setContextMenu({ ...contextMenu, visible: false });
-              const items = Array.from(selectedFiles.size ? selectedFiles : new Set([contextMenu.item?.name])).filter(Boolean);
-              const result = await fileApi.zipItems(currentPath, items, undefined, currentDomain);
-              await loadDirectory(currentPath);
+            onClick={async () => {
+              try {
+                // Save current scroll position before zip
+                preserveScrollPosition();
+                setLoading(true);
+                setContextMenu({ ...contextMenu, visible: false });
+                const items = Array.from(selectedFiles.size ? selectedFiles : new Set([contextMenu.item?.name])).filter(Boolean);
+                const result = await fileApi.zipItems(currentPath, items, undefined, currentDomain);
+                await loadDirectory(currentPath, true);
             } catch (err) {
               const errorMsg = err.response?.data?.error || err.message || 'Failed to create archive';
               setError(errorMsg);
@@ -1130,13 +1251,15 @@ const FileManager = () => {
         </button>
         {contextMenu.item?.name?.toLowerCase().endsWith('.zip') && (
           <button
-            onClick={async () => {
-              try {
-                setLoading(true);
-                setContextMenu({ ...contextMenu, visible: false });
-                const archiveRel = contextMenu.item.path || (currentPath ? `${currentPath}/${contextMenu.item.name}` : contextMenu.item.name);
-                await fileApi.unzip(archiveRel, currentPath, currentDomain);
-                await loadDirectory(currentPath);
+              onClick={async () => {
+                try {
+                  // Save current scroll position before unzip
+                  preserveScrollPosition();
+                  setLoading(true);
+                  setContextMenu({ ...contextMenu, visible: false });
+                  const archiveRel = contextMenu.item.path || (currentPath ? `${currentPath}/${contextMenu.item.name}` : contextMenu.item.name);
+                  await fileApi.unzip(archiveRel, currentPath, currentDomain);
+                  await loadDirectory(currentPath, true);
               } catch (err) {
                 const errorMsg = err.response?.data?.error || err.message || 'Failed to extract archive';
                 setError(errorMsg);
@@ -1302,7 +1425,7 @@ const FileManager = () => {
         setShowFileEditor(false);
         setLocalContent('');
         setError(null);
-        await loadDirectory(currentPath);
+        await loadDirectory(currentPath, true);
       } catch (err) {
         const errorMsg = err.response?.data?.error || err.message || 'Failed to save file';
         setEditorError(errorMsg);
@@ -1791,8 +1914,12 @@ const FileManager = () => {
 
   const FileListPanel = () => (
     <div 
-      ref={dropZoneRef}
-      className={`h-full overflow-auto p-6 ${isDragging ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+      ref={(el) => {
+        dropZoneRef.current = el;
+        fileListRef.current = el;
+      }}
+      className={`h-full overflow-auto p-6 min-h-0 overscroll-y-auto scroll-smooth ${isDragging ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+      style={{ scrollBehavior: 'smooth', overscrollBehavior: 'contain' }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -2269,8 +2396,117 @@ const FileManager = () => {
     };
   }, [contextMenu, showNewItemDropdown]);
 
+  // Keep address bar in sync with currentPath
+  useEffect(() => {
+    if (!currentDomain) {
+      // System mode: show absolute path
+      setPathInput(currentPath || '/');
+    } else {
+      // Show absolute-looking path in domain mode using home prefix
+      const homePrefix = domainStructure?.home_directory?.replace(/\/$/, '') || '';
+      const suffix = currentPath ? `/${currentPath.replace(/^\/+/, '')}` : '';
+      setPathInput(homePrefix ? `${homePrefix}${suffix}` : (currentPath || ''));
+    }
+  }, [currentPath, currentDomain, domainStructure]);
+
+  const handleAddressBarSubmit = (e) => {
+    e.preventDefault();
+    const input = (pathInput || '').trim();
+    if (!input) return;
+
+    const isAbs = input.startsWith('/');
+    if (isAbs) {
+      // Absolute path
+      if (!currentDomain && isAdminUser) {
+        // Admin in system mode: go absolute - normalize the path
+        const normalizedPath = input.replace(/\/+$/, '') || '/';
+        handleDomainChange('', normalizedPath);
+      } else {
+        // User in domain mode: allow absolute only if under their home directory
+        const home = domainStructure?.home_directory?.replace(/\/$/, '') || '';
+        if (home && input.startsWith(home)) {
+          let rel = input.slice(home.length);
+          rel = rel.replace(/^\/+/, '');
+          setCurrentPath(normalizePath(rel));
+        } else {
+          setError('Path is outside your home directory');
+        }
+      }
+    } else {
+      // Relative path: in system mode, force leading '/'; in domain mode keep relative
+      const normalized = normalizePath(input);
+      if (!currentDomain) {
+        // System mode: convert relative to absolute path
+        const absolutePath = `/${normalized}`.replace(/\/+$/, '') || '/';
+        handleDomainChange('', absolutePath);
+      } else {
+        setCurrentPath(normalized);
+      }
+    }
+  };
+
+  // Quick access buttons for common directories
+  const QuickAccessButtons = () => {
+    if (!currentDomain || !domainStructure) return null;
+
+    const items = [];
+
+    // Home Directory shortcut for all users (domain mode)
+    if (domainStructure?.home_directory) {
+      items.push({
+        label: 'Home Directory',
+        path: '', // root under user's home in domain mode
+        icon: HomeIcon,
+        color: 'text-indigo-500',
+        isAbsolute: false,
+        exists: true
+      });
+    }
+
+    // Document Root shortcut
+    const docRootPath = relativeDocRoot || '';
+    items.push({ label: 'Document Root', path: docRootPath, icon: GlobeAltIcon, color: 'text-blue-500', exists: true });
+
+    // Common directories (if exist)
+    const commonDirs = ['public_html', 'logs', 'backups'];
+    const dirMap = domainStructure?.directories || {};
+    commonDirs.forEach(dir => {
+      const dirInfo = dirMap[dir];
+      if (dirInfo && dirInfo.exists) {
+        items.push({ label: dir, path: dir, icon: GlobeAltIcon, color: 'text-green-500', exists: true });
+      }
+    });
+
+    return (
+      <div className="flex flex-wrap gap-2 mb-4">
+        {items.map(({ label, path, icon: Icon, color, isAbsolute, exists }) => (
+          <button
+            key={label}
+            onClick={() => {
+              if (isAbsolute) {
+                handleDomainChange('', path);
+              } else {
+                setCurrentPath(path);
+              }
+            }}
+            className={`flex items-center space-x-2 px-3 py-1.5 text-xs rounded-lg transition-colors ${
+              exists ? 'hover:bg-opacity-80' : 'opacity-50 cursor-not-allowed'
+            }`}
+            style={{ backgroundColor: 'var(--background-accent)', color: 'var(--primary-text)' }}
+            disabled={!exists}
+          >
+            <Icon className={`w-4 h-4 ${color}`} />
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+
+
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--primary-bg)' }}>
+    <div className="h-screen max-h-screen overflow-hidden" style={{ backgroundColor: 'var(--primary-bg)' }}>
       {/* Global Error Display */}
       {globalError && (
         <div className="fixed top-0 left-0 right-0 z-[200] p-4 bg-red-600 text-white shadow-lg">
@@ -2289,10 +2525,10 @@ const FileManager = () => {
         </div>
       )}
       
-      <div className="flex h-screen">
+      <div className="flex h-full">
         {/* File Manager Content */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="p-6 border-b" style={{ borderColor: 'var(--border-color)' }}>
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+          <div className="p-6 border-b flex-shrink-0" style={{ borderColor: 'var(--border-color)' }}>
             {/* Header */}
             <div className="mb-6">
               <h1 className="text-2xl font-semibold mb-2" style={{ color: 'var(--primary-text)' }}>
@@ -2311,11 +2547,55 @@ const FileManager = () => {
             {/* Domain Selector */}
             <DomainSelector />
 
+            {/* Address Bar */}
+            <form onSubmit={handleAddressBarSubmit} className="mb-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const path = pathInput || '';
+                  if (!path) return;
+                  // Compute parent path for both absolute and relative
+                  const parts = path.split('/').filter(Boolean);
+                  if (parts.length === 0) return;
+                  const parent = (path.startsWith('/') ? '/' : '') + parts.slice(0, -1).join('/');
+                  if (!currentDomain) {
+                    // System mode: navigate absolute
+                    handleDomainChange('', parent || '/');
+                  } else {
+                    // Domain mode: convert to relative using home prefix
+                    const home = domainStructure?.home_directory?.replace(/\/$/, '') || '';
+                    if (home && (parent || '/').startsWith(home)) {
+                      let rel = (parent || '/').slice(home.length);
+                      rel = rel.replace(/^\/+/, '');
+                      setCurrentPath(normalizePath(rel));
+                    } else if (!parent || parent === '/') {
+                      setCurrentPath('');
+                    }
+                  }
+                }}
+                className="px-3 py-2 rounded-md border"
+                style={{ backgroundColor: 'var(--secondary-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+                title="Back"
+              >
+                ←
+              </button>
+              <input
+                type="text"
+                value={pathInput}
+                onChange={(e) => setPathInput(e.target.value)}
+                placeholder={currentDomain ? 'Type path (relative or absolute)' : 'Type absolute path, e.g., /home/user'}
+                className="w-full px-3 py-2 rounded-md border focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
+              />
+            </form>
+
             {/* Quick Access Buttons */}
-            <QuickAccessButtons />
+            <div className="flex-shrink-0">
+              <QuickAccessButtons />
+            </div>
 
             {/* Search and Controls */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 flex-shrink-0">
               <div className="flex items-center space-x-4">
                 <div className="relative">
                   <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2" 
@@ -2419,6 +2699,42 @@ const FileManager = () => {
                   />
                 </label>
 
+                <label className="flex items-center space-x-2 px-4 py-2 rounded-md cursor-pointer transition-colors"
+                       style={{
+                         backgroundColor: 'var(--accent-color)',
+                         color: 'white'
+                       }}>
+                  <FolderPlusIcon className="w-4 h-4" />
+                  <span>Upload Folder</span>
+                  <input 
+                    type="file"
+                    webkitdirectory=""
+                    directory=""
+                    className="hidden"
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files || []);
+                      if (!files.length) return;
+                      try {
+                        setLoading(true);
+                        setError(null);
+                        await Promise.all(files.map((file) => {
+                          const relPath = file.webkitRelativePath || file.relativePath || '';
+                          const relDir = relPath.split('/').slice(0, -1).join('/');
+                          const targetDir = buildUploadPath(relDir);
+                          return fileApi.uploadFile(targetDir, file, currentDomain);
+                        }));
+                        await loadDirectory(currentPath, true);
+                      } catch (err) {
+                        const errorMsg = err.response?.data?.error || err.message || 'Failed to upload folder';
+                        setError(errorMsg);
+                      } finally {
+                        setLoading(false);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </label>
+
                 {clipboardItem && (
                   <button
                     onClick={handlePaste}
@@ -2437,11 +2753,11 @@ const FileManager = () => {
             </div>
 
             {/* Breadcrumbs */}
-            <Breadcrumbs />
+            {/* Breadcrumbs removed as requested */}
           </div>
 
           {/* File List Area */}
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden min-h-0">
             {error && (
               <div className="mx-6 mt-4 p-4 rounded-lg border" 
                    style={{ 
@@ -2457,7 +2773,9 @@ const FileManager = () => {
                   <button
                     onClick={() => {
                       setError(null);
-                      loadDirectory(currentPath);
+                      // Save current scroll position before refresh
+                      preserveScrollPosition();
+                      loadDirectory(currentPath, true);
                     }}
                     className="ml-4 px-3 py-1 text-sm rounded border transition-colors"
                     style={{
@@ -2500,7 +2818,7 @@ const FileManager = () => {
 
             {/* Show file list only when domain is selected or for admin users */}
             {(currentDomain || isAdminUser) && (
-              <div className="h-full relative">
+              <div className="h-full relative min-h-0">
                 {loading && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 dark:bg-gray-900/50 transition-opacity duration-300">
                     <LoadingSpinner />

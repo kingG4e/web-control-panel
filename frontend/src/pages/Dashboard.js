@@ -420,7 +420,7 @@ const Dashboard = () => {
             </div>
         )}
 
-        {/* Admin Notice */}
+        {/* Admin Notice
         {stats.isAdmin && (
           <div style={{
             backgroundColor: 'var(--card-bg)',
@@ -487,7 +487,7 @@ const Dashboard = () => {
               </button>
             </div>
           </div>
-      )}
+      )} */}
 
       {/* Stats Grid */}
         <div style={{ 

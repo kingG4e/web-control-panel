@@ -41,13 +41,26 @@ def setup_file_manager_root() -> str:
     current_user = get_current_user()
     logger.info(f"Running as user: {current_user}")
     
+    # Prefer explicit environment configuration if provided
+    env_root = os.environ.get('FILE_MANAGER_ROOT')
+    if env_root:
+        root = os.path.normpath(env_root)
+        logger.info(f"Using FILE_MANAGER_ROOT from environment: {root}")
+        return root
+    
     # Set file manager root directory based on OS
     if platform.system() == 'Windows':
         file_manager_root = os.path.join(os.getcwd(), 'web-files')
     else:
-        file_manager_root = f'/home/{current_user}'
+        # Use real filesystem root for full system browsing
+        file_manager_root = '/'
     
-    # If can't access home directory, fallback to web-files in current directory
+    # If we are using system root '/', skip write/creation tests and return directly
+    if file_manager_root == '/':
+        logger.info("File Manager Root Directory set to '/' (system root). Skipping writability checks.")
+        return file_manager_root
+    
+    # If can't access chosen directory, fallback to web-files in current directory
     if not os.access(file_manager_root, os.W_OK):
         logger.warning(f"Cannot write to {file_manager_root}")
         file_manager_root = os.path.abspath('web-files')

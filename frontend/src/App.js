@@ -41,8 +41,14 @@ const AppContent = () => {
     const loadStatus = async () => {
       if (user && !(user.is_admin || user.role === 'admin' || user.username === 'root')) {
         try {
-          const res = await signup.status(user.username);
-          setSignupStatus(res.data || null);
+          // Get all requests to check if user has any approved requests
+          const res = await signup.myRequests();
+          const requests = res.data || [];
+          const hasApproved = requests.some(req => req.status === 'approved');
+          const latestRequest = requests.length > 0 ? requests[0] : null;
+          
+          // Only show pending UI if user has no approved requests at all
+          setSignupStatus(hasApproved ? null : latestRequest);
         } catch (e) {
           setSignupStatus(null);
         }
@@ -54,6 +60,7 @@ const AppContent = () => {
     loadStatus();
   }, [user]);
 
+  // Only show pending approval UI if user has no approved requests at all
   const isPendingApproval = !!(signupStatus && signupStatus.status === 'pending');
 
   if (isLoading || checkingStatus) {

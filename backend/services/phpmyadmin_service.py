@@ -59,7 +59,9 @@ class PhpMyAdminService:
     def get_phpmyadmin_url(self, database_name=None, username=None):
         """Get phpMyAdmin URL with optional database pre-selection"""
         try:
-            base_url = current_app.config.get('PHPMYADMIN_URL', 'http://localhost/phpmyadmin')
+            # Get default IP from environment or use localhost as fallback
+            default_ip = os.environ.get('DNS_DEFAULT_IP') or os.environ.get('SERVER_PUBLIC_IP') or 'localhost'
+            base_url = f"http://{default_ip}/phpmyadmin"
             
             if self.is_windows:
                 print(f"[SIMULATION] Would open phpMyAdmin: {base_url}")

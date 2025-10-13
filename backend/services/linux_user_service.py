@@ -26,7 +26,7 @@ class LinuxUserService:
         password = ''.join(secrets.choice(alphabet) for _ in range(length))
         return password
     
-    def create_user(self, username: str, domain: str, password: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+    def create_user(self, username: str, domain: str, password: str, skip_public_html_creation: bool = False) -> Tuple[bool, str, Optional[str]]:
         """
         สร้าง Linux user ใหม่
         Args:
@@ -84,15 +84,23 @@ class LinuxUserService:
             
             # สร้าง public_html directory
             home_dir = f'/home/{username}'
-            public_html_dir = f'{home_dir}/public_html'
             
-            os.makedirs(public_html_dir, exist_ok=True)
+            # ตรวจสอบและแก้ไขสิทธิ์ home directory ให้แน่ใจ
+            try:
+                subprocess.run(['chmod', '711', home_dir], check=True)
+                print(f"Ensured home directory permissions: {home_dir} -> 711")
+            except Exception as e:
+                print(f"Warning: Could not ensure home directory permissions: {e}")
             
-            # ตั้งสิทธิ์
-            self._set_permissions(username, home_dir, public_html_dir)
-            
-            # สร้างไฟล์ index.html เริ่มต้น
-            self._create_default_files(public_html_dir, domain, username)
+            if not skip_public_html_creation:
+                public_html_dir = f'{home_dir}/public_html'
+                os.makedirs(public_html_dir, exist_ok=True)
+
+                # กำหนดสิทธิ์และเจ้าของ
+                self._set_permissions(username, home_dir, public_html_dir)
+
+                # สร้างไฟล์เริ่มต้น (index.html, .htaccess)
+                self._create_default_files(public_html_dir, domain, username)
             
             return True, f"User {username} created successfully", password
             
@@ -152,7 +160,7 @@ class LinuxUserService:
             return None
     
     def _set_permissions(self, username: str, home_dir: str, public_html_dir: str):
-        """ตั้งสิทธิ์ไฟล์และโฟลเดอร์"""
+        """ตั้งสิทธิ์ไฟล์และโฟลเดอร์ให้ www-data เข้าถึงได้"""
         if not UNIX_MODULES_AVAILABLE:
             print("Warning: Cannot set permissions on Windows system")
             return
@@ -166,16 +174,60 @@ class LinuxUserService:
             gid = user_info.pw_gid
             www_gid = www_data_info.gr_gid
             
-            # ตั้งเจ้าของ home directory
+            # ตั้งสิทธิ์ home directory ให้ www-data เข้าได้ (711)
             os.chown(home_dir, uid, gid)
-            os.chmod(home_dir, 0o755)
+            os.chmod(home_dir, 0o711)
+            print(f"Set home directory permissions: {home_dir} -> 711")
             
-            # ตั้งเจ้าของ public_html
+            # ตรวจสอบและแก้ไขสิทธิ์ home directory อีกครั้งเพื่อให้แน่ใจ
+            try:
+                subprocess.run(['chmod', '711', home_dir], check=True)
+                print(f"Verified home directory permissions: {home_dir} -> 711")
+            except Exception as e:
+                print(f"Warning: Could not verify home directory permissions: {e}")
+            
+            # ตั้งสิทธิ์ทุกโฟลเดอร์ใน path ให้ www-data เข้าได้ (711)
+            current_path = home_dir
+            path_parts = public_html_dir.replace(home_dir, '').strip('/').split('/')
+            
+            for part in path_parts[:-1]:  # ไม่รวม public_html
+                current_path = os.path.join(current_path, part)
+                if os.path.exists(current_path):
+                    os.chown(current_path, uid, gid)
+                    os.chmod(current_path, 0o711)
+                    print(f"Set directory permissions: {current_path} -> 711")
+            
+            # ตั้งสิทธิ์ public_html ให้ www-data อ่าน+เข้าได้ (755)
             os.chown(public_html_dir, uid, www_gid)
             os.chmod(public_html_dir, 0o755)
+            print(f"Set public_html permissions: {public_html_dir} -> 755")
+            
+            # ตั้งสิทธิ์ไฟล์และโฟลเดอร์ใน public_html
+            self._set_public_html_permissions(public_html_dir, uid, www_gid)
             
         except Exception as e:
             print(f"Warning: Could not set permissions: {e}")
+    
+    def _set_public_html_permissions(self, public_html_dir: str, uid: int, www_gid: int):
+        """ตั้งสิทธิ์ไฟล์และโฟลเดอร์ใน public_html"""
+        try:
+            # ตั้งสิทธิ์โฟลเดอร์ทั้งหมดใน public_html เป็น 755
+            for root, dirs, files in os.walk(public_html_dir):
+                for d in dirs:
+                    dir_path = os.path.join(root, d)
+                    os.chown(dir_path, uid, www_gid)
+                    os.chmod(dir_path, 0o755)
+                    print(f"Set directory permissions: {dir_path} -> 755")
+                
+                # ตั้งสิทธิ์ไฟล์ทั้งหมดใน public_html เป็น 644
+                for f in files:
+                    file_path = os.path.join(root, f)
+                    os.chown(file_path, uid, www_gid)
+                    os.chmod(file_path, 0o644)
+                    print(f"Set file permissions: {file_path} -> 644")
+                    
+        except Exception as e:
+            print(f"Warning: Could not set public_html permissions: {e}")
     
     def _create_default_files(self, public_html_dir: str, domain: str, username: str):
         """สร้างไฟล์เริ่มต้น (index.html แบบเรียบง่าย)"""

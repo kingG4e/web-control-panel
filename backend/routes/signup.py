@@ -78,7 +78,7 @@ def submit_signup_request():
             options_json['email_account'] = {
                 'username': (data.get('email_username') or '').strip(),
                 'password': data.get('email_password') or None,
-                'quota': data.get('email_quota', 1024)
+                'quota': data.get('email_quota', 100)
             }
         # DB details
         if data.get('want_mysql') and (data.get('db_name') or data.get('db_username')):
@@ -108,7 +108,7 @@ def submit_signup_request():
             full_name=(data.get('full_name') or None),
             server_password_enc=encrypt_text(data['password']),
             options_json=options_json,
-            storage_quota_mb=data.get('storage_quota_mb')
+            storage_quota_mb=data.get('storage_quota_mb', 100)
         )
         db.session.add(meta)
         db.session.commit()
@@ -276,7 +276,7 @@ def update_signup_request(current_user, req_id):
                 if 'email_password' in data:
                     options['email_account']['password'] = data.get('email_password') or None
                 if 'email_quota' in data:
-                    options['email_account']['quota'] = data.get('email_quota', 1024)
+                    options['email_account']['quota'] = data.get('email_quota', 100)
                 req.options_json = options
 
         db.session.commit()
@@ -380,16 +380,24 @@ def submit_additional_request(current_user):
             options_json['email_account'] = {
                 'username': (data.get('email_username') or '').strip(),
                 'password': data.get('email_password') or None,
-                'quota': data.get('email_quota', 1024)
+                'quota': data.get('email_quota', 100)
             }
         
         # DB details
         if data.get('want_mysql') and (data.get('db_name') or data.get('db_username')):
-            options_json['db_account'] = {
+            db_account = {
                 'name': (data.get('db_name') or '').strip(),
                 'username': (data.get('db_username') or '').strip(),
                 'password': data.get('db_password') or None
             }
+            
+            # Add user mode and existing user info if provided
+            if data.get('db_user_mode'):
+                db_account['db_user_mode'] = data.get('db_user_mode')
+            if data.get('existing_db_user'):
+                db_account['existing_db_user'] = data.get('existing_db_user')
+                
+            options_json['db_account'] = db_account
 
         meta = SignupMeta(
             user_id=current_user.id,
@@ -397,7 +405,7 @@ def submit_additional_request(current_user):
             full_name=(data.get('full_name') or None),
             server_password_enc=encrypt_text(server_password),
             options_json=options_json,
-            storage_quota_mb=data.get('storage_quota_mb')
+            storage_quota_mb=data.get('storage_quota_mb', 100)
         )
         db.session.add(meta)
         db.session.commit()
@@ -451,15 +459,6 @@ def approve_signup_request(current_user, req_id):
         else:
             req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"Linux user '{user.username}' exists."
 
-        # MySQL: do not auto-provision on approval; Database.js UI will handle creation later
-        if (req.options_json or {}).get('want_mysql'):
-            try:
-                # Record intent only; actual DB/user will be created via Database UI after approval
-                note = 'MySQL requested (creation deferred to Database UI)'
-                req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + note
-            except Exception:
-                pass
-
         # Create Virtual Host only if it doesn't exist
         if not vhost_exists:
             try:
@@ -488,37 +487,143 @@ def approve_signup_request(current_user, req_id):
             db_name = db_account.get('name')
             db_username = db_account.get('username')
             db_password = db_account.get('password')
+            db_user_mode = db_account.get('db_user_mode', 'create')
+            existing_db_user = db_account.get('existing_db_user')
 
-            if db_name and db_username and db_password:
+            # Handle different user modes
+            if db_name:
+                if db_user_mode == 'existing' and existing_db_user:
+                    # Use existing database user
+                    try:
+                        # Get existing user details from database
+                        from models.database import DatabaseUser
+                        
+                        # Handle both integer ID and username@host format
+                        if '@' in str(existing_db_user):
+                            # Format: "username@host"
+                            username, host = str(existing_db_user).split('@', 1)
+                            existing_user = DatabaseUser.query.filter_by(username=username, host=host).first()
+                        else:
+                            # Format: integer ID
+                            existing_user = DatabaseUser.query.get(int(existing_db_user))
+                        
+                        if existing_user:
+                            db_username = existing_user.username
+                            db_password = None  # Don't need password for existing user
+                            print(f"DEBUG: Found existing user: {existing_user.username}@{existing_user.host}")
+                        else:
+                            req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"Selected database user not found: {existing_db_user}"
+                            db_username = None
+                            db_password = None
+                            print(f"DEBUG: User not found: {existing_db_user}")
+                    except Exception as e:
+                        req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"Error getting existing user: {e}"
+                        db_username = None
+                        db_password = None
+                        print(f"DEBUG: Error getting existing user: {e}")
+                elif db_user_mode == 'create':
+                    # Auto-generate username and password if not provided
+                    if not db_username:
+                        # Generate username based on database name (remove db_ prefix and add _user)
+                        db_username = db_name.replace('db_', '') + '_user'
+                    
+                    if not db_password:
+                        # Generate a secure random password
+                        import secrets
+                        import string
+                        db_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
+
+            if db_name and db_username:
                 try:
                     # Enforce db_ prefix for consistency
                     if not db_name.startswith('db_'):
                         db_name = f"db_{db_name}"
 
-                    # 1. Create Database
-                    mysql_service.create_database(name=db_name)
+                    # Check if database already exists
+                    db_already_exists = mysql_service.database_exists(name=db_name)
+                    user_already_exists = mysql_service.user_exists(username=db_username, host='%')
                     
-                    # 2. Check if user exists, create if not
-                    user_exists = mysql_service.user_exists(username=db_username, host='%')
-                    if not user_exists:
+                    # 1. Create Database if it doesn't exist
+                    if not db_already_exists:
+                        mysql_service.create_database(name=db_name)
+                    
+                    # 2. Create user if it doesn't exist (only for new users)
+                    if not user_already_exists and db_password:
                         mysql_service.create_user(username=db_username, password=db_password, host='%')
+                    elif not user_already_exists and not db_password:
+                        # This shouldn't happen, but handle gracefully
+                        req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"User {db_username} does not exist and no password provided"
+                        # Skip database creation for this request
+                        return jsonify({'success': True, 'message': 'Signup request approved'}), 200
                     
                     # 3. Grant Privileges
+                    print(f"DEBUG: Granting privileges to {db_username}@{'%'} for database {db_name}")
                     mysql_service.grant_privileges(username=db_username, database=db_name, host='%')
+                    print(f"DEBUG: Successfully granted privileges to {db_username}@{'%'} for database {db_name}")
                     
-                    # 4. Save to app DB
+                    # 4. Save to app DB (check if already exists in app DB)
                     from models.database import Database as AppDatabase, DatabaseUser
-                    new_app_db = AppDatabase(name=db_name, db_type='mysql', owner_id=user.id, associated_domain=req.domain)
-                    db.session.add(new_app_db)
-                    db.session.flush()
-
-                    new_db_user = DatabaseUser(database_id=new_app_db.id, username=db_username, host='%')
-                    db.session.add(new_db_user)
-
-                    req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"DB '{db_name}' and user '{db_username}' created."
+                    from werkzeug.security import generate_password_hash
+                    
+                    existing_app_db = AppDatabase.query.filter_by(name=db_name).first()
+                    
+                    if not existing_app_db:
+                        new_app_db = AppDatabase(name=db_name, owner_id=user.id, associated_domain=req.domain)
+                        db.session.add(new_app_db)
+                        db.session.flush()
+                        app_db = new_app_db
+                        status_msg = f"DB '{db_name}' created"
+                    else:
+                        app_db = existing_app_db
+                        status_msg = f"DB '{db_name}' already exists"
+                    
+                    # Create or get DatabaseUser
+                    db_user_record = DatabaseUser.query.filter_by(username=db_username, host='%').first()
+                    if not db_user_record:
+                        # Only create new record if we have a password (new user)
+                        if db_password:
+                            hashed_password = generate_password_hash(db_password)
+                            db_user_record = DatabaseUser(
+                                username=db_username,
+                                password=hashed_password,
+                                host='%',
+                                privileges='ALL PRIVILEGES'
+                            )
+                            db.session.add(db_user_record)
+                            db.session.flush()
+                            status_msg += f", user '{db_username}' created"
+                        else:
+                            # For existing users without password, create a placeholder record
+                            db_user_record = DatabaseUser(
+                                username=db_username,
+                                password=generate_password_hash('existing_user'),
+                                host='%',
+                                privileges='ALL PRIVILEGES'
+                            )
+                            db.session.add(db_user_record)
+                            db.session.flush()
+                            status_msg += f", user '{db_username}' associated"
+                    else:
+                        status_msg += f", user '{db_username}' exists"
+                    
+                    # Associate user with database (using modern schema with association table)
+                    if db_user_record not in app_db.users:
+                        app_db.users.append(db_user_record)
+                        status_msg += " and associated"
+                    
+                    # Commit all changes to the database
+                    db.session.commit()
+                    print(f"Database record committed: {db_name} with owner_id: {user.id}")
+                    
+                    req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + status_msg
 
                 except Exception as e:
-                    req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"DB creation failed: {e}"
+                    # Only log as error if it's not a "database already exists" error
+                    error_str = str(e)
+                    if '1007' not in error_str and 'database exists' not in error_str.lower():
+                        req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"DB creation failed: {e}"
+                    else:
+                        req.admin_comment = (req.admin_comment + ' | ' if req.admin_comment else '') + f"DB '{db_name}' already exists"
             else:
                 # Details not provided, defer to UI
                 note = 'MySQL requested (creation deferred to Database UI)'

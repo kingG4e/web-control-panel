@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import BaseModal, { ModalSection, ModalSectionTitle, ModalButton } from '../components/modals/BaseModal';
 import { Link } from 'react-router-dom';
 import api, { email, roundcube } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 // Inline SVG Icons
 const ArrowLeftIcon = ({ className, style }) => (
@@ -40,11 +41,6 @@ const TrashIcon = ({ className, style }) => (
   </svg>
 );
 
-const ForwardIcon = ({ className, style }) => (
-  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-  </svg>
-);
 
 const GlobeAltIcon = ({ className, style }) => (
   <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -90,33 +86,22 @@ const ComputerDesktopIcon = ({ className, style }) => (
 );
 
 const EmailSettings = () => {
+  const { user } = useAuth();
+  
+  // State management
   const [domains, setDomains] = useState([]);
   const [selectedDomain, setSelectedDomain] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('domains');
-  const [syncing, setSyncing] = useState(false);
-
+  
   // Modal states
   const [showAccountModal, setShowAccountModal] = useState(false);
-  const [showForwarderModal, setShowForwarderModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState(null);
   const [openDropdown, setOpenDropdown] = useState(null);
   const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    function handleClickOutside(event) {
-        if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-            setOpenDropdown(null);
-        }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-        document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
 
   // Form data
   const [accountForm, setAccountForm] = useState({
@@ -125,11 +110,22 @@ const EmailSettings = () => {
     confirmPassword: '',
     quota: 1024,
   });
-  const [forwarderForm, setForwarderForm] = useState({
-    source: '',
-    destination: '',
-  });
   
+  // Check if user is admin
+  const isAdmin = user && (user.is_admin || user.role === 'admin' || user.username === 'root');
+
+  // Event handlers
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setOpenDropdown(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   // Switch to Accounts tab automatically when a domain with accounts is selected
   useEffect(() => {
@@ -205,21 +201,6 @@ const EmailSettings = () => {
     }
   };
 
-  const handleCreateForwarder = async (e) => {
-    e.preventDefault();
-    if (!selectedDomain) return;
-
-    try {
-      await api.post(`/email/domains/${selectedDomain.virtual_host_id}/forwarders`, forwarderForm);
-
-      setShowForwarderModal(false);
-      setForwarderForm({ source: '', destination: '' });
-      fetchDomains();
-    } catch (err) {
-      setError(err.message || 'Failed to create forwarder');
-      console.error('Error creating forwarder:', err);
-    }
-  };
 
   const handleDeleteAccount = async (accountId) => {
     try {
@@ -234,46 +215,23 @@ const EmailSettings = () => {
     }
   };
 
-  const handleDeleteForwarder = async (forwarderId) => {
-    if (!window.confirm('Are you sure you want to delete this forwarder?')) return;
 
-    try {
-      await api.delete(`/email/forwarders/${forwarderId}`);
-
-      fetchDomains();
-    } catch (err) {
-      setError('Failed to delete forwarder');
-      console.error('Error deleting forwarder:', err);
-    }
-  };
-
-  const handleSyncPostfix = async () => {
-    try {
-      setSyncing(true);
-      setError(null);
-      const { data } = await api.post(`/system/postfix/sync`, { use_minimal_schema: true, users_table: 'email_users' });
-      if (data?.success === false) {
-        throw new Error(data?.error || 'Failed to sync Postfix');
-      }
-      // Refresh domains so UI reflects any changes
-      fetchDomains();
-      alert('Postfix synced successfully');
-    } catch (err) {
-      console.error('Error syncing Postfix:', err);
-      setError(err.message || 'Failed to sync Postfix');
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   
 
   const handleRoundcubeAccess = (account) => {
-    const redirect = roundcube.redirectUrl({ email: account.email, domain: selectedDomain?.domain });
-    window.open(redirect, '_blank', 'noopener');
+    // Get default IP from environment or use localhost as fallback
+    const defaultIP = process.env.REACT_APP_DEFAULT_IP || 'localhost';
+    const params = new URLSearchParams();
+    if (account.email) params.set('email', account.email);
+    if (selectedDomain?.domain) params.set('domain', selectedDomain.domain);
+    const qs = params.toString();
+    const url = `http://${defaultIP}/roundcube${qs ? `?${qs}` : ''}`;
+    window.open(url, '_blank', 'noopener');
   };
 
   
+
 
   if (loading) {
     return (
@@ -297,16 +255,6 @@ const EmailSettings = () => {
                 Manage email accounts and forwarders for your Virtual Hosts
               </p>
             </div>
-            <button
-              onClick={handleSyncPostfix}
-              disabled={syncing}
-              className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
-              style={{ backgroundColor: 'var(--accent-color)', color: 'white', opacity: syncing ? 0.8 : 1 }}
-              title="Generate Postfix maps and reload Postfix"
-            >
-              <ArrowPathIcon className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-              <span>{syncing ? 'Syncing…' : 'Sync Postfix'}</span>
-            </button>
           </div>
         </div>
 
@@ -332,7 +280,7 @@ const EmailSettings = () => {
         )}
 
         {/* Statistics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <div className="rounded-xl border p-6" style={{ 
             backgroundColor: 'var(--card-bg)', 
             borderColor: 'var(--border-color)' 
@@ -351,28 +299,7 @@ const EmailSettings = () => {
                   Virtual Hosts
                 </p>
               </div>
-        </div>
-      </div>
-
-          <div className="rounded-xl border p-6" style={{ 
-            backgroundColor: 'var(--card-bg)', 
-            borderColor: 'var(--border-color)' 
-          }}>
-                            <div className="flex items-center">
-              <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ 
-                backgroundColor: 'rgba(34, 197, 94, 0.15)' 
-              }}>
-                <EnvelopeIcon className="w-6 h-6" style={{ color: '#22c55e' }} />
-                    </div>
-              <div className="ml-4">
-                <h3 className="text-2xl font-bold" style={{ color: 'var(--primary-text)' }}>
-                  {domains.reduce((total, domain) => total + (domain.accounts?.length || 0), 0)}
-                </h3>
-                <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                  Email Accounts
-                </p>
-                              </div>
-                            </div>
+            </div>
           </div>
 
           <div className="rounded-xl border p-6" style={{ 
@@ -381,22 +308,20 @@ const EmailSettings = () => {
           }}>
             <div className="flex items-center">
               <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ 
-                backgroundColor: 'rgba(251, 191, 36, 0.15)' 
+                backgroundColor: 'rgba(34, 197, 94, 0.15)' 
               }}>
-                <ForwardIcon className="w-6 h-6" style={{ color: '#fbbf24' }} />
+                <EnvelopeIcon className="w-6 h-6" style={{ color: '#22c55e' }} />
               </div>
               <div className="ml-4">
                 <h3 className="text-2xl font-bold" style={{ color: 'var(--primary-text)' }}>
-                  {domains.reduce((total, domain) => total + (domain.forwarders?.length || 0), 0)}
+                  {domains.reduce((total, domain) => total + (domain.accounts?.length || 0), 0)}
                 </h3>
                 <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                  Forwarders
+                  Email Accounts
                 </p>
               </div>
             </div>
           </div>
-
-          
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -415,7 +340,7 @@ const EmailSettings = () => {
                   color: 'var(--secondary-text)' 
                 }}>
                   {domains.length}
-                    </span>
+                </span>
               </div>
 
               <div className="space-y-2">
@@ -487,30 +412,24 @@ const EmailSettings = () => {
                         Created: {selectedDomain.created_at ? new Date(selectedDomain.created_at).toLocaleDateString() : 'N/A'}
                       </p>
                     </div>
-                            <div className="flex items-center space-x-3">
-                      <button
-                                onClick={() => {
-                          setEditingAccount(null);
-                          setAccountForm({ username: '', password: '', confirmPassword: '', quota: 1024 });
-                          setShowAccountModal(true);
-                        }}
-                        className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
-                        style={{ backgroundColor: 'var(--accent-color)', color: 'white' }}
-                      >
-                        <UserIcon className="w-4 h-4" />
-                        <span>Add Account</span>
-                      </button>
-                              <button
-                        onClick={() => setShowForwarderModal(true)}
-                        className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
-                        style={{ backgroundColor: 'var(--secondary-bg)', color: 'var(--primary-text)' }}
-                              >
-                        <ForwardIcon className="w-4 h-4" />
-                        <span>Add Forwarder</span>
-                      </button>
-                    </div>
-        </div>
-      </div>
+                    {isAdmin && (
+                      <div className="flex items-center space-x-3">
+                        <button
+                          onClick={() => {
+                            setEditingAccount(null);
+                            setAccountForm({ username: '', password: '', confirmPassword: '', quota: 1024 });
+                            setShowAccountModal(true);
+                          }}
+                          className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
+                          style={{ backgroundColor: 'var(--accent-color)', color: 'white' }}
+                        >
+                          <UserIcon className="w-4 h-4" />
+                          <span>Add Account</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
 
                 {/* Tabs */}
                 <div className="rounded-xl border" style={{ 
@@ -520,8 +439,7 @@ const EmailSettings = () => {
                   <div className="border-b" style={{ borderColor: 'var(--border-color)' }}>
                     <div className="flex">
                       {[
-                        { id: 'accounts', label: 'Email Accounts', count: selectedDomain.accounts?.length || 0 },
-                        { id: 'forwarders', label: 'Forwarders', count: selectedDomain.forwarders?.length || 0 }
+                        { id: 'accounts', label: 'Email Accounts', count: selectedDomain.accounts?.length || 0 }
                       ].map((tab) => (
                         <button
                           key={tab.id}
@@ -537,8 +455,8 @@ const EmailSettings = () => {
                           {tab.label} ({tab.count})
                         </button>
                       ))}
-            </div>
-                </div>
+                    </div>
+                  </div>
 
                   <div className="p-6">
                     {activeTab === 'accounts' && (
@@ -550,7 +468,7 @@ const EmailSettings = () => {
                                 <div
                                   key={account.email}
                                   className="p-4 rounded-lg border"
-                    style={{ 
+                                  style={{ 
                                     backgroundColor: 'var(--secondary-bg)', 
                                     borderColor: 'var(--border-color)' 
                                   }}
@@ -561,15 +479,15 @@ const EmailSettings = () => {
                                         backgroundColor: 'rgba(59, 130, 246, 0.15)' 
                                       }}>
                                         <EnvelopeIcon className="w-5 h-5" style={{ color: '#3b82f6' }} />
-              </div>
-              <div>
+                                      </div>
+                                      <div>
                                         <h3 className="font-medium" style={{ color: 'var(--primary-text)' }}>
                                           {account.email}
                                         </h3>
                                       </div>
                                     </div>
                                     <div className="flex items-center space-x-2">
-                                      {!account.id && (
+                                      {!account.id && isAdmin && (
                                         <button
                                           onClick={() => {
                                             setEditingAccount(null);
@@ -595,7 +513,7 @@ const EmailSettings = () => {
                                         <span>Webmail</span>
                                       </button>
                                       
-                                      {account.id && (
+                                      {account.id && isAdmin && (
                                         <div className="relative" ref={openDropdown === account.id ? dropdownRef : null}>
                                           <button
                                             onClick={() => setOpenDropdown(openDropdown === account.id ? null : account.id)}
@@ -650,72 +568,16 @@ const EmailSettings = () => {
                             <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
                               No email accounts yet
                             </p>
-                            <button
-                              onClick={() => { setEditingAccount(null); setAccountForm({ username: '', password: '', confirmPassword: '', quota: 1024 }); setShowAccountModal(true); }}
-                              className="mt-2 text-sm underline"
-                              style={{ color: 'var(--accent-color)' }}
-                            >
-                              Create your first account
-                            </button>
-              </div>
-                        )}
-            </div>
-                    )}
-
-                    {activeTab === 'forwarders' && (
-                      <div>
-                        {selectedDomain.forwarders && selectedDomain.forwarders.length > 0 ? (
-                          <div className="space-y-4">
-                            {selectedDomain.forwarders.map((forwarder) => (
-                              <div
-                                key={forwarder.id}
-                                className="p-4 rounded-lg border"
-                                style={{ 
-                                  backgroundColor: 'var(--secondary-bg)', 
-                                  borderColor: 'var(--border-color)' 
-                                }}
+                            {isAdmin && (
+                              <button
+                                onClick={() => { setEditingAccount(null); setAccountForm({ username: '', password: '', confirmPassword: '', quota: 1024 }); setShowAccountModal(true); }}
+                                className="mt-2 text-sm underline"
+                                style={{ color: 'var(--accent-color)' }}
                               >
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center space-x-3">
-                                    <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ 
-                                      backgroundColor: 'rgba(34, 197, 94, 0.15)' 
-                                    }}>
-                                      <ForwardIcon className="w-5 h-5" style={{ color: '#22c55e' }} />
-                                    </div>
-                                    <div>
-                                      <h3 className="font-medium" style={{ color: 'var(--primary-text)' }}>
-                                        {forwarder.source}@{selectedDomain.domain}
-                                      </h3>
-                                      <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                                        → {forwarder.destination}
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <button
-                                    onClick={() => handleDeleteForwarder(forwarder.id)}
-                                    className="p-2 rounded transition-colors"
-                                    style={{ color: 'var(--secondary-text)' }}
-                                  >
-                                    <TrashIcon className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
+                                Create your first account
+                              </button>
+                            )}
                           </div>
-                        ) : (
-                          <div className="text-center py-12">
-                            <ForwardIcon className="w-12 h-12 mx-auto mb-3" style={{ color: 'var(--secondary-text)' }} />
-                            <p className="text-sm" style={{ color: 'var(--secondary-text)' }}>
-                              No email forwarders yet
-                            </p>
-                            <button
-                              onClick={() => setShowForwarderModal(true)}
-                              className="mt-2 text-sm underline"
-                              style={{ color: 'var(--accent-color)' }}
-                            >
-                              Create your first forwarder
-                            </button>
-            </div>
                         )}
                       </div>
                     )}
@@ -737,7 +599,6 @@ const EmailSettings = () => {
               </div>
             )}
           </div>
-          </div>
         </div>
 
       {/* Account Modal */}
@@ -748,7 +609,9 @@ const EmailSettings = () => {
         maxWidth="max-w-md"
         footer={(
           <div className="flex items-center justify-end gap-3">
-            <ModalButton variant="secondary" onClick={() => setShowAccountModal(false)}>Cancel</ModalButton>
+            <ModalButton variant="secondary" onClick={() => setShowAccountModal(false)}>
+              Cancel
+            </ModalButton>
             <ModalButton onClick={() => document.getElementById('accountFormSubmit').click()}>
               {editingAccount ? 'Update Account' : 'Create Account'}
             </ModalButton>
@@ -778,6 +641,7 @@ const EmailSettings = () => {
                   </div>
                 </div>
               </div>
+              
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
                   Password
@@ -792,6 +656,7 @@ const EmailSettings = () => {
                   required={!editingAccount}
                 />
               </div>
+              
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
                   Confirm Password
@@ -806,7 +671,6 @@ const EmailSettings = () => {
                   required={!editingAccount || !!accountForm.password}
                 />
               </div>
-              
             </div>
             <button id="accountFormSubmit" type="submit" className="hidden">submit</button>
           </form>
@@ -821,8 +685,12 @@ const EmailSettings = () => {
         maxWidth="max-w-md"
         footer={(
           <div className="flex items-center justify-end gap-3">
-            <ModalButton variant="secondary" onClick={() => { setShowDeleteModal(false); setAccountToDelete(null); }}>Cancel</ModalButton>
-            <ModalButton variant="danger" onClick={() => accountToDelete && handleDeleteAccount(accountToDelete.id)}>Delete</ModalButton>
+            <ModalButton variant="secondary" onClick={() => { setShowDeleteModal(false); setAccountToDelete(null); }}>
+              Cancel
+            </ModalButton>
+            <ModalButton variant="danger" onClick={() => accountToDelete && handleDeleteAccount(accountToDelete.id)}>
+              Delete
+            </ModalButton>
           </div>
         )}
       >
@@ -832,63 +700,7 @@ const EmailSettings = () => {
           </p>
         </ModalSection>
       </BaseModal>
-
-      {/* Forwarder Modal */}
-      <BaseModal
-        isOpen={showForwarderModal}
-        onClose={() => setShowForwarderModal(false)}
-        title="Add Email Forwarder"
-        maxWidth="max-w-md"
-        footer={(
-          <div className="flex items-center justify-end gap-3">
-            <ModalButton variant="secondary" onClick={() => setShowForwarderModal(false)}>Cancel</ModalButton>
-            <ModalButton onClick={() => document.getElementById('forwarderFormSubmit').click()}>Create Forwarder</ModalButton>
-          </div>
-        )}
-      >
-        <ModalSection>
-          <form onSubmit={handleCreateForwarder}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                  Source Address
-                </label>
-                <div className="flex">
-                  <input
-                    type="text"
-                    value={forwarderForm.source}
-                    onChange={(e) => setForwarderForm(prev => ({ ...prev, source: e.target.value }))}
-                    placeholder="info"
-                    className="flex-1 px-3 py-2 rounded-l-lg border-r-0 border"
-                    style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
-                    required
-                  />
-                  <div className="px-3 py-2 rounded-r-lg border flex items-center" style={{ backgroundColor: 'var(--secondary-bg)', borderColor: 'var(--border-color)', color: 'var(--secondary-text)' }}>
-                    @{selectedDomain?.domain}
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--primary-text)' }}>
-                  Destination Email
-                </label>
-                <input
-                  type="email"
-                  value={forwarderForm.destination}
-                  onChange={(e) => setForwarderForm(prev => ({ ...prev, destination: e.target.value }))}
-                  placeholder="user@example.com"
-                  className="w-full px-3 py-2 rounded-lg border"
-                  style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
-                  required
-                />
-              </div>
-            </div>
-            <button id="forwarderFormSubmit" type="submit" className="hidden">submit</button>
-          </form>
-        </ModalSection>
-      </BaseModal>
-
-      
+      </div>
     </div>
   );
 };

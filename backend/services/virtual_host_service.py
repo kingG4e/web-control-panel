@@ -26,6 +26,14 @@ class VirtualHostService(BaseService):
             # Create document root directory if it doesn't exist
             os.makedirs(virtual_host.document_root, exist_ok=True)
             os.chmod(virtual_host.document_root, 0o755)
+            
+            # Set proper ownership for www-data access
+            if hasattr(virtual_host, 'linux_username') and virtual_host.linux_username:
+                subprocess.run(['chown', '-R', f'{virtual_host.linux_username}:www-data', virtual_host.document_root], check=True)
+                print(f"Set ownership: {virtual_host.document_root} -> {virtual_host.linux_username}:www-data")
+            else:
+                subprocess.run(['chown', '-R', 'www-data:www-data', virtual_host.document_root], check=True)
+                print(f"Set ownership: {virtual_host.document_root} -> www-data:www-data")
 
             # Create default index using the same template as normal creation
             try:

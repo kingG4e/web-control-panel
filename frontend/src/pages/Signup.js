@@ -76,11 +76,11 @@ const Signup = () => {
         want_dns: form.want_dns,
         want_email: form.want_email,
         want_mysql: form.want_mysql,
-        storage_quota_mb: form.storage_quota_mb ? Number(form.storage_quota_mb) : undefined,
+        storage_quota_mb: form.storage_quota_mb ? Number(form.storage_quota_mb) : 100,
         // Email details
         email_username: form.want_email && form.email_username ? form.email_username : undefined,
         email_password: form.want_email && form.email_password ? form.email_password : undefined,
-        email_quota: form.want_email && form.email_quota ? Number(form.email_quota) : undefined,
+        email_quota: form.want_email ? (form.email_quota ? Number(form.email_quota) : 100) : undefined,
         // DB details
         db_name: form.want_mysql && form.db_name ? `db_${form.db_name}` : undefined,
         db_username: form.want_mysql && form.db_username ? form.db_username : undefined,

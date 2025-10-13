@@ -64,18 +64,45 @@ class MySQLService:
             conn = mysql.connector.connect(**self.config)
             cursor = conn.cursor()
 
-            try:
-                # Prefer idempotent creation where supported
-                cursor.execute("CREATE USER IF NOT EXISTS %s@%s IDENTIFIED BY %s", (username, host, password))
-                conn.commit()
-            except Error as e:
-                # 1396: Operation CREATE USER failed (user may already exist)
-                if getattr(e, 'errno', None) == 1396 or 'Operation CREATE USER failed' in str(e):
-                    # Attempt to update existing user's password
+            # Check if user already exists
+            cursor.execute("SELECT 1 FROM mysql.user WHERE user = %s AND host = %s", (username, host))
+            user_exists = cursor.fetchone() is not None
+
+            if user_exists:
+                # User exists, update password
+                try:
                     cursor.execute("ALTER USER %s@%s IDENTIFIED BY %s", (username, host, password))
                     conn.commit()
-                else:
-                    raise
+                except Error as e:
+                    # If ALTER USER fails, try SET PASSWORD
+                    try:
+                        cursor.execute("SET PASSWORD FOR %s@%s = %s", (username, host, password))
+                        conn.commit()
+                    except Error as e2:
+                        raise Exception(f'Failed to update existing user password: {str(e2)}. Original error: {str(e)}')
+            else:
+                # User doesn't exist, create new user
+                try:
+                    cursor.execute("CREATE USER %s@%s IDENTIFIED BY %s", (username, host, password))
+                    conn.commit()
+                except Error as e:
+                    # If CREATE USER fails, try with IF NOT EXISTS
+                    try:
+                        cursor.execute("CREATE USER IF NOT EXISTS %s@%s IDENTIFIED BY %s", (username, host, password))
+                        conn.commit()
+                    except Error as e2:
+                        # Provide more specific error information
+                        if "not allowed to create a user with GRANT" in str(e2):
+                            raise Exception(f'MySQL root user lacks CREATE USER privilege. Please ensure the root user has CREATE USER and GRANT OPTION privileges. Error: {str(e2)}')
+                        elif "Access denied" in str(e2):
+                            raise Exception(f'Access denied when creating user. Please check MySQL root user permissions. Error: {str(e2)}')
+                        else:
+                            raise Exception(f'Failed to create user: {str(e2)}. Original error: {str(e)}')
+                
+                # Verify user was created successfully
+                cursor.execute("SELECT 1 FROM mysql.user WHERE user = %s AND host = %s", (username, host))
+                if cursor.fetchone() is None:
+                    raise Exception(f'User {username}@{host} was not created successfully')
 
             cursor.close()
             conn.close()
@@ -130,6 +157,7 @@ class MySQLService:
     def grant_privileges(self, username, database, privileges='ALL PRIVILEGES', host='%'):
         """Grant privileges to a user on a database"""
         try:
+            print(f"Granting privileges: {username}@{host} on {database} with privileges: {privileges}")
             conn = mysql.connector.connect(**self.config)
             cursor = conn.cursor()
 
@@ -139,17 +167,39 @@ class MySQLService:
                 if p not in ALLOWED_PRIVILEGES:
                     raise Exception(f"Invalid privilege: {p}")
             
-            # Grant privileges
+            # Validate database name
             if not is_safe_database_name(database):
                 raise Exception(f'Invalid database name: {database}')
-            cursor.execute(f"GRANT {privileges} ON `{database}`.* TO %s@%s", (username, host))
-            cursor.execute("FLUSH PRIVILEGES")
-            conn.commit()
+            
+            # Check if user exists before granting privileges
+            print(f"Checking if user {username}@{host} exists in MySQL...")
+            cursor.execute("SELECT 1 FROM mysql.user WHERE user = %s AND host = %s", (username, host))
+            if cursor.fetchone() is None:
+                raise Exception(f'User {username}@{host} does not exist. Please create the user first.')
+            print(f"User {username}@{host} exists in MySQL")
+            
+            # Grant privileges
+            try:
+                print(f"Executing: GRANT {privileges} ON `{database}`.* TO {username}@{host}")
+                cursor.execute(f"GRANT {privileges} ON `{database}`.* TO %s@%s", (username, host))
+                cursor.execute("FLUSH PRIVILEGES")
+                conn.commit()
+                print(f"Successfully granted privileges to {username}@{host} on {database}")
+            except Error as e:
+                # If GRANT fails, provide more specific error information
+                print(f"GRANT failed with error: {str(e)}")
+                if "not allowed to create a user with GRANT" in str(e):
+                    raise Exception(f'MySQL root user lacks GRANT privilege. Please ensure the root user has CREATE USER and GRANT OPTION privileges. Error: {str(e)}')
+                elif "Access denied" in str(e):
+                    raise Exception(f'Access denied when granting privileges. Please check MySQL root user permissions. Error: {str(e)}')
+                else:
+                    raise Exception(f'Failed to grant privileges: {str(e)}')
             
             cursor.close()
             conn.close()
             
         except Error as e:
+            print(f"MySQL connection error: {str(e)}")
             raise Exception(f'Failed to grant privileges: {str(e)}')
 
     def revoke_privileges(self, username, database, host='%'):
@@ -283,6 +333,22 @@ class MySQLService:
         except Error as e:
             raise Exception(f'Failed to list databases: {str(e)}')
 
+    def database_exists(self, name):
+        """Check if a MySQL database exists."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+            cursor.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (name,))
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            return result is not None
+        except Error as e:
+            # In case of error, it's safer to assume database might not exist
+            # or there's a connection issue. Logging the error is important.
+            print(f"Error checking if database exists: {e}")
+            return False
+    
     def user_exists(self, username, host='%'):
         """Check if a MySQL user exists."""
         try:
@@ -290,10 +356,152 @@ class MySQLService:
             cursor = conn.cursor()
             cursor.execute("SELECT 1 FROM mysql.user WHERE user = %s AND host = %s", (username, host))
             result = cursor.fetchone()
+            cursor.close()
             conn.close()
             return result is not None
         except Error as e:
             # In case of error, it's safer to assume user might not exist
             # or there's a connection issue. Logging the error is important.
             print(f"Error checking if user exists: {e}")
-            return False 
+            return False
+
+    def ensure_user_exists(self, username, password, host='%'):
+        """Ensure a MySQL user exists, creating it if necessary."""
+        try:
+            if not self.user_exists(username, host):
+                self.create_user(username, password, host)
+                # Verify creation was successful
+                if not self.user_exists(username, host):
+                    raise Exception(f'Failed to verify user {username}@{host} was created')
+            return True
+        except Exception as e:
+            raise Exception(f'Failed to ensure user exists: {str(e)}')
+
+    def list_users(self):
+        """List all MySQL users from the server."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+            
+            # Query to get user information from mysql.user table
+            cursor.execute("""
+                SELECT 
+                    user,
+                    host,
+                    authentication_string,
+                    plugin,
+                    password_expired,
+                    password_last_changed,
+                    password_lifetime,
+                    account_locked,
+                    password_reuse_time,
+                    password_require_current,
+                    user_attributes
+                FROM mysql.user 
+                WHERE user != 'mysql.session' 
+                AND user != 'mysql.sys' 
+                AND user != 'root'
+                ORDER BY user, host
+            """)
+            
+            users = []
+            for row in cursor.fetchall():
+                user_data = {
+                    'username': row[0],
+                    'host': row[1],
+                    'authentication_string': row[2],
+                    'plugin': row[3],
+                    'password_expired': row[4],
+                    'password_last_changed': row[5],
+                    'password_lifetime': row[6],
+                    'account_locked': row[7],
+                    'password_reuse_time': row[8],
+                    'password_require_current': row[9],
+                    'user_attributes': row[10],
+                    'status': 'active' if not row[7] else 'locked'  # account_locked determines status
+                }
+                users.append(user_data)
+            
+            cursor.close()
+            conn.close()
+            return users
+            
+        except Error as e:
+            raise Exception(f'Failed to list users: {str(e)}')
+
+    def get_user_privileges(self, username, host='%'):
+        """Get privileges for a specific user."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+            
+            # Get global privileges
+            cursor.execute("SHOW GRANTS FOR %s@%s", (username, host))
+            grants = cursor.fetchall()
+            
+            privileges = []
+            for grant in grants:
+                privileges.append(grant[0])
+            
+            cursor.close()
+            conn.close()
+            return privileges
+            
+        except Error as e:
+            raise Exception(f'Failed to get user privileges: {str(e)}')
+
+    def check_root_privileges(self):
+        """Check if the MySQL root user has necessary privileges for user management."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+            
+            # Check if root user has CREATE USER privilege
+            cursor.execute("SHOW GRANTS FOR 'root'@'localhost'")
+            root_grants = cursor.fetchall()
+            
+            has_create_user = False
+            has_grant_option = False
+            
+            for grant in root_grants:
+                grant_text = grant[0].upper()
+                if 'CREATE USER' in grant_text:
+                    has_create_user = True
+                if 'GRANT OPTION' in grant_text:
+                    has_grant_option = True
+            
+            cursor.close()
+            conn.close()
+            
+            return {
+                'has_create_user': has_create_user,
+                'has_grant_option': has_grant_option,
+                'grants': [grant[0] for grant in root_grants]
+            }
+            
+        except Error as e:
+            raise Exception(f'Failed to check root privileges: {str(e)}')
+
+    def fix_root_privileges(self):
+        """Attempt to fix MySQL root user privileges (requires super user access)."""
+        try:
+            conn = mysql.connector.connect(**self.config)
+            cursor = conn.cursor()
+            
+            # Try to grant necessary privileges to root user
+            try:
+                cursor.execute("GRANT CREATE USER ON *.* TO 'root'@'localhost' WITH GRANT OPTION")
+                cursor.execute("GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION")
+                cursor.execute("FLUSH PRIVILEGES")
+                conn.commit()
+                
+                cursor.close()
+                conn.close()
+                return True
+            except Error as e:
+                cursor.close()
+                conn.close()
+                raise Exception(f'Failed to grant privileges to root user: {str(e)}')
+                
+        except Error as e:
+            raise Exception(f'Failed to fix root privileges: {str(e)}') 

@@ -43,28 +43,20 @@ class RoundcubeService:
     
     def get_roundcube_url(self, domain=None):
         """Get the Roundcube webmail URL"""
+        # Get default IP from environment or use localhost as fallback
+        import os
+        default_ip = os.environ.get('DNS_DEFAULT_IP') or os.environ.get('SERVER_PUBLIC_IP') or 'localhost'
+        
         if self.is_windows:
-            return "http://localhost/roundcube"  # Simulation
+            return f"http://{default_ip}/roundcube"  # Simulation
         
         # If explicit URL is configured, use it directly
         if self.rc_webmail_url:
             # If email/domain specific, caller will append query params
             return self.rc_webmail_url.rstrip('/')
         
-        # Determine base path (default: /roundcube). Allow custom base path from env
-        base_path = (self.rc_base_path or 'roundcube').strip('/')
-        
-        # Default URLs to try
-        possible_urls = [
-            f"https://{domain}/{base_path}" if domain else None,
-            f"http://{domain}/{base_path}" if domain else None,
-            f"https://localhost/{base_path}",
-            f"http://localhost/{base_path}",
-            "https://webmail.localhost",
-            "http://webmail.localhost"
-        ]
-        
-        return [url for url in possible_urls if url is not None]
+        # Use default IP for roundcube URL
+        return f"http://{default_ip}/roundcube"
     
     def configure_roundcube_database(self, db_host='localhost', db_name='roundcube', db_user='roundcube', db_password=None):
         """Configure Roundcube database connection"""
