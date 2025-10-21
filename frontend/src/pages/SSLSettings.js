@@ -197,13 +197,14 @@ const SSLSettings = () => {
       <div className="space-y-6">
         {/* Error Alert */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--error-bg)', border: '1px solid var(--error-bg)' }}>
             <div className="flex items-center">
-              <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mr-2" />
-              <span className="text-red-800">{error}</span>
+              <ExclamationTriangleIcon className="w-5 h-5 mr-2" style={{ color: 'var(--danger-color)' }} />
+              <span style={{ color: 'var(--danger-color)' }}>{error}</span>
               <button
                 onClick={() => setError(null)}
-                className="ml-auto text-red-500 hover:text-red-700"
+                className="ml-auto"
+                style={{ color: 'var(--danger-color)' }}
               >
                 ×
               </button>
@@ -219,7 +220,7 @@ const SSLSettings = () => {
                 <p className="text-sm text-[var(--secondary-text)]">Total Certificates</p>
                 <p className="text-2xl font-bold text-[var(--primary-text)]">{totalCertificates}</p>
               </div>
-              <ShieldCheckIcon className="w-8 h-8 text-blue-500" />
+              <ShieldCheckIcon className="w-8 h-8" style={{ color: 'var(--info-color)' }} />
             </div>
           </div>
           
@@ -227,9 +228,9 @@ const SSLSettings = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-[var(--secondary-text)]">Active</p>
-                <p className="text-2xl font-bold text-green-600">{validCertificates}</p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--success-color)' }}>{validCertificates}</p>
               </div>
-              <CheckCircleIcon className="w-8 h-8 text-green-500" />
+              <CheckCircleIcon className="w-8 h-8" style={{ color: 'var(--success-color)' }} />
             </div>
           </div>
           
@@ -237,9 +238,9 @@ const SSLSettings = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-[var(--secondary-text)]">Auto-Renewal</p>
-                <p className="text-2xl font-bold text-blue-600">{autoRenewEnabled}</p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--info-color)' }}>{autoRenewEnabled}</p>
               </div>
-              <ArrowPathIcon className="w-8 h-8 text-blue-500" />
+              <ArrowPathIcon className="w-8 h-8" style={{ color: 'var(--info-color)' }} />
             </div>
           </div>
           
@@ -247,9 +248,9 @@ const SSLSettings = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-[var(--secondary-text)]">Expiring Soon</p>
-                <p className="text-2xl font-bold text-orange-600">{expiringSoonCerts.length}</p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--warning-color)' }}>{expiringSoonCerts.length}</p>
               </div>
-              <ExclamationTriangleIcon className="w-8 h-8 text-orange-500" />
+              <ExclamationTriangleIcon className="w-8 h-8" style={{ color: 'var(--warning-color)' }} />
             </div>
           </div>
         </div>
@@ -310,31 +311,29 @@ const SSLSettings = () => {
                     <td className="px-6 py-4">
                       <div className="flex items-center">
                           {cert.status === 'active' ? (
-                            <CheckCircleIcon className="w-5 h-5 text-green-500 mr-3" />
+                            <CheckCircleIcon className="w-5 h-5 mr-3" style={{ color: 'var(--success-color)' }} />
                           ) : (
-                            <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mr-3" />
+                            <ExclamationTriangleIcon className="w-5 h-5 mr-3" style={{ color: 'var(--danger-color)' }} />
                           )}
                           <div>
                             <div className="text-sm font-medium text-[var(--primary-text)]">{cert.domain}</div>
                             {isExpiringSoon && (
-                              <div className="text-xs text-orange-500">Expires in {daysUntilExpiry} days</div>
+                            <div className="text-xs" style={{ color: 'var(--warning-color)' }}>Expires in {daysUntilExpiry} days</div>
                             )}
                             {isExpired && (
-                              <div className="text-xs text-red-500">Expired</div>
+                            <div className="text-xs" style={{ color: 'var(--danger-color)' }}>Expired</div>
                             )}
                           </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium badge badge-info-strong">
                           {cert.issuer || "Let's Encrypt"}
                       </span>
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          cert.status === 'active'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-red-100 text-red-800'
+                          cert.status === 'active' ? 'badge-success-strong' : 'badge-error-strong'
                       }`}>
                           {cert.status === 'active' ? 'Active' : 'Inactive'}
                       </span>
@@ -344,10 +343,8 @@ const SSLSettings = () => {
                           {formatDate(cert.valid_until)}
                         </div>
                         <div className={`text-xs ${
-                          isExpired ? 'text-red-500' : 
-                          isExpiringSoon ? 'text-orange-500' : 
-                          'text-[var(--secondary-text)]'
-                        }`}>
+                          isExpired ? '' : isExpiringSoon ? '' : 'text-[var(--secondary-text)]'
+                        }`} style={{ color: isExpired ? 'var(--danger-color)' : isExpiringSoon ? 'var(--warning-color)' : undefined }}>
                           {isExpired ? 'Expired' : 
                            isExpiringSoon ? `${daysUntilExpiry} days left` : 
                            `${daysUntilExpiry} days left`}
@@ -355,9 +352,7 @@ const SSLSettings = () => {
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          cert.auto_renewal
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-800'
+                          cert.auto_renewal ? 'badge-success-strong' : 'badge-neutral'
                       }`}>
                           {cert.auto_renewal ? 'Enabled' : 'Disabled'}
                       </span>
@@ -367,11 +362,12 @@ const SSLSettings = () => {
                         <button
                             onClick={() => handleRenewCertificate(cert.id)}
                             disabled={actionLoading[`renew_${cert.id}`]}
-                            className="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                            className="inline-flex items-center px-2 py-1 text-xs font-medium disabled:opacity-50"
+                            style={{ color: 'var(--info-color)' }}
                             title="Renew Certificate"
                           >
                             {actionLoading[`renew_${cert.id}`] ? (
-                              <div className="w-4 h-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"></div>
+                              <div className="w-4 h-4 animate-spin rounded-full border-2 border-t-transparent" style={{ borderColor: 'var(--info-color)' }}></div>
                             ) : (
                               <ArrowPathIcon className="w-4 h-4" />
                             )}
@@ -379,11 +375,12 @@ const SSLSettings = () => {
                         <button
                             onClick={() => handleDeleteCertificate(cert.id)}
                             disabled={actionLoading[cert.id]}
-                            className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-50"
+                            className="inline-flex items-center px-2 py-1 text-xs font-medium disabled:opacity-50"
+                            style={{ color: 'var(--danger-color)' }}
                             title="Delete Certificate"
                         >
                             {actionLoading[cert.id] ? (
-                              <div className="w-4 h-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent"></div>
+                              <div className="w-4 h-4 animate-spin rounded-full border-2 border-t-transparent" style={{ borderColor: 'var(--danger-color)' }}></div>
                             ) : (
                               <TrashIcon className="w-4 h-4" />
                             )}
@@ -540,12 +537,12 @@ const SSLSettings = () => {
                   <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">
                     Certificate Type
                   </label>
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--info-bg)', border: '1px solid var(--info-bg)' }}>
                       <div className="flex items-center">
-                        <ShieldCheckIcon className="w-5 h-5 text-blue-500 mr-2" />
-                        <span className="text-blue-800">Let's Encrypt (Free SSL Certificate)</span>
+                        <ShieldCheckIcon className="w-5 h-5 mr-2" style={{ color: 'var(--info-color)' }} />
+                        <span style={{ color: 'var(--info-color)' }}>Let's Encrypt (Free SSL Certificate)</span>
                 </div>
-                      <p className="text-sm text-blue-600 mt-1">
+                      <p className="text-sm mt-1" style={{ color: 'var(--info-color)' }}>
                         Automatically issued and renewed SSL certificate
                       </p>
                     </div>
@@ -557,7 +554,8 @@ const SSLSettings = () => {
                       type="checkbox"
                       checked={formData.auto_renew}
                       onChange={(e) => setFormData({ ...formData, auto_renew: e.target.checked })}
-                      className="rounded border-[var(--border-color)] text-blue-600 focus:ring-blue-500"
+                      className="rounded border-[var(--border-color)]"
+                      style={{ color: 'var(--info-color)' }}
                     />
                     <span className="text-sm font-medium text-[var(--secondary-text)]">Enable Auto Renewal</span>
                   </label>

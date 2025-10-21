@@ -96,14 +96,7 @@ const Database = () => {
     use_persistent_connections: true,
     auto_reconnect: true,
   });
-  const [rootPassword, setRootPassword] = useState('');
-  const [mysqlStatus, setMysqlStatus] = useState(null); // 'success' | 'error' | null
-  const [mysqlError, setMysqlError] = useState('');
-  const [connecting, setConnecting] = useState(false);
   const [dbToDelete, setDbToDelete] = useState(null); // For delete confirmation
-  const [mysqlPrivileges, setMysqlPrivileges] = useState(null); // MySQL privileges info
-  const [checkingPrivileges, setCheckingPrivileges] = useState(false);
-  const [fixingPrivileges, setFixingPrivileges] = useState(false);
 
   const [allDbUsers, setAllDbUsers] = useState([]);
   const [userSelectionMode, setUserSelectionMode] = useState('create'); // 'create' or 'existing'
@@ -418,29 +411,6 @@ const Database = () => {
   };
 
 
-  // ฟังก์ชันสำหรับเชื่อมต่อ MySQL ด้วย root password
-  const handleRootConnect = async (e) => {
-    e.preventDefault();
-    setConnecting(true);
-    setMysqlStatus(null);
-    setMysqlError('');
-    try {
-      const res = await api.post('/mysql-root-connect', { password: rootPassword });
-      const data = res.data;
-      if (data.success) {
-        setMysqlStatus('success');
-        setMysqlError('');
-      } else {
-        setMysqlStatus('error');
-        setMysqlError(data.error || 'Unknown error');
-      }
-    } catch (err) {
-      setMysqlStatus('error');
-      setMysqlError(err.message || 'Unknown error');
-    } finally {
-      setConnecting(false);
-    }
-  };
 
   // ฟังก์ชันสำหรับเปิด phpMyAdmin
   const handleViewPhpMyAdmin = (database) => {
@@ -452,42 +422,6 @@ const Database = () => {
     window.open(phpmyadminUrl, '_blank');
   };
 
-  // ฟังก์ชันสำหรับตรวจสอบ MySQL privileges
-  const handleCheckMysqlPrivileges = async () => {
-    setCheckingPrivileges(true);
-    try {
-      const result = await dbApi.checkMysqlPrivileges();
-      if (result.success) {
-        setMysqlPrivileges(result.data);
-      } else {
-        setError(result.error || 'Failed to check MySQL privileges');
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to check MySQL privileges');
-    } finally {
-      setCheckingPrivileges(false);
-    }
-  };
-
-  // ฟังก์ชันสำหรับแก้ไข MySQL privileges
-  const handleFixMysqlPrivileges = async () => {
-    setFixingPrivileges(true);
-    try {
-      const result = await dbApi.fixMysqlPrivileges();
-      if (result.success) {
-        setError(null);
-        alert('MySQL privileges have been fixed successfully!');
-        // Refresh privileges info
-        handleCheckMysqlPrivileges();
-      } else {
-        setError(result.error || 'Failed to fix MySQL privileges');
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to fix MySQL privileges');
-    } finally {
-      setFixingPrivileges(false);
-    }
-  };
 
   const handleSyncDatabases = async () => {
     setLoading(true);
@@ -519,7 +453,7 @@ const Database = () => {
         className={`px-3 py-1 rounded text-sm ${
           selectedDatabases.length === 0
             ? 'bg-[var(--disabled-bg)] text-[var(--disabled-text)]'
-            : 'bg-[var(--primary)] text-white hover:bg-[var(--primary-dark)]'
+            : 'text-white'
         } transition-colors`}
       >
         Backup
@@ -613,7 +547,8 @@ const Database = () => {
                 });
                 setShowForm(true);
               }}
-              className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] transition-colors flex items-center"
+              className="px-4 py-2 rounded-lg transition-colors flex items-center"
+              style={{ backgroundColor: 'var(--accent-color)', color: 'white' }}
             >
               <PlusIcon className="w-4 h-4 mr-2" />
               Create Database
@@ -623,114 +558,6 @@ const Database = () => {
       }
     >
       <div className="space-y-6">
-        {/* Root MySQL Connect UI (เฉพาะ root/admin) */}
-        {user?.role === 'admin' && (
-          <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg flex flex-col md:flex-row items-center gap-4">
-            <form onSubmit={handleRootConnect} className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
-              <label className="text-sm font-medium text-gray-700 mr-2">MySQL Root Password:</label>
-              <input
-                type="password"
-                value={rootPassword}
-                onChange={e => setRootPassword(e.target.value)}
-                className="input-field w-48"
-                placeholder="Enter root password"
-                required
-                disabled={connecting}
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                disabled={connecting || !rootPassword}
-              >
-                {connecting ? 'Connecting...' : 'Connect'}
-              </button>
-            </form>
-            <div className="flex items-center min-h-[32px]">
-              {mysqlStatus === 'success' && (
-                <span className="flex items-center text-green-600 ml-2"><CheckCircleIcon className="w-5 h-5 mr-1" /> Connected</span>
-              )}
-              {mysqlStatus === 'error' && (
-                <span className="flex items-center text-red-600 ml-2"><XCircleIcon className="w-5 h-5 mr-1" /> {mysqlError}</span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* MySQL Privileges Check - Admin Only */}
-        {user?.role === 'admin' && (
-          <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg flex flex-col md:flex-row items-start gap-4">
-            <div className="flex-1">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">MySQL Privileges Check</h4>
-              <p className="text-xs text-gray-600 mb-3">
-                Check if MySQL root user has necessary privileges to create and manage database users.
-              </p>
-              
-              <div className="flex gap-2 mb-3">
-                <button
-                  onClick={handleCheckMysqlPrivileges}
-                  disabled={checkingPrivileges}
-                  className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
-                >
-                  {checkingPrivileges ? 'Checking...' : 'Check Privileges'}
-                </button>
-                
-                {mysqlPrivileges && (
-                  <button
-                    onClick={handleFixMysqlPrivileges}
-                    disabled={fixingPrivileges || (mysqlPrivileges.has_create_user && mysqlPrivileges.has_grant_option)}
-                    className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition-colors disabled:opacity-50"
-                  >
-                    {fixingPrivileges ? 'Fixing...' : 'Fix Privileges'}
-                  </button>
-                )}
-              </div>
-
-              {mysqlPrivileges && (
-                <div className="bg-white border border-gray-200 rounded p-3">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div className="flex items-center">
-                      <span className="mr-2">CREATE USER:</span>
-                      {mysqlPrivileges.has_create_user ? (
-                        <span className="flex items-center text-green-600">
-                          <CheckCircleIcon className="w-4 h-4 mr-1" />
-                          Available
-                        </span>
-                      ) : (
-                        <span className="flex items-center text-red-600">
-                          <XCircleIcon className="w-4 h-4 mr-1" />
-                          Missing
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center">
-                      <span className="mr-2">GRANT OPTION:</span>
-                      {mysqlPrivileges.has_grant_option ? (
-                        <span className="flex items-center text-green-600">
-                          <CheckCircleIcon className="w-4 h-4 mr-1" />
-                          Available
-                        </span>
-                      ) : (
-                        <span className="flex items-center text-red-600">
-                          <XCircleIcon className="w-4 h-4 mr-1" />
-                          Missing
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {(!mysqlPrivileges.has_create_user || !mysqlPrivileges.has_grant_option) && (
-                    <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                      <p className="text-xs text-yellow-800">
-                        <strong>Note:</strong> Missing privileges may cause database user creation to fail. 
-                        Click "Fix Privileges" to attempt automatic resolution.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Error Display */}
         {error && (
@@ -745,19 +572,19 @@ const Database = () => {
 
         {/* User Domains Info */}
         {user?.role !== 'admin' && userDomains.length > 0 && (
-          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="p-4 bg-[var(--info-bg)] border border-[var(--info-border)] rounded-lg">
             <div className="flex items-start">
-              <GlobeAltIcon className="w-5 h-5 text-blue-500 mr-3 mt-0.5" />
+              <GlobeAltIcon className="w-5 h-5 text-[var(--info-color)] mr-3 mt-0.5" />
               <div>
-                <h4 className="text-blue-800 font-medium">Your Domains</h4>
-                <p className="text-blue-700 text-sm mt-1">
+                <h4 className="text-[var(--info-color)] font-medium">Your Domains</h4>
+                <p className="text-[var(--info-text)] text-sm mt-1">
                   You can create databases for the following domains:
                 </p>
                 <div className="flex flex-wrap gap-2 mt-2">
                   {userDomains.map(domain => (
                     <span 
                       key={domain.id}
-                      className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded"
+                      className="px-2 py-1 bg-[var(--info-bg)] text-[var(--info-color)] text-xs rounded"
                     >
                       {domain.domain}
                     </span>
@@ -845,7 +672,7 @@ const Database = () => {
                   <tr>
                     <td colSpan="7" className="text-center py-8">
                       <div className="flex items-center justify-center">
-                        <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full mr-3"></div>
+                        <div className="animate-spin w-6 h-6 border-2 border-[var(--accent-color)] border-t-transparent rounded-full mr-3"></div>
                         Loading your databases...
                       </div>
                     </td>
@@ -889,7 +716,7 @@ const Database = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center">
-                        <CircleStackIcon className="w-5 h-5 text-blue-500 mr-3" />
+                        <CircleStackIcon className="w-5 h-5 text-[var(--accent-color)] mr-3" />
                         <div>
                           <span className="font-medium text-[var(--text-primary)]">{db.name}</span>
                           {db.owner_id === user.id && (
@@ -902,7 +729,7 @@ const Database = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--primary)] bg-opacity-10 text-[var(--primary)]">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium badge badge-info-strong">
                         {db.type || 'MySQL'}
                       </span>
                     </td>
@@ -956,7 +783,7 @@ const Database = () => {
                           className="p-1 hover:bg-[var(--hover-bg)] rounded transition-colors"
                           title="View in phpMyAdmin"
                         >
-                          <ServerIcon className="w-5 h-5 text-blue-500" />
+                          <ServerIcon className="w-5 h-5 text-[var(--accent-color)]" />
                         </button>
                         {canEditDatabase(db) ? (
                           <button 
@@ -1144,7 +971,7 @@ const Database = () => {
                                 setUserToEdit(dbUser);
                                 setShowEditUserModal(true);
                               }}
-                              className="text-blue-600 hover:text-blue-700"
+                              className="text-[var(--accent-color)] hover:text-[var(--accent-hover)]"
                             >
                               Edit
                             </Button>
@@ -1687,7 +1514,7 @@ const Database = () => {
                         onChange={(e) => setFormData({ ...formData, use_ssl: e.target.checked })}
                         className="sr-only peer"
                       />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-[var(--accent-color)]/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-color)]"></div>
                     </label>
                   </div>
 

@@ -1080,7 +1080,7 @@ innodb_flush_method = O_DIRECT
 ### 7.3 ปรับแต่ง PHP
 
 ```bash
-sudo nano /etc/php/8.1/fpm/php.ini
+sudo nano /etc/php/8.3/fpm/php.ini
 ```
 
 ```ini

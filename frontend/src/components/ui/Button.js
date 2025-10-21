@@ -16,11 +16,11 @@ const Button = memo(({
         const baseClasses = 'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed';
         
         const variants = {
-            primary: 'bg-[var(--primary)] text-white hover:bg-[var(--primary-dark)] focus:ring-[var(--primary)]',
-            secondary: 'bg-[var(--secondary-bg)] text-[var(--text-primary)] hover:bg-[var(--hover-bg)] focus:ring-[var(--primary)]',
-            danger: 'bg-red-500 text-white hover:bg-red-600 focus:ring-red-500',
-            ghost: 'text-[var(--text-primary)] hover:bg-[var(--hover-bg)] focus:ring-[var(--primary)]',
-            outline: 'border border-[var(--border-color)] text-[var(--text-primary)] hover:bg-[var(--hover-bg)] focus:ring-[var(--primary)]'
+            primary: 'bg-[var(--accent-color)] text-white hover:bg-[var(--accent-hover)] focus:ring-[var(--focus-border)]',
+            secondary: 'bg-[var(--secondary-bg)] text-[var(--primary-text)] hover:bg-[var(--hover-bg)] focus:ring-[var(--focus-border)]',
+            danger: 'bg-[var(--danger-color)] text-white hover:opacity-90 focus:ring-[var(--danger-color)]',
+            ghost: 'text-[var(--primary-text)] hover:bg-[var(--hover-bg)] focus:ring-[var(--focus-border)]',
+            outline: 'border border-[var(--border-color)] text-[var(--primary-text)] hover:bg-[var(--hover-bg)] focus:ring-[var(--focus-border)]'
         };
         
         const sizes = {

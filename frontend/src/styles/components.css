@@ -68,12 +68,14 @@
 
 /* Dashboard specific styles */
 .dashboard-card {
-  @apply bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6;
+  @apply rounded-xl p-6;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dashboard-card:hover {
-  @apply shadow-lg border-blue-500 dark:border-blue-400;
+  @apply shadow-lg border-[var(--accent-color)] dark:border-[var(--accent-color)];
   transform: translateY(-2px);
 }
 

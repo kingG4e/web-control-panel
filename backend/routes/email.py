@@ -295,7 +295,17 @@ def update_account(current_user, id):
         
         # Verify ownership through Virtual Host
         email_domain = account.email_domain
-        virtual_host = VirtualHost.query.filter_by(domain=email_domain.domain, user_id=current_user.id).first()
+        is_admin = (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root')
+        if is_admin:
+            virtual_host = VirtualHost.query.filter_by(domain=email_domain.domain).first()
+        else:
+            virtual_host = VirtualHost.query.filter(
+                VirtualHost.domain == email_domain.domain,
+                or_(
+                    VirtualHost.user_id == current_user.id,
+                    VirtualHost.linux_username == current_user.username
+                )
+            ).first()
         if not virtual_host:
             return jsonify({'error': 'Access denied'}), 403
         
@@ -349,13 +359,23 @@ def update_account(current_user, id):
 @email_bp.route('/api/email/accounts/<int:id>', methods=['DELETE'])
 @token_required
 def delete_account(current_user, id):
-    """Delete email account"""
+    """Delete email account by ID"""
     try:
         account = EmailAccount.query.get_or_404(id)
         
         # Verify ownership through Virtual Host
         email_domain = account.email_domain
-        virtual_host = VirtualHost.query.filter_by(domain=email_domain.domain, user_id=current_user.id).first()
+        is_admin = (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root')
+        if is_admin:
+            virtual_host = VirtualHost.query.filter_by(domain=email_domain.domain).first()
+        else:
+            virtual_host = VirtualHost.query.filter(
+                VirtualHost.domain == email_domain.domain,
+                or_(
+                    VirtualHost.user_id == current_user.id,
+                    VirtualHost.linux_username == current_user.username
+                )
+            ).first()
         if not virtual_host:
             return jsonify({'error': 'Access denied'}), 403
         
@@ -374,6 +394,70 @@ def delete_account(current_user, id):
         # Delete from our database
         db.session.delete(account)
         db.session.commit()
+        
+        return '', 204
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@email_bp.route('/api/email/accounts/by-email', methods=['DELETE'])
+@token_required
+def delete_account_by_email(current_user):
+    """Delete email account by email address"""
+    try:
+        data = request.get_json()
+        if not data or 'email' not in data:
+            return jsonify({'error': 'Email address is required'}), 400
+        
+        email_address = data['email']
+        if '@' not in email_address:
+            return jsonify({'error': 'Invalid email address'}), 400
+        
+        username, domain = email_address.split('@', 1)
+        
+        # Verify ownership through Virtual Host
+        is_admin = (current_user.is_admin or current_user.role == 'admin' or current_user.username == 'root')
+        if is_admin:
+            virtual_host = VirtualHost.query.filter_by(domain=domain).first()
+        else:
+            virtual_host = VirtualHost.query.filter(
+                VirtualHost.domain == domain,
+                or_(
+                    VirtualHost.user_id == current_user.id,
+                    VirtualHost.linux_username == current_user.username
+                )
+            ).first()
+        
+        if not virtual_host:
+            return jsonify({'error': 'Domain not found or access denied'}), 404
+        
+        # Try to find account in local database
+        email_domain = EmailDomain.query.filter_by(domain=domain).first()
+        local_account = None
+        if email_domain:
+            local_account = EmailAccount.query.filter_by(
+                domain_id=email_domain.id,
+                username=username
+            ).first()
+        
+        # Delete account from mail DB (minimal schema)
+        try:
+            mail_db_reader.delete_user(email_address)
+        except Exception as e:
+            current_app.logger.warning(f"Failed to delete user from mail DB: {e}")
+            pass
+
+        # Delete account from email system
+        try:
+            email_service.delete_account(username, domain)
+        except Exception as e:
+            current_app.logger.warning(f"Failed to delete account from email system: {e}")
+            pass
+        
+        # Delete from our database if it exists
+        if local_account:
+            db.session.delete(local_account)
+            db.session.commit()
         
         return '', 204
     except Exception as e:

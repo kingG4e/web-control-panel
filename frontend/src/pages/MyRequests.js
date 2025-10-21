@@ -180,7 +180,7 @@ const MyRequests = () => {
           <h3 className="text-lg font-semibold text-[var(--primary-text)] mb-4">{editingRequest ? 'Update Request' : 'Add New Request'}</h3>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
-              <label className="block text-sm text-[var(--secondary-text)]">Domain <span className="text-red-500">*</span></label>
+              <label className="block text-sm text-[var(--secondary-text)]">Domain <span className="text-[var(--danger-color)]">*</span></label>
               <input 
                 name="domain" 
                 value={formData.domain} 
@@ -421,11 +421,13 @@ const MyRequests = () => {
                     <p className="text-xs text-[var(--secondary-text)]">User: {request.username || user?.username}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium border
-                      ${request.status === 'pending' ? 'border-yellow-400/40 text-yellow-500 bg-yellow-500/10' : ''}
-                      ${request.status === 'approved' ? 'border-green-500/40 text-green-500 bg-green-500/10' : ''}
-                      ${request.status === 'rejected' ? 'border-red-500/40 text-red-500 bg-red-500/10' : ''}
-                    `}>
+                    <span className={`badge ${
+                      request.status === 'pending' ? 'badge-warning' : ''
+                    } ${
+                      request.status === 'approved' ? 'badge-success' : ''
+                    } ${
+                      request.status === 'rejected' ? 'badge-error' : ''
+                    }`}>
                       {request.status === 'pending' && 'Pending'}
                       {request.status === 'approved' && 'Approved'}
                       {request.status === 'rejected' && 'Rejected'}
@@ -500,8 +502,8 @@ const MyRequests = () => {
             ))
           ) : (
             <div className="p-6 bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl text-center">
-              <div className="w-16 h-16 mx-auto mb-4 bg-gray-500/20 rounded-full flex items-center justify-center">
-                <svg className="w-8 h-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--hover-bg)' }}>
+                <svg className="w-8 h-8" style={{ color: 'var(--secondary-text)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </div>

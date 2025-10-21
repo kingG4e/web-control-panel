@@ -472,7 +472,7 @@ def approve_signup_request(current_user, req_id):
                     'document_root': document_root,
                     'linux_username': user.username,
                     'user_id': user.id,
-                    'php_version': '8.1',
+                    'php_version': '8.3',
                     'skip_email_provision': True if (req.options_json or {}).get('want_email') else False
                 })
             except Exception as e:

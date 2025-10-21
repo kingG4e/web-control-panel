@@ -45,8 +45,8 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
   };
 
   const InfoCard = ({ icon, title, children }) => (
-    <div className="bg-gray-50 dark:bg-gray-900/30 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900/50 transition-colors">
-      <h4 className="font-medium text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+    <div className="rounded-lg p-4 transition-colors hover:bg-[var(--hover-bg)]" style={{ backgroundColor: 'var(--secondary-bg)' }}>
+      <h4 className="font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--primary-text)' }}>
         {icon}
         {title}
       </h4>
@@ -62,21 +62,22 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
 
     return (
       <div className="flex items-center justify-between">
-        <span className="text-gray-600 dark:text-gray-400">{label}:</span>
+        <span style={{ color: 'var(--secondary-text)' }}>{label}:</span>
         <div className="flex items-center gap-2">
           {isPassword && !showPassword ? (
-            <code className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">
+            <code className="px-2 py-1 rounded text-xs font-mono" style={{ backgroundColor: 'var(--border-color)', color: 'var(--primary-text)' }}>
               ••••••••
             </code>
           ) : (
-            <code className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">
+            <code className="px-2 py-1 rounded text-xs font-mono" style={{ backgroundColor: 'var(--border-color)', color: 'var(--primary-text)' }}>
               {value}
             </code>
           )}
           {isPassword && (
             <button
               onClick={() => togglePassword(passwordKey)}
-              className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              className="p-1 transition-colors"
+              style={{ color: 'var(--secondary-text)' }}
             >
               {showPassword ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
             </button>
@@ -84,7 +85,8 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
           {copyable && (
             <button
               onClick={() => copyToClipboard(value)}
-              className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              className="p-1 transition-colors"
+              style={{ color: 'var(--secondary-text)' }}
             >
               <ClipboardIcon className="w-4 h-4" />
             </button>
@@ -135,10 +137,10 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
       <ModalSection>
         {/* Success Message */}
         <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircleIcon className="w-10 h-10 text-green-600 dark:text-green-400" />
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: 'var(--success-bg)' }}>
+            <CheckCircleIcon className="w-10 h-10" style={{ color: 'var(--success-color)' }} />
           </div>
-          <p className="text-gray-600 dark:text-gray-400">
+          <p style={{ color: 'var(--secondary-text)' }}>
             Your virtual host has been created successfully. Here's everything you need to get started.
           </p>
         </div>
@@ -149,11 +151,11 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
             <ModalSectionTitle>Services Activated</ModalSectionTitle>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {data.services_created.map((service, index) => (
-                <div key={index} className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-900/30 rounded-lg">
-                  <div className="text-blue-600 dark:text-blue-400">
+                <div key={index} className="flex items-center gap-2 p-3 rounded-lg" style={{ backgroundColor: 'var(--secondary-bg)' }}>
+                  <div style={{ color: 'var(--accent-color)' }}>
                     {getServiceIcon(service)}
                   </div>
-                  <span className="text-sm text-gray-700 dark:text-gray-300">{service}</span>
+                  <span className="text-sm" style={{ color: 'var(--primary-text)' }}>{service}</span>
                 </div>
               ))}
             </div>
@@ -164,7 +166,7 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
         <ModalSectionTitle>Access Credentials</ModalSectionTitle>
         <div className="grid md:grid-cols-2 gap-4 mb-6">
           {/* Server Access */}
-          <InfoCard icon={<ServerIcon className="w-5 h-5 text-blue-600 dark:text-blue-400" />} title="Server Access">
+          <InfoCard icon={<ServerIcon className="w-5 h-5" style={{ color: 'var(--accent-color)' }} />} title="Server Access">
             <InfoRow label="Domain" value={data.domain} copyable />
             <InfoRow label="Username" value={data.linux_username} copyable />
             <InfoRow label="Password" value={data.linux_password} isPassword copyable />
@@ -175,7 +177,7 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
 
           {/* Email Access */}
           {data.default_email && (
-            <InfoCard icon={<EnvelopeIcon className="w-5 h-5 text-green-600 dark:text-green-400" />} title="Email Account">
+            <InfoCard icon={<EnvelopeIcon className="w-5 h-5" style={{ color: 'var(--success-color)' }} />} title="Email Account">
               <InfoRow label="Email" value={data.default_email} copyable />
               <InfoRow label="Password" value={data.email_password} isPassword copyable />
             </InfoCard>
@@ -183,7 +185,7 @@ const SuccessModal = ({ isOpen, onClose, onNavigate, data }) => {
 
           {/* Database Access */}
           {data.database_name && (
-            <InfoCard icon={<CircleStackIcon className="w-5 h-5 text-orange-600 dark:text-orange-400" />} title="MySQL Database">
+            <InfoCard icon={<CircleStackIcon className="w-5 h-5" style={{ color: 'var(--warning-color)' }} />} title="MySQL Database">
               <InfoRow label="Database" value={data.database_name} copyable />
               <InfoRow label="Username" value={data.database_user} copyable />
               <InfoRow label="Password" value={data.database_password} isPassword copyable />

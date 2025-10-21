@@ -359,7 +359,7 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 **ตั้งค่า PHP version (ถ้ารองรับหลาย version):**
 ```apache
 <FilesMatch \.php$>
-    SetHandler "proxy:unix:/var/run/php/php8.1-fpm.sock|fcgi://localhost"
+    SetHandler "proxy:unix:/var/run/php/php8.3-fpm.sock|fcgi://localhost"
 </FilesMatch>
 ```
 

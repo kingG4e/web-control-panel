@@ -3,34 +3,35 @@
 @tailwind utilities;
 
 :root[data-theme="dark"] {
-  --primary-bg: #0f1520;
-  --secondary-bg: #1a2234;
-  --border-color: #2a3447;
-  --primary-text: #ffffff;
+  /* Dark theme colors - using variables.css as source of truth */
+  --primary-bg: #0f1419;
+  --secondary-bg: #1a1f2e;
+  --border-color: #2a3441;
+  --primary-text: #e2e8f0;
   --secondary-text: #94a3b8;
   --tertiary-text: #64748b;
-  --accent-color: #6366f1;
-  --accent-hover: #4f46e5;
+  --accent-color: #3b82f6;
+  --accent-hover: #2563eb;
   --danger-color: #ef4444;
   --success-color: #22c55e;
   --warning-color: #f59e0b;
-  --info-color: #3b82f6;
+  --info-color: #06b6d4;
   
   /* Shadows and Effects */
   --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
   --hover-card-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
-  --focus-ring: 0 0 0 3px rgba(99, 102, 241, 0.3);
-  --active-state: rgba(99, 102, 241, 0.2);
+  --focus-ring: 0 0 0 3px rgba(59, 130, 246, 0.3);
+  --active-state: rgba(59, 130, 246, 0.2);
   
   /* Backgrounds */
-  --input-bg: #1a2234;
-  --hover-bg: rgba(255, 255, 255, 0.05);
-  --card-bg: #1a2234;
-  --stats-card-bg: rgba(26, 34, 52, 0.7);
-  --table-header-bg: #1a2234;
-  --code-bg: #2a3447;
-  --tooltip-bg: #0f1520;
-  --tooltip-text: #ffffff;
+  --input-bg: #2a3441;
+  --hover-bg: #2a3441;
+  --card-bg: #1a1f2e;
+  --stats-card-bg: rgba(26, 31, 46, 0.7);
+  --table-header-bg: #0f1419;
+  --code-bg: #2a3441;
+  --tooltip-bg: #334155;
+  --tooltip-text: #e2e8f0;
   --modal-overlay: rgba(0, 0, 0, 0.7);
   
   /* Status Colors Background */
@@ -41,11 +42,11 @@
   --info-bg: rgba(59, 130, 246, 0.1);
   
   /* Borders and Dividers */
-  --divider-color: #2a3447;
-  --hover-border: #3a4557;
-  --focus-border: #6366f1;
-  --input-border: #2a3447;
-  --input-text: #ffffff;
+  --divider-color: #334155;
+  --hover-border: #475569;
+  --focus-border: #3b82f6;
+  --input-border: #334155;
+  --input-text: #e2e8f0;
   --input-placeholder: #64748b;
   
   /* Additional theme variables */
@@ -54,32 +55,33 @@
 }
 
 :root[data-theme="light"] {
+  /* Light theme with minimal, subdued colors and blue primary */
   --primary-bg: #f8fafc;
   --secondary-bg: #ffffff;
   --border-color: #e2e8f0;
-  --primary-text: #0f172a;
-  --secondary-text: #334155;
-  --tertiary-text: #64748b;
-  --accent-color: #4f46e5;
-  --accent-hover: #4338ca;
-  --danger-color: #dc2626;
-  --success-color: #16a34a;
-  --warning-color: #d97706;
-  --info-color: #2563eb;
+  --primary-text: #1e293b;
+  --secondary-text: #64748b;
+  --tertiary-text: #94a3b8;
+  --accent-color: #3b82f6;
+  --accent-hover: #2563eb;
+  --danger-color: #ef4444;
+  --success-color: #22c55e;
+  --warning-color: #f59e0b;
+  --info-color: #06b6d4;
   
   /* Shadows and Effects */
   --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --hover-card-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --focus-ring: 0 0 0 3px rgba(79, 70, 229, 0.15);
+  --focus-ring: 0 0 0 3px rgba(59, 130, 246, 0.15);
   --active-state: #e0e7ff;
   
   /* Backgrounds */
   --input-bg: #ffffff;
-  --hover-bg: rgba(0, 0, 0, 0.02);
+  --hover-bg: #f1f5f9;
   --card-bg: #ffffff;
   --stats-card-bg: rgba(255, 255, 255, 0.95);
   --table-header-bg: #f8fafc;
-  --code-bg: #f1f5f9;
+  --code-bg: #eef2f7;
   --tooltip-bg: #1e293b;
   --tooltip-text: #ffffff;
   --modal-overlay: rgba(0, 0, 0, 0.5);
@@ -94,9 +96,9 @@
   /* Borders and Dividers */
   --divider-color: #f1f5f9;
   --hover-border: #cbd5e1;
-  --focus-border: #4f46e5;
+  --focus-border: #3b82f6;
   --input-border: #e2e8f0;
-  --input-text: #0f172a;
+  --input-text: #1e293b;
   --input-placeholder: #64748b;
   
   /* Additional theme variables */
@@ -210,6 +212,20 @@
 
   .badge {
     @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium;
+  }
+
+  /* Accessible badge variants with stronger contrast */
+  .badge-neutral {
+    @apply bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700;
+  }
+  .badge-info-strong {
+    @apply bg-[var(--info-bg)] text-[var(--info-color)] border border-[var(--info-bg)];
+  }
+  .badge-success-strong {
+    @apply bg-[var(--success-bg)] text-[var(--success-color)] border border-[var(--success-bg)];
+  }
+  .badge-error-strong {
+    @apply bg-[var(--danger-bg)] text-[var(--danger-color)] border border-[var(--danger-bg)];
   }
 
   .badge-success {

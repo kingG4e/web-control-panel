@@ -89,7 +89,7 @@ class Config:
     BIND_CONFIG_DIR = os.environ.get('BIND_CONFIG_DIR') or '/etc/bind'
     BIND_ZONES_DIR = os.environ.get('BIND_ZONES_DIR') or '/etc/bind/zones'
     BIND_RELOAD_COMMAND = os.environ.get('BIND_RELOAD_COMMAND') or 'systemctl reload bind9'
-    BIND_DEV_MODE = os.environ.get('BIND9_DEV_MODE', 'False').lower() == 'true'
+    BIND_DEV_MODE = os.environ.get('BIND_DEV_MODE', 'False').lower() == 'true'
     
     # DNS Defaults
     DNS_DEFAULT_IP = os.environ.get('DNS_DEFAULT_IP') or os.environ.get('SERVER_PUBLIC_IP') or '127.0.0.1'

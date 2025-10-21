@@ -63,16 +63,41 @@ def get_records(current_user, zone_id):
         ).first() is not None
         if not has_perm:
             return jsonify({'success': False, 'error': 'Permission denied'}), 403
+    
+    # Get database records to match with zone file records
+    db_records = DNSRecord.query.filter_by(zone_id=zone_id).all()
+    db_records_dict = {}
+    for db_rec in db_records:
+        # Create a key based on name, type, and content for matching
+        key = (db_rec.name, db_rec.record_type.upper(), db_rec.content)
+        db_records_dict[key] = db_rec
+    
     # Prefer reading from actual zone file so UI reflects real state
     file_records = bind_service.read_zone_records(zone.domain_name)
     if file_records:
+        # Match file records with database records to assign IDs
+        for file_rec in file_records:
+            name = file_rec.get('name', '')
+            rec_type = file_rec.get('record_type', '').upper()
+            content = file_rec.get('content', '')
+            key = (name, rec_type, content)
+            
+            # If we find a matching database record, use its ID
+            if key in db_records_dict:
+                file_rec['id'] = db_records_dict[key].id
+            else:
+                # For records without database entries (like SOA), use a special ID format
+                # that the frontend can recognize as non-editable
+                file_rec['id'] = f"zone-{rec_type.lower()}-{name}"
+        
         return jsonify(file_records)
+    
     # Fallback to DB if parsing failed or file missing
     records = DNSRecord.query.filter_by(zone_id=zone_id).all()
     records_json = [record.to_dict() for record in records]
     # Ensure SOA appears at top even if not stored as a DB record
     soa_record = {
-        'id': None,
+        'id': f"zone-soa-@",
         'name': '@',
         'record_type': 'SOA',
         'content': f"ns1.{zone.domain_name}. admin.{zone.domain_name}. ( {zone.serial} {zone.refresh} {zone.retry} {zone.expire} {zone.minimum} )",

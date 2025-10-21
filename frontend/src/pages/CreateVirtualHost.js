@@ -79,7 +79,7 @@ const CreateVirtualHost = () => {
     domain: '',
     linux_password: '',
     server_admin: '',
-    php_version: '8.1',
+    php_version: '8.3',
     create_ssl: true,
     username_mode: 'automatic', // 'automatic' or 'custom'
     custom_username: ''
@@ -665,9 +665,10 @@ const CreateVirtualHost = () => {
                         focusRingColor: 'var(--accent-color)'
                       }}
                     >
-                      <option value="8.1">PHP 8.1 (Recommended)</option>
+                      <option value="8.1">PHP 8.1</option>
                       <option value="8.0">PHP 8.0</option>
                       <option value="7.4">PHP 7.4</option>
+                      <option value="8.3">PHP 8.3 (Recommended)</option>
                     </select>
                   </div>
                 </div>

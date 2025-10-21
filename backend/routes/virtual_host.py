@@ -128,7 +128,7 @@ def create_subdomain_virtual_host(current_user):
             return jsonify({'success': False, 'error': f'Failed to create/reuse Linux user: {user_message}'}), 500
 
         # Create VirtualHost record
-        php_version = str(data.get('php_version') or '8.1')
+        php_version = str(data.get('php_version') or '8.3')
         virtual_host = VirtualHost(
             domain=domain,
             document_root=doc_root,
@@ -784,7 +784,7 @@ def create_virtual_host(current_user):
             document_root=doc_root,
             linux_username=linux_username,
             server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
-            php_version=data.get('php_version', '8.1'),
+            php_version=data.get('php_version', '8.3'),
             user_id=current_user.id
         )
         db.session.add(virtual_host)
@@ -1697,7 +1697,7 @@ def create_virtual_host_for_existing_user(current_user):
             document_root=doc_root,
             linux_username=linux_username,
             server_admin=data.get('server_admin', current_user.email or 'admin@localhost'),
-            php_version=data.get('php_version', '8.1'),
+            php_version=data.get('php_version', '8.3'),
             user_id=current_user.id
         )
         db.session.add(virtual_host)

@@ -202,9 +202,15 @@ const EmailSettings = () => {
   };
 
 
-  const handleDeleteAccount = async (accountId) => {
+  const handleDeleteAccount = async (account) => {
     try {
-      await email.deleteAccount(selectedDomain?.virtual_host_id, accountId);
+      if (account.id) {
+        // Account has an ID, use the standard delete endpoint
+        await email.deleteAccount(selectedDomain?.virtual_host_id, account.id);
+      } else {
+        // Account doesn't have an ID, delete by email address
+        await email.deleteAccountByEmail(account.email);
+      }
 
       setShowDeleteModal(false);
       setAccountToDelete(null);
@@ -513,33 +519,35 @@ const EmailSettings = () => {
                                         <span>Webmail</span>
                                       </button>
                                       
-                                      {account.id && isAdmin && (
-                                        <div className="relative" ref={openDropdown === account.id ? dropdownRef : null}>
+                                      {isAdmin && (
+                                        <div className="relative" ref={openDropdown === account.email ? dropdownRef : null}>
                                           <button
-                                            onClick={() => setOpenDropdown(openDropdown === account.id ? null : account.id)}
+                                            onClick={() => setOpenDropdown(openDropdown === account.email ? null : account.email)}
                                             className="p-2 rounded transition-colors"
                                             style={{ color: 'var(--secondary-text)' }}
                                           >
                                             <CogIcon className="w-4 h-4" />
                                           </button>
-                                          {openDropdown === account.id && (
+                                          {openDropdown === account.email && (
                                             <div
                                               className="absolute right-0 mt-2 w-48 rounded-md shadow-lg z-10 py-1"
                                               style={{ backgroundColor: 'var(--secondary-bg)', border: '1px solid var(--border-color)' }}
                                             >
-                                              <button
-                                                onClick={() => {
-                                                  setEditingAccount(account);
-                                                  setAccountForm({ username: account.username, password: '', confirmPassword: '', quota: account.quota });
-                                                  setShowAccountModal(true);
-                                                  setOpenDropdown(null);
-                                                }}
-                                                className="w-full text-left flex items-center space-x-2 px-4 py-2 text-sm transition-colors hover:bg-gray-700"
-                                                style={{ color: 'var(--primary-text)' }}
-                                              >
-                                                <PencilIcon className="w-4 h-4" />
-                                                <span>Edit Account</span>
-                                              </button>
+                                              {account.id && (
+                                                <button
+                                                  onClick={() => {
+                                                    setEditingAccount(account);
+                                                    setAccountForm({ username: account.username, password: '', confirmPassword: '', quota: account.quota });
+                                                    setShowAccountModal(true);
+                                                    setOpenDropdown(null);
+                                                  }}
+                                                  className="w-full text-left flex items-center space-x-2 px-4 py-2 text-sm transition-colors hover:bg-gray-700"
+                                                  style={{ color: 'var(--primary-text)' }}
+                                                >
+                                                  <PencilIcon className="w-4 h-4" />
+                                                  <span>Edit Account</span>
+                                                </button>
+                                              )}
                                               <button
                                                 onClick={() => {
                                                   setAccountToDelete(account);
@@ -688,7 +696,7 @@ const EmailSettings = () => {
             <ModalButton variant="secondary" onClick={() => { setShowDeleteModal(false); setAccountToDelete(null); }}>
               Cancel
             </ModalButton>
-            <ModalButton variant="danger" onClick={() => accountToDelete && handleDeleteAccount(accountToDelete.id)}>
+            <ModalButton variant="danger" onClick={() => accountToDelete && handleDeleteAccount(accountToDelete)}>
               Delete
             </ModalButton>
           </div>

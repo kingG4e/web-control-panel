@@ -20,7 +20,7 @@ const EditVirtualHost = () => {
     domain: '',
     document_root: '',
     server_admin: '',
-    php_version: '8.1',
+    php_version: '8.3',
     status: 'active'
   });
 
@@ -37,7 +37,7 @@ const EditVirtualHost = () => {
         domain: data.domain || '',
         document_root: data.document_root || '',
         server_admin: data.server_admin || '',
-        php_version: data.php_version || '8.1',
+        php_version: data.php_version || '8.3',
         status: data.status || 'active'
       });
     } catch (err) {
@@ -262,8 +262,9 @@ const EditVirtualHost = () => {
                 >
                   <option value="7.4">PHP 7.4</option>
                   <option value="8.0">PHP 8.0</option>
-                  <option value="8.1">PHP 8.1 (Recommended)</option>
+                  <option value="8.1">PHP 8.1</option>
                   <option value="8.2">PHP 8.2</option>
+                  <option value="8.3">PHP 8.3 (Recommended)</option>
                 </select>
               </div>
             </div>

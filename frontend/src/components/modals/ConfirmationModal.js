@@ -107,24 +107,24 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, formData, isLoading }) 
     >
       <ModalSection>
         {/* Summary Card */}
-        <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 mb-6">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-3">Configuration Summary</h3>
+        <div className="rounded-xl p-4 mb-6" style={{ backgroundColor: 'var(--secondary-bg)' }}>
+          <h3 className="font-medium mb-3" style={{ color: 'var(--primary-text)' }}>Configuration Summary</h3>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <span className="text-gray-500 dark:text-gray-400">Domain:</span>
-              <p className="font-medium text-gray-900 dark:text-white">{safeFormData.domain || '-'}</p>
+              <span style={{ color: 'var(--secondary-text)' }}>Domain:</span>
+              <p className="font-medium" style={{ color: 'var(--primary-text)' }}>{safeFormData.domain || '-'}</p>
             </div>
             <div>
-              <span className="text-gray-500 dark:text-gray-400">PHP Version:</span>
-              <p className="font-medium text-gray-900 dark:text-white">{safeFormData.php_version || '-'}</p>
+              <span style={{ color: 'var(--secondary-text)' }}>PHP Version:</span>
+              <p className="font-medium" style={{ color: 'var(--primary-text)' }}>{safeFormData.php_version || '-'}</p>
             </div>
             <div>
-              <span className="text-gray-500 dark:text-gray-400">Server Admin:</span>
-              <p className="font-medium text-gray-900 dark:text-white">{safeFormData.server_admin || `admin@${safeFormData.domain}` || '-'}</p>
+              <span style={{ color: 'var(--secondary-text)' }}>Server Admin:</span>
+              <p className="font-medium" style={{ color: 'var(--primary-text)' }}>{safeFormData.server_admin || `admin@${safeFormData.domain}` || '-'}</p>
             </div>
             <div>
-              <span className="text-gray-500 dark:text-gray-400">SSL Certificate:</span>
-              <p className="font-medium text-gray-900 dark:text-white">{safeFormData.create_ssl ? 'Yes' : 'No'}</p>
+              <span style={{ color: 'var(--secondary-text)' }}>SSL Certificate:</span>
+              <p className="font-medium" style={{ color: 'var(--primary-text)' }}>{safeFormData.create_ssl ? 'Yes' : 'No'}</p>
             </div>
           </div>
         </div>
@@ -133,15 +133,15 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, formData, isLoading }) 
         <ModalSectionTitle icon="🚀">What will happen</ModalSectionTitle>
         <div className="space-y-2 mb-6">
           {steps.map((step, index) => (
-            <div key={index} className="flex items-center p-3 rounded-lg bg-gray-50 dark:bg-gray-900/30 hover:bg-gray-100 dark:hover:bg-gray-900/50 transition-colors">
-              <div className={`${step.color} mr-3`}>
+            <div key={index} className="flex items-center p-3 rounded-lg transition-colors hover:bg-[var(--hover-bg)]" style={{ backgroundColor: 'var(--secondary-bg)' }}>
+              <div className="mr-3" style={{ color: 'var(--accent-color)' }}>
                 {step.icon}
               </div>
               <div className="flex-1">
-                <p className="font-medium text-gray-900 dark:text-white text-sm">{step.title}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">{step.description}</p>
+                <p className="font-medium text-sm" style={{ color: 'var(--primary-text)' }}>{step.title}</p>
+                <p className="text-xs" style={{ color: 'var(--secondary-text)' }}>{step.description}</p>
               </div>
-              <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-xs font-medium text-gray-600 dark:text-gray-300">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium" style={{ backgroundColor: 'var(--border-color)', color: 'var(--secondary-text)' }}>
                 {index + 1}
               </div>
             </div>

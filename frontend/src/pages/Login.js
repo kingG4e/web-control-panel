@@ -50,15 +50,15 @@ const Login = () => {
             <div className="w-full max-w-[420px] space-y-8">
                 {/* Account Deleted Success Message */}
                 {accountDeleted && (
-                    <div className="p-6 bg-green-50 border border-green-200 rounded-xl">
+                    <div className="p-6 rounded-xl" style={{ backgroundColor: 'var(--success-bg)', border: '1px solid var(--success-bg)' }}>
                         <div className="flex items-center">
-                            <CheckCircleIcon className="w-6 h-6 text-green-500 mr-3" />
+                            <CheckCircleIcon className="w-6 h-6 mr-3" style={{ color: 'var(--success-color)' }} />
                             <div>
-                                <h3 className="text-green-800 font-medium">Account Successfully Deleted</h3>
-                                <p className="text-green-700 text-sm mt-1">
+                                <h3 className="font-medium" style={{ color: 'var(--success-color)' }}>Account Successfully Deleted</h3>
+                                <p className="text-sm mt-1" style={{ color: 'var(--success-color)' }}>
                                     Your account and all associated data have been permanently removed from our system.
                                 </p>
-                                <p className="text-green-600 text-xs mt-2">
+                                <p className="text-xs mt-2" style={{ color: 'var(--success-color)' }}>
                                     Thank you for using our service. This page will redirect automatically.
                                 </p>
                             </div>
@@ -178,12 +178,9 @@ const Login = () => {
                 )}
 
                 {/* Footer */}
-                <p className="text-center text-sm text-[var(--tertiary-text)]">
-                    © 2024 Control Panel. All rights reserved.
-                </p>
                 <div className="text-center text-sm mt-2">
                     <span className="text-[var(--secondary-text)]">Don't have an account? </span>
-                    <Link to="/signup" className="text-blue-500 hover:underline">Sign up</Link>
+                    <Link to="/signup" className="hover:underline" style={{ color: 'var(--accent-color)' }}>Sign up</Link>
                 </div>
             </div>
         </div>

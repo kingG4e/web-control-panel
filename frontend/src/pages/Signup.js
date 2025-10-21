@@ -11,13 +11,11 @@ const initial = {
   email: '',
   full_name: '',
   want_ssl: false,
-  want_dns: false,
   want_email: false,
   want_mysql: false,
   storage_quota_mb: '',
   email_username: '',
   email_password: '',
-  email_quota: '',
   db_name: '',
   db_username: '',
   db_password: ''
@@ -73,14 +71,12 @@ const Signup = () => {
         email: form.email || undefined,
         full_name: form.full_name || undefined,
         want_ssl: form.want_ssl,
-        want_dns: form.want_dns,
         want_email: form.want_email,
         want_mysql: form.want_mysql,
         storage_quota_mb: form.storage_quota_mb ? Number(form.storage_quota_mb) : 100,
         // Email details
         email_username: form.want_email && form.email_username ? form.email_username : undefined,
         email_password: form.want_email && form.email_password ? form.email_password : undefined,
-        email_quota: form.want_email ? (form.email_quota ? Number(form.email_quota) : 100) : undefined,
         // DB details
         db_name: form.want_mysql && form.db_name ? `db_${form.db_name}` : undefined,
         db_username: form.want_mysql && form.db_username ? form.db_username : undefined,
@@ -99,18 +95,19 @@ const Signup = () => {
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-[var(--primary-bg)] p-6">
       <div className="w-full max-w-2xl">
-        <div className="mb-6 text-center">
+        <div className="mb-4 text-center">
           <h2 className="text-2xl font-bold text-[var(--primary-text)]">Signup Request</h2>
           <p className="text-[var(--secondary-text)] text-sm">Request account creation for Control Panel access</p>
         </div>
-        <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-6 shadow-sm max-h-[70vh] overflow-y-auto">
+        <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl p-5 shadow-sm">
           {error && (
             <div className="mb-4 px-3 py-2 rounded bg-[var(--danger-color)]/10 border border-[var(--danger-color)]/20 text-[var(--danger-color)] text-sm">{error}</div>
           )}
           {success && (
-            <div className="mb-4 px-3 py-2 rounded bg-green-500/10 border border-green-500/20 text-green-500 text-sm">{success}</div>
+            <div className="mb-4 px-3 py-2 rounded text-sm"
+                 style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success-color)', border: '1px solid var(--success-bg)' }}>{success}</div>
           )}
-          <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="md:col-span-1">
               <label className="block text-sm text-[var(--secondary-text)]">Username</label>
               <input name="username" value={form.username} onChange={onChange} className="input-field mt-1" placeholder="yourname" />
@@ -120,11 +117,11 @@ const Signup = () => {
               <input name="email" value={form.email} onChange={onChange} className="input-field mt-1" placeholder="you@example.edu" />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm text-[var(--secondary-text)]">Full Name (ชื่อ-นามสกุล)</label>
-              <input name="full_name" value={form.full_name} onChange={onChange} className="input-field mt-1" placeholder="ชื่อ นามสกุล" />
+              <label className="block text-sm text-[var(--secondary-text)]">Full Name</label>
+              <input name="full_name" value={form.full_name} onChange={onChange} className="input-field mt-1" placeholder="Full Name" />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm text-[var(--secondary-text)]">Subdomain under Primary Domain <span className="text-red-500">*</span></label>
+              <label className="block text-sm text-[var(--secondary-text)]">Subdomain under Primary Domain <span className="text-[var(--danger-color)]">*</span></label>
               <div className="flex items-center gap-2 mt-1">
                 <input name="subdomain" value={form.domain && primaryDomain && form.domain.endsWith(`.${primaryDomain}`) ? form.domain.replace(`.${primaryDomain}`, '') : ''} onChange={onChange} className="input-field flex-1" placeholder="sub" disabled={!primaryDomain} />
                 <span className="text-sm text-[var(--secondary-text)]">.{primaryDomain || '...'}</span>
@@ -146,10 +143,9 @@ const Signup = () => {
 
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-[var(--secondary-text)] mb-2">Requested Services</label>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                 {[
                   { key: 'want_ssl', label: 'SSL' },
-                  { key: 'want_dns', label: 'DNS Zone' },
                   { key: 'want_email', label: 'Email' },
                   { key: 'want_mysql', label: 'MySQL' }
                 ].map((opt) => (
@@ -174,7 +170,7 @@ const Signup = () => {
 
           {/* Conditional: Email defaults */}
           {form.want_email && (
-            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm text-[var(--secondary-text)]">Email Username</label>
                 <div className="flex items-center gap-2 mt-1">
@@ -186,16 +182,12 @@ const Signup = () => {
                 <label className="block text-sm text-[var(--secondary-text)]">Email Password (optional)</label>
                 <input type="password" name="email_password" value={form.email_password || ''} onChange={onChange} className="input-field mt-1" placeholder="••••••••" />
               </div>
-              <div>
-                <label className="block text-sm text-[var(--secondary-text)]">Quota (MB)</label>
-                <input type="number" name="email_quota" value={form.email_quota || ''} onChange={onChange} className="input-field mt-1" placeholder="1024" />
-              </div>
             </div>
           )}
 
           {/* Conditional: Database defaults */}
           {form.want_mysql && (
-            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="block text-sm text-[var(--secondary-text)]">Database Name</label>
                 <div className="flex mt-1">
@@ -230,7 +222,7 @@ const Signup = () => {
               />
             </div>
 
-            <div className="md:col-span-2 flex items-center justify-between pt-2">
+            <div className="md:col-span-2 flex items-center justify-between pt-1">
               <Link to="/login" className="text-sm text-[var(--secondary-text)] hover:text-[var(--primary-text)]">Back to Login</Link>
               <button type="submit" disabled={loading} className="btn-primary px-4 py-2 disabled:opacity-60">
                 {loading ? 'Submitting...' : 'Submit Request'}

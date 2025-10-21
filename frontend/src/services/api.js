@@ -285,6 +285,11 @@ export const virtualHosts = {
       return response.data.data;
     }
     throw new Error(response.data.error || 'Failed to create virtual host for existing user');
+  },
+
+  getDomains: async () => {
+    const response = await api.get('/files/domains');
+    return response.data;
   }
 };
 
@@ -387,6 +392,12 @@ export const email = {
     deleteAccount: async (domainId, accountId) => {
         // Backend delete endpoint expects /email/accounts/:id
         const response = await api.delete(`/email/accounts/${accountId}`);
+        return response.data;
+    },
+    
+    deleteAccountByEmail: async (email) => {
+        // Backend delete endpoint expects /email/accounts/by-email with email in body
+        const response = await api.delete('/email/accounts/by-email', { data: { email } });
         return response.data;
     }
 };
@@ -671,6 +682,23 @@ export const fileApi = {
         const params = { path };
         if (domain) params.domain = domain;
         const response = await api.get('/files/get-file-info', { params });
+        return response.data;
+    },
+    
+    // Change file permissions (chmod)
+    changePermissions: async (path, permissions, domain = null) => {
+        const data = { path, permissions };
+        if (domain) data.domain = domain;
+        const response = await api.post('/files/chmod', data);
+        return response.data;
+    },
+    
+    // Change file ownership (chown)
+    changeOwnership: async (path, owner, group = null, domain = null) => {
+        const data = { path, owner };
+        if (group) data.group = group;
+        if (domain) data.domain = domain;
+        const response = await api.post('/files/chown', data);
         return response.data;
     }
 };

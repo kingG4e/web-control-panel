@@ -70,6 +70,7 @@ const FileManager = () => {
   const [showFileEditor, setShowFileEditor] = useState(false);
   const [showFilePreview, setShowFilePreview] = useState(false);
   const [showFileProperties, setShowFileProperties] = useState(false);
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [fileContent, setFileContent] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [newFileName, setNewFileName] = useState('');
@@ -99,6 +100,19 @@ const FileManager = () => {
   const [pathInput, setPathInput] = useState('');
   const scrollTopRef = useRef(0);
   const fileListRef = useRef(null);
+  
+  // Permission management state
+  const [permissionData, setPermissionData] = useState({
+    owner: '',
+    group: '',
+    permissions: {
+      owner: { read: false, write: false, execute: false },
+      group: { read: false, write: false, execute: false },
+      other: { read: false, write: false, execute: false }
+    },
+    numericPermissions: '755'
+  });
+  const [permissionLoading, setPermissionLoading] = useState(false);
 
 
 
@@ -461,7 +475,7 @@ const FileManager = () => {
       <select
         value={currentDomain}
         onChange={(e) => handleDomainChange(e.target.value)}
-        className="block w-full max-w-xs pl-3 pr-10 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="block w-full max-w-xs pl-3 pr-10 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--accent-color)]"
         style={{
           backgroundColor: 'var(--input-bg)',
           borderColor: 'var(--border-color)',
@@ -1013,6 +1027,137 @@ const FileManager = () => {
     }
   };
 
+  // Permission management functions
+  const parsePermissions = (permissionString) => {
+    if (!permissionString || permissionString.length < 9) {
+      return { owner: { read: false, write: false, execute: false }, group: { read: false, write: false, execute: false }, other: { read: false, write: false, execute: false } };
+    }
+    
+    const perms = permissionString.slice(-9); // Get last 9 characters
+    return {
+      owner: { read: perms[0] === 'r', write: perms[1] === 'w', execute: perms[2] === 'x' },
+      group: { read: perms[3] === 'r', write: perms[4] === 'w', execute: perms[5] === 'x' },
+      other: { read: perms[6] === 'r', write: perms[7] === 'w', execute: perms[8] === 'x' }
+    };
+  };
+
+  const permissionsToNumeric = (permissions) => {
+    const toOctal = (perms) => {
+      return (perms.read ? 4 : 0) + (perms.write ? 2 : 0) + (perms.execute ? 1 : 0);
+    };
+    
+    const owner = toOctal(permissions.owner);
+    const group = toOctal(permissions.group);
+    const other = toOctal(permissions.other);
+    
+    return `${owner}${group}${other}`;
+  };
+
+  const numericToPermissions = (numeric) => {
+    if (!numeric || numeric.length !== 3) return { owner: { read: false, write: false, execute: false }, group: { read: false, write: false, execute: false }, other: { read: false, write: false, execute: false } };
+    
+    const parseOctal = (octal) => {
+      const num = parseInt(octal, 8);
+      return {
+        read: (num & 4) !== 0,
+        write: (num & 2) !== 0,
+        execute: (num & 1) !== 0
+      };
+    };
+    
+    return {
+      owner: parseOctal(numeric[0]),
+      group: parseOctal(numeric[1]),
+      other: parseOctal(numeric[2])
+    };
+  };
+
+  const loadFilePermissions = async (file) => {
+    try {
+      setPermissionLoading(true);
+      const filePath = file.path || (currentPath ? `${currentPath}/${file.name}` : file.name);
+      const fileInfo = await fileApi.getFileInfo(normalizePath(filePath), currentDomain);
+      
+      const permissions = parsePermissions(fileInfo.permissions);
+      const numericPermissions = permissionsToNumeric(permissions);
+      
+      setPermissionData({
+        owner: fileInfo.owner || '',
+        group: fileInfo.group || '',
+        permissions: permissions,
+        numericPermissions: numericPermissions
+      });
+    } catch (err) {
+      console.error('Error loading file permissions:', err);
+      setError('Failed to load file permissions');
+    } finally {
+      setPermissionLoading(false);
+    }
+  };
+
+  const handlePermissionChange = (category, permission, value) => {
+    setPermissionData(prev => {
+      const newPermissions = {
+        ...prev.permissions,
+        [category]: {
+          ...prev.permissions[category],
+          [permission]: value
+        }
+      };
+      
+      const numericPermissions = permissionsToNumeric(newPermissions);
+      
+      return {
+        ...prev,
+        permissions: newPermissions,
+        numericPermissions: numericPermissions
+      };
+    });
+  };
+
+  const handleNumericPermissionChange = (value) => {
+    if (!/^[0-7]{3}$/.test(value)) return; // Only allow 3 digits 0-7
+    
+    setPermissionData(prev => ({
+      ...prev,
+      numericPermissions: value,
+      permissions: numericToPermissions(value)
+    }));
+  };
+
+  const handleSavePermissions = async () => {
+    if (!selectedFile) return;
+
+    try {
+      setPermissionLoading(true);
+      setError(null);
+      
+      const filePath = selectedFile.path || (currentPath ? `${currentPath}/${selectedFile.name}` : selectedFile.name);
+      
+      // Save permissions
+      await fileApi.changePermissions(normalizePath(filePath), permissionData.numericPermissions, currentDomain);
+      
+      // Save ownership if changed
+      if (permissionData.owner !== selectedFile.owner || permissionData.group !== selectedFile.group) {
+        await fileApi.changeOwnership(
+          normalizePath(filePath), 
+          permissionData.owner, 
+          permissionData.group, 
+          currentDomain
+        );
+      }
+      
+      setShowPermissionModal(false);
+      await loadDirectory(currentPath, true);
+    } catch (err) {
+      console.error('Permission change error:', err);
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to change permissions';
+      setError(errorMsg);
+    } finally {
+      setPermissionLoading(false);
+    }
+  };
+
   // Drag and drop handlers
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -1283,6 +1428,17 @@ const FileManager = () => {
           <InformationCircleIcon className="w-4 h-4 mr-2" />
           Properties
         </button>
+        <button
+          onClick={async () => {
+            setContextMenu({ ...contextMenu, visible: false });
+            await loadFilePermissions(contextMenu.item);
+            setShowPermissionModal(true);
+          }}
+          className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
+        >
+          <PencilIcon className="w-4 h-4 mr-2" />
+          Change Permissions
+        </button>
         <hr className="my-1 border-gray-200 dark:border-gray-700" />
         <button
           onClick={() => {
@@ -1454,9 +1610,9 @@ const FileManager = () => {
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
-        <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl">
+        <div className="rounded-xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl" style={{ backgroundColor: 'var(--card-bg)' }}>
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+            <h3 className="text-lg font-semibold" style={{ color: 'var(--primary-text)' }}>
               Editing: {selectedFile?.name}
             </h3>
             <button
@@ -1526,7 +1682,8 @@ const FileManager = () => {
                         setShowFileEditor(false);
                         setTimeout(() => setShowFileEditor(true), 100);
                       }}
-                      className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                      className="px-4 py-2 text-white rounded transition-colors"
+                      style={{ backgroundColor: 'var(--accent-color)' }}
                     >
                       Retry Editor
                     </button>
@@ -1738,7 +1895,7 @@ const FileManager = () => {
             </button>
             <button
               onClick={handleSave}
-              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center"
+              className="px-4 py-2 text-white rounded-lg  transition-colors flex items-center"
               disabled={editorLoading}
             >
               {editorLoading ? (
@@ -1763,9 +1920,9 @@ const FileManager = () => {
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[100]">
-        <div className="bg-white dark:bg-gray-900 rounded-xl max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
+        <div className="rounded-xl max-w-4xl max-h-[90vh] flex flex-col shadow-2xl" style={{ backgroundColor: 'var(--card-bg)' }}>
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+            <h3 className="text-lg font-semibold" style={{ color: 'var(--primary-text)' }}>
               Preview: {selectedFile.name}
             </h3>
             <button
@@ -1783,7 +1940,7 @@ const FileManager = () => {
                 className="max-w-full max-h-full object-contain"
               />
             ) : isTextFile(selectedFile.name) ? (
-              <pre className="w-full h-full p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white font-mono overflow-auto">
+              <pre className="w-full h-full p-4 rounded-lg text-sm font-mono overflow-auto" style={{ backgroundColor: 'var(--code-bg)', border: '1px solid var(--border-color)', color: 'var(--primary-text)' }}>
                 {fileContent}
               </pre>
             ) : (
@@ -1988,7 +2145,7 @@ const FileManager = () => {
     return (
       <div
         className={`relative flex flex-col items-center p-3 rounded-lg cursor-pointer transition-colors group ${
-          isSelected ? 'bg-blue-500/20 ring-1 ring-blue-500/50' : 'hover:bg-[var(--hover-bg)]'
+          isSelected ? 'bg-[var(--accent-color)]/20 ring-1 ring-[var(--accent-color)]/50' : 'hover:bg-[var(--hover-bg)]'
         }`}
         onClick={(e) => handleFileClick(file, e)}
         onDoubleClick={() => handleDoubleClick(file)}
@@ -2032,7 +2189,7 @@ const FileManager = () => {
     return (
       <div
         className={`flex items-center px-4 py-2 rounded-lg cursor-pointer transition-colors group ${
-          isSelected ? 'bg-blue-500/10 ring-1 ring-blue-500/50' : ''
+          isSelected ? 'bg-[var(--accent-color)]/10 ring-1 ring-[var(--accent-color)]/50' : ''
         } ${isHighlighted ? 'bg-[var(--hover-bg)]' : ''}`}
         onClick={(e) => handleFileClick(file, e)}
         onDoubleClick={() => handleDoubleClick(file)}
@@ -2082,7 +2239,7 @@ const FileManager = () => {
         <div className="w-16 flex-shrink-0 flex justify-end">
           <button
             onClick={(e) => handleActionMenu(e, file)}
-            className="p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--primary-bg)] focus:ring-blue-500 text-[var(--secondary-text)]"
+            className="p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--primary-bg)] focus:ring-[var(--accent-color)] text-[var(--secondary-text)]"
           >
             <EllipsisVerticalIcon className="w-5 h-5" />
           </button>
@@ -2093,14 +2250,15 @@ const FileManager = () => {
 
   const NewFolderModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
-      <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Create New Folder</h3>
+      <div className="rounded-xl p-6 w-full max-w-md shadow-2xl" style={{ backgroundColor: 'var(--card-bg)' }}>
+        <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--primary-text)' }}>Create New Folder</h3>
         <input
           type="text"
           value={newFolderName}
           onChange={(e) => setNewFolderName(e.target.value)}
           placeholder="Folder name"
-          className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white"
+          className="w-full px-4 py-2 rounded-lg focus:outline-none"
+          style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border-color)', color: 'var(--input-text)' }}
           onKeyPress={(e) => e.key === 'Enter' && newFolderName && handleCreateFolder(newFolderName)}
           autoFocus
         />
@@ -2121,7 +2279,8 @@ const FileManager = () => {
               }
             }}
             disabled={!newFolderName || loading}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            style={{ backgroundColor: 'var(--accent-color)' }}
           >
             {loading ? 'Creating...' : 'Create'}
           </button>
@@ -2132,14 +2291,19 @@ const FileManager = () => {
 
   const NewFileModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
-      <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Create New File</h3>
+      <div className="rounded-xl p-6 w-full max-w-md shadow-2xl" style={{ backgroundColor: 'var(--card-bg)' }}>
+        <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--primary-text)' }}>Create New File</h3>
         <input
           type="text"
           value={newFileName}
           onChange={(e) => setNewFileName(e.target.value)}
           placeholder="File name"
-          className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white"
+          className="w-full px-4 py-2 rounded-lg focus:outline-none focus:border-[var(--accent-color)]"
+          style={{
+            backgroundColor: 'var(--input-bg)',
+            borderColor: 'var(--border-color)',
+            color: 'var(--input-text)'
+          }}
           onKeyPress={(e) => e.key === 'Enter' && handleCreateFile(newFileName)}
           autoFocus
         />
@@ -2156,7 +2320,8 @@ const FileManager = () => {
           <button
             onClick={() => handleCreateFile(newFileName)}
             disabled={!newFileName || loading}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            style={{ backgroundColor: 'var(--accent-color)' }}
           >
             {loading ? 'Creating...' : 'Create'}
           </button>
@@ -2167,8 +2332,8 @@ const FileManager = () => {
 
   const RenameModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
-      <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+      <div className="rounded-xl p-6 w-full max-w-md shadow-2xl" style={{ backgroundColor: 'var(--card-bg)' }}>
+        <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--primary-text)' }}>
           Rename {selectedFile?.type}
         </h3>
         <input
@@ -2176,7 +2341,12 @@ const FileManager = () => {
           value={newFileName}
           onChange={(e) => setNewFileName(e.target.value)}
           placeholder="New name"
-          className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white"
+          className="w-full px-4 py-2 rounded-lg focus:outline-none focus:border-[var(--accent-color)]"
+          style={{
+            backgroundColor: 'var(--input-bg)',
+            borderColor: 'var(--border-color)',
+            color: 'var(--input-text)'
+          }}
           onKeyPress={(e) => e.key === 'Enter' && newFileName && handleRename(newFileName)}
           autoFocus
         />
@@ -2197,7 +2367,8 @@ const FileManager = () => {
               }
             }}
             disabled={!newFileName || loading}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            style={{ backgroundColor: 'var(--accent-color)' }}
           >
             {loading ? 'Renaming...' : 'Rename'}
           </button>
@@ -2208,11 +2379,11 @@ const FileManager = () => {
 
   const DeleteConfirmModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
-      <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+      <div className="rounded-xl p-6 w-full max-w-md shadow-2xl" style={{ backgroundColor: 'var(--card-bg)' }}>
+        <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--primary-text)' }}>
           Delete {selectedFiles.size > 1 ? `${selectedFiles.size} items` : selectedFile?.type}
         </h3>
-        <p className="text-gray-600 dark:text-gray-400 mb-4">
+        <p className="mb-4" style={{ color: 'var(--secondary-text)' }}>
           {selectedFiles.size > 1 
             ? `Are you sure you want to delete ${selectedFiles.size} selected items? This action cannot be undone.`
             : `Are you sure you want to delete "${selectedFile?.name}"? This action cannot be undone.`
@@ -2221,14 +2392,23 @@ const FileManager = () => {
         <div className="flex justify-end space-x-3">
           <button
             onClick={() => setShowDeleteConfirm(false)}
-            className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="px-4 py-2 rounded-lg transition-colors"
+            style={{ 
+              backgroundColor: 'var(--button-secondary-bg)', 
+              color: 'var(--button-secondary-text)',
+              border: '1px solid var(--border-color)'
+            }}
           >
             Cancel
           </button>
           <button
             onClick={handleDelete}
             disabled={loading}
-            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            style={{ 
+              backgroundColor: 'var(--danger-color)',
+              color: 'white'
+            }}
           >
             {loading ? 'Deleting...' : 'Delete'}
           </button>
@@ -2236,6 +2416,216 @@ const FileManager = () => {
       </div>
     </div>
   );
+
+  // Permission Management Modal
+  const PermissionModal = () => {
+    if (!showPermissionModal || !selectedFile) return null;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+        <div className="rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl" style={{ backgroundColor: 'var(--card-bg)' }}>
+          <div className="flex items-center justify-between p-6 border-b" style={{ borderColor: 'var(--border-color)' }}>
+            <h3 className="text-lg font-bold" style={{ color: 'var(--primary-text)' }}>
+              Change Permissions: {selectedFile.name}
+            </h3>
+            <button
+              onClick={() => setShowPermissionModal(false)}
+              className="p-2 rounded-lg transition-colors"
+              style={{ 
+                color: 'var(--secondary-text)',
+                ':hover': { backgroundColor: 'var(--hover-bg)' }
+              }}
+            >
+              <XMarkIcon className="w-5 h-5" />
+            </button>
+          </div>
+          
+          <div className="p-6 flex-1 overflow-auto">
+            {permissionLoading ? (
+              <div className="flex justify-center py-8">
+                <LoadingSpinner />
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Ownership Section */}
+                <div>
+                  <h4 className="text-md font-semibold mb-3" style={{ color: 'var(--primary-text)' }}>
+                    Ownership
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--secondary-text)' }}>
+                        Owner
+                      </label>
+                      <input
+                        type="text"
+                        value={permissionData.owner}
+                        onChange={(e) => setPermissionData(prev => ({ ...prev, owner: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md border focus:ring-2 focus:ring-[var(--accent-color)] focus:border-[var(--accent-color)]"
+                        style={{ 
+                          backgroundColor: 'var(--input-bg)', 
+                          borderColor: 'var(--border-color)', 
+                          color: 'var(--primary-text)' 
+                        }}
+                        placeholder="e.g., www-data"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2" style={{ color: 'var(--secondary-text)' }}>
+                        Group
+                      </label>
+                      <input
+                        type="text"
+                        value={permissionData.group}
+                        onChange={(e) => setPermissionData(prev => ({ ...prev, group: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md border focus:ring-2 focus:ring-[var(--accent-color)] focus:border-[var(--accent-color)]"
+                        style={{ 
+                          backgroundColor: 'var(--input-bg)', 
+                          borderColor: 'var(--border-color)', 
+                          color: 'var(--primary-text)' 
+                        }}
+                        placeholder="e.g., www-data"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Numeric Permissions */}
+                <div>
+                  <h4 className="text-md font-semibold mb-3" style={{ color: 'var(--primary-text)' }}>
+                    Numeric Permissions (chmod)
+                  </h4>
+                  <div className="flex items-center space-x-4">
+                    <input
+                      type="text"
+                      value={permissionData.numericPermissions}
+                      onChange={(e) => handleNumericPermissionChange(e.target.value)}
+                      className="w-20 px-3 py-2 rounded-md border focus:ring-2 focus:ring-[var(--accent-color)] focus:border-[var(--accent-color)] font-mono text-center"
+                      style={{ 
+                        backgroundColor: 'var(--input-bg)', 
+                        borderColor: 'var(--border-color)', 
+                        color: 'var(--primary-text)' 
+                      }}
+                      placeholder="755"
+                      maxLength="3"
+                    />
+                    <span className="text-sm" style={{ color: 'var(--secondary-text)' }}>
+                      Format: Owner Group Other (0-7 each)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Visual Permission Matrix */}
+                <div>
+                  <h4 className="text-md font-semibold mb-3" style={{ color: 'var(--primary-text)' }}>
+                    Permission Matrix
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <th className="text-left py-2 px-3" style={{ color: 'var(--secondary-text)' }}></th>
+                          <th className="text-center py-2 px-3" style={{ color: 'var(--secondary-text)' }}>Read</th>
+                          <th className="text-center py-2 px-3" style={{ color: 'var(--secondary-text)' }}>Write</th>
+                          <th className="text-center py-2 px-3" style={{ color: 'var(--secondary-text)' }}>Execute</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          { key: 'owner', label: 'Owner' },
+                          { key: 'group', label: 'Group' },
+                          { key: 'other', label: 'Other' }
+                        ].map(({ key, label }) => (
+                          <tr key={key} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            <td className="py-2 px-3 font-medium" style={{ color: 'var(--primary-text)' }}>
+                              {label}
+                            </td>
+                            {['read', 'write', 'execute'].map(permission => (
+                              <td key={permission} className="text-center py-2 px-3">
+                                <input
+                                  type="checkbox"
+                                  checked={permissionData.permissions[key][permission]}
+                                  onChange={(e) => handlePermissionChange(key, permission, e.target.checked)}
+                                  className="w-4 h-4 text-[var(--accent-color)] rounded focus:ring-[var(--accent-color)]"
+                                  style={{ accentColor: 'var(--accent-color)' }}
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Common Permission Presets */}
+                <div>
+                  <h4 className="text-md font-semibold mb-3" style={{ color: 'var(--primary-text)' }}>
+                    Common Presets
+                  </h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { label: 'Read Only', value: '444' },
+                      { label: 'Read/Write', value: '644' },
+                      { label: 'Full Access', value: '755' },
+                      { label: 'Private', value: '600' },
+                      { label: 'Group RW', value: '664' },
+                      { label: 'All RW', value: '666' },
+                      { label: 'Executable', value: '755' },
+                      { label: 'Private Exec', value: '700' }
+                    ].map(({ label, value }) => (
+                      <button
+                        key={value}
+                        onClick={() => handleNumericPermissionChange(value)}
+                        className="px-3 py-2 text-sm rounded-md border transition-colors hover:opacity-80"
+                        style={{
+                          backgroundColor: 'var(--secondary-bg)',
+                          borderColor: 'var(--border-color)',
+                          color: 'var(--primary-text)'
+                        }}
+                      >
+                        {label} ({value})
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex justify-end p-6 border-t space-x-3" style={{ borderColor: 'var(--border-color)' }}>
+            <button
+              onClick={() => setShowPermissionModal(false)}
+              className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSavePermissions}
+              disabled={permissionLoading}
+              className="px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
+              style={{ backgroundColor: 'var(--accent-color)' }}
+            >
+              {permissionLoading ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <CheckIcon className="w-4 h-4 mr-2" />
+                  Save Permissions
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Global error handler for unhandled promise rejections
   useEffect(() => {
@@ -2584,7 +2974,7 @@ const FileManager = () => {
                 value={pathInput}
                 onChange={(e) => setPathInput(e.target.value)}
                 placeholder={currentDomain ? 'Type path (relative or absolute)' : 'Type absolute path, e.g., /home/user'}
-                className="w-full px-3 py-2 rounded-md border focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                className="w-full px-3 py-2 rounded-md border focus:ring-2 focus:ring-[var(--accent-color)] focus:border-[var(--accent-color)] font-mono text-sm"
                 style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--primary-text)' }}
               />
             </form>
@@ -2605,7 +2995,7 @@ const FileManager = () => {
                     placeholder="Search files..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10 pr-4 py-2 rounded-md border transition-colors focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="pl-10 pr-4 py-2 rounded-md border transition-colors focus:ring-2 focus:ring-[var(--accent-color)] focus:border-[var(--accent-color)]"
                     style={{
                       backgroundColor: 'var(--input-bg)',
                       borderColor: 'var(--border-color)',
@@ -2820,9 +3210,9 @@ const FileManager = () => {
             {(currentDomain || isAdminUser) && (
               <div className="h-full relative min-h-0">
                 {loading && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 dark:bg-gray-900/50 transition-opacity duration-300">
+                  <div className="absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300" style={{ backgroundColor: 'var(--primary-bg)/50' }}>
                     <LoadingSpinner />
-                    <span className="ml-2 font-medium text-gray-700 dark:text-gray-300">Loading files...</span>
+                    <span className="ml-2 font-medium" style={{ color: 'var(--primary-text)' }}>Loading files...</span>
                   </div>
                 )}
                 {viewMode === 'list' ? <FileListPanel /> : <FileGrid />}
@@ -2836,6 +3226,7 @@ const FileManager = () => {
       {showFileEditor && <FileEditor />}
       {showFilePreview && <FilePreview />}
       {showFileProperties && <FilePropertiesModal />}
+      {showPermissionModal && <PermissionModal />}
       {showNewFolderModal && <NewFolderModal />}
       {showNewFileModal && <NewFileModal />}
       {showRenameModal && <RenameModal />}

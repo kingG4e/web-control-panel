@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 DOMAIN=""
 SERVER_IP=""
 EMAIL=""
-PHP_VERSION="8.1"
+PHP_VERSION="8.3"
 
 # Functions
 log_info() {
@@ -648,7 +648,7 @@ server {
     
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
     }
     
     access_log /var/log/nginx/${FULL_DOMAIN}_access.log;

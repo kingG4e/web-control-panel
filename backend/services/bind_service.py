@@ -28,19 +28,10 @@ class BindService:
             self.bind_config_dir = os.environ.get('BIND_CONFIG_DIR', Config.BIND_CONFIG_DIR)
             self.zones_dir = os.environ.get('BIND_ZONES_DIR', Config.BIND_ZONES_DIR)
             self.named_conf_local = os.path.join(self.bind_config_dir, 'named.conf.local')
-            
-            # Detect environment - use development paths only if explicitly enabled
-            # Important: FLASK_ENV should NOT influence BIND paths
-            self.is_development = Config.BIND_DEV_MODE
-            
-            # Override with development paths if in development mode
-            if self.is_development:
-                backend_dir = os.path.dirname(os.path.dirname(__file__))
-                self.zones_dir = os.path.join(backend_dir, 'bind', 'zones')
-                self.named_conf_local = os.path.join(backend_dir, 'bind', 'conf', 'named.conf.local')
-                print(f"BIND9 Development Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
-            else:
-                print(f"BIND9 Production Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
+            print(f"BIND9 Production Mode: Using paths {self.zones_dir} and {self.named_conf_local}")
+        
+        # Set development mode based on config
+        self.is_development = Config.BIND_DEV_MODE
         
         self.zone_template = '''$TTL 3600
 $ORIGIN {{ zone.domain_name }}.
@@ -507,10 +498,11 @@ mail    IN A   {{ ip_mail }}
 
             records: List[Dict[str, Any]] = []
 
-            # Include SOA at the zone origin explicitly
+            # Include SOA at the zone origin explicitly (only once)
+            soa_added = False
             try:
                 soa_rrset = z.get_rdataset(origin, dns.rdatatype.SOA)
-                if soa_rrset:
+                if soa_rrset and not soa_added:
                     ttl = soa_rrset.ttl or 3600
                     for rdata in soa_rrset:
                         minimum_ttl = int(getattr(rdata, 'minimum', getattr(rdata, 'minimum_ttl', 300)))
@@ -521,6 +513,8 @@ mail    IN A   {{ ip_mail }}
                             'status': 'active',
                             'content': f"{rdata.mname.to_text()} {rdata.rname.to_text()} ( {int(rdata.serial)} {int(rdata.refresh)} {int(rdata.retry)} {int(rdata.expire)} {minimum_ttl} )"
                         })
+                        soa_added = True
+                        break
             except Exception:
                 pass
             for (name, node) in z.nodes.items():
@@ -529,6 +523,15 @@ mail    IN A   {{ ip_mail }}
                     rel_name = '@'
                 for rdataset in node.rdatasets:
                     rtype = dns.rdatatype.to_text(rdataset.rdtype)
+                    # Fix: Ensure record_type is uppercase and valid
+                    if not rtype or rtype.upper() not in ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SPF', 'DKIM', 'PTR', 'SRV', 'CAA', 'SOA']:
+                        continue  # Skip invalid record types
+                    rtype = rtype.upper()
+                    
+                    # Skip SOA records here since we already added them above
+                    if rtype == 'SOA':
+                        continue
+                        
                     ttl = rdataset.ttl or 3600
                     for rdata in rdataset:
                         rec: Dict[str, Any] = {

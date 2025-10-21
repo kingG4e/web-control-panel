@@ -29,12 +29,8 @@ const PendingApproval = () => {
       <div className="w-full max-w-lg mx-auto">
         <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg p-6">
           <div className="text-center mb-6">
-            <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center
-              ${status?.status === 'pending' ? 'bg-yellow-100' : 'bg-gray-100'}
-            `}>
-              <div className={`w-6 h-6 rounded-full
-                ${status?.status === 'pending' ? 'bg-yellow-500' : 'bg-gray-400'}
-              `}></div>
+            <div className="w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center" style={{ backgroundColor: status?.status === 'pending' ? 'var(--warning-bg)' : 'var(--hover-bg)' }}>
+              <div className="w-6 h-6 rounded-full" style={{ backgroundColor: status?.status === 'pending' ? 'var(--warning-color)' : 'var(--tertiary-text)' }}></div>
             </div>
             <h2 className="text-xl font-semibold text-[var(--primary-text)] mb-1">Account Status</h2>
             <p className="text-sm text-[var(--secondary-text)]">
@@ -67,10 +63,10 @@ const PendingApproval = () => {
                 <div className="p-3 bg-[var(--secondary-bg)] rounded">
                   <div className="text-sm text-[var(--secondary-text)] mb-2">Requested Services</div>
                   <div className="flex space-x-1">
-                    {status.want_ssl && <span className="w-2 h-2 rounded-full bg-blue-500" title="SSL"></span>}
+                    {status.want_ssl && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--info-color)' }} title="SSL"></span>}
                     {status.want_dns && <span className="w-2 h-2 rounded-full bg-purple-500" title="DNS"></span>}
-                    {status.want_email && <span className="w-2 h-2 rounded-full bg-green-500" title="Email"></span>}
-                    {status.want_mysql && <span className="w-2 h-2 rounded-full bg-orange-500" title="MySQL"></span>}
+                    {status.want_email && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--success-color)' }} title="Email"></span>}
+                    {status.want_mysql && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--warning-color)' }} title="MySQL"></span>}
                   </div>
                 </div>
               )}

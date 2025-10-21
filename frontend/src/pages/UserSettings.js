@@ -207,29 +207,16 @@ const UserSettings = () => {
 
   // ---------- Render helpers ----------
   const formatDate = (d) => (d ? new Date(d).toLocaleString() : 'Never');
-  const RoleBadge = ({ role }) => (
-    <span
-      className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-        role === 'admin'
-          ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
-          : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
-      }`}
-    >
-      {role === 'system_user' ? 'User' : role.charAt(0).toUpperCase() + role.slice(1)}
-    </span>
-  );
+  const RoleBadge = ({ role }) => {
+    const label = role === 'system_user' ? 'User' : role.charAt(0).toUpperCase() + role.slice(1);
+    const cls = role === 'admin' ? 'badge badge-info-strong' : 'badge badge-neutral';
+    return <span className={cls}>{label}</span>;
+  };
 
-  const StatusBadge = ({ active }) => (
-    <span
-      className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-        active
-          ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-          : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
-      }`}
-    >
-      {active ? 'Active' : 'Inactive'}
-    </span>
-  );
+  const StatusBadge = ({ active }) => {
+    const cls = active ? 'badge badge-success-strong' : 'badge badge-error-strong';
+    return <span className={cls}>{active ? 'Active' : 'Inactive'}</span>;
+  };
 
   // ------------------------------------------------------
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { FaServer, FaEnvelope, FaDatabase, FaCog, FaToggleOn, FaToggleOff } from 'react-icons/fa';
+import { FaServer, FaEnvelope, FaDatabase, FaCog, FaToggleOn, FaToggleOff, FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
 import api from '../services/api';
+import { database as dbApi } from '../services/api';
 
 const AdminSettings = () => {
     const [settings, setSettings] = useState({
@@ -32,6 +33,15 @@ const AdminSettings = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
+    
+    // MySQL Configuration states
+    const [rootPassword, setRootPassword] = useState('');
+    const [mysqlStatus, setMysqlStatus] = useState(null); // 'success' | 'error' | null
+    const [mysqlError, setMysqlError] = useState('');
+    const [connecting, setConnecting] = useState(false);
+    const [mysqlPrivileges, setMysqlPrivileges] = useState(null);
+    const [checkingPrivileges, setCheckingPrivileges] = useState(false);
+    const [fixingPrivileges, setFixingPrivileges] = useState(false);
 
     useEffect(() => {
         const fetchSettings = async () => {
@@ -64,6 +74,65 @@ const AdminSettings = () => {
             ...prevSettings,
             [name]: type === 'checkbox' ? checked : value
         }));
+    };
+
+    // MySQL Configuration functions
+    const handleRootConnect = async (e) => {
+        e.preventDefault();
+        setConnecting(true);
+        setMysqlStatus(null);
+        setMysqlError('');
+        try {
+            const res = await api.post('/mysql-root-connect', { password: rootPassword });
+            const data = res.data;
+            if (data.success) {
+                setMysqlStatus('success');
+                setMysqlError('');
+            } else {
+                setMysqlStatus('error');
+                setMysqlError(data.error || 'Unknown error');
+            }
+        } catch (err) {
+            setMysqlStatus('error');
+            setMysqlError(err.message || 'Unknown error');
+        } finally {
+            setConnecting(false);
+        }
+    };
+
+    const handleCheckMysqlPrivileges = async () => {
+        setCheckingPrivileges(true);
+        try {
+            const result = await dbApi.checkMysqlPrivileges();
+            if (result.success) {
+                setMysqlPrivileges(result.data);
+            } else {
+                setError(result.error || 'Failed to check MySQL privileges');
+            }
+        } catch (err) {
+            setError(err.message || 'Failed to check MySQL privileges');
+        } finally {
+            setCheckingPrivileges(false);
+        }
+    };
+
+    const handleFixMysqlPrivileges = async () => {
+        setFixingPrivileges(true);
+        try {
+            const result = await dbApi.fixMysqlPrivileges();
+            if (result.success) {
+                setError(null);
+                alert('MySQL privileges have been fixed successfully!');
+                // Refresh privileges info
+                handleCheckMysqlPrivileges();
+            } else {
+                setError(result.error || 'Failed to fix MySQL privileges');
+            }
+        } catch (err) {
+            setError(err.message || 'Failed to fix MySQL privileges');
+        } finally {
+            setFixingPrivileges(false);
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -460,6 +529,131 @@ const AdminSettings = () => {
                                 </div>
                             </div>
                         )}
+
+                        {/* MySQL Configuration Section */}
+                        <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+                            <h2 className="text-xl font-semibold mb-4 flex items-center" style={{ color: 'var(--primary-text)' }}>
+                                <FaDatabase className="mr-3" style={{ color: 'var(--warning-color)' }} />
+                                MySQL Configuration
+                            </h2>
+                            
+                            {/* MySQL Root Password Connection */}
+                            <div className="mb-6">
+                                <h3 className="text-lg font-medium mb-3" style={{ color: 'var(--primary-text)' }}>MySQL Root Connection</h3>
+                                <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg flex flex-col md:flex-row items-center gap-4">
+                                    <form onSubmit={handleRootConnect} className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
+                                        <label className="text-sm font-medium text-gray-700 mr-2">MySQL Root Password:</label>
+                                        <input
+                                            type="password"
+                                            value={rootPassword}
+                                            onChange={e => setRootPassword(e.target.value)}
+                                            className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 w-48"
+                                            placeholder="Enter root password"
+                                            required
+                                            disabled={connecting}
+                                        />
+                                        <button
+                                            type="submit"
+                                            className="px-4 py-2 text-white rounded-lg transition-colors disabled:opacity-50"
+                                            style={{ backgroundColor: 'var(--accent-color)' }}
+                                            disabled={connecting || !rootPassword}
+                                        >
+                                            {connecting ? 'Connecting...' : 'Connect'}
+                                        </button>
+                                    </form>
+                                    <div className="flex items-center min-h-[32px]">
+                                        {mysqlStatus === 'success' && (
+                                            <span className="flex items-center text-green-600 ml-2">
+                                                <FaCheckCircle className="w-5 h-5 mr-1" /> Connected
+                                            </span>
+                                        )}
+                                        {mysqlStatus === 'error' && (
+                                            <span className="flex items-center text-red-600 ml-2">
+                                                <FaTimesCircle className="w-5 h-5 mr-1" /> {mysqlError}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* MySQL Privileges Check */}
+                            <div>
+                                <h3 className="text-lg font-medium mb-3" style={{ color: 'var(--primary-text)' }}>MySQL Privileges Check</h3>
+                                <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                                    <p className="text-sm text-gray-600 mb-3">
+                                        Check if MySQL root user has necessary privileges to create and manage database users.
+                                    </p>
+                                    
+                                    <div className="flex gap-2 mb-3">
+                                        <button
+                                            onClick={handleCheckMysqlPrivileges}
+                                            disabled={checkingPrivileges}
+                                            className="px-3 py-1 text-white rounded text-sm transition-colors disabled:opacity-50"
+                                            style={{ backgroundColor: 'var(--accent-color)' }}
+                                        >
+                                            {checkingPrivileges ? 'Checking...' : 'Check Privileges'}
+                                        </button>
+                                        
+                                        {mysqlPrivileges && (
+                                            <button
+                                                onClick={handleFixMysqlPrivileges}
+                                                disabled={fixingPrivileges || (mysqlPrivileges.has_create_user && mysqlPrivileges.has_grant_option)}
+                                                className="px-3 py-1 text-white rounded text-sm transition-colors disabled:opacity-50"
+                                                style={{ backgroundColor: 'var(--success-color)' }}
+                                            >
+                                                {fixingPrivileges ? 'Fixing...' : 'Fix Privileges'}
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {mysqlPrivileges && (
+                                        <div className="bg-white border border-gray-200 rounded p-3">
+                                            <div className="grid grid-cols-2 gap-4 text-sm">
+                                                <div className="flex items-center">
+                                                    <span className="mr-2">CREATE USER:</span>
+                                                    {mysqlPrivileges.has_create_user ? (
+                                                        <span className="flex items-center text-green-600">
+                                                            <FaCheckCircle className="w-4 h-4 mr-1" />
+                                                            Yes
+                                                        </span>
+                                                    ) : (
+                                                        <span className="flex items-center text-red-600">
+                                                            <FaTimesCircle className="w-4 h-4 mr-1" />
+                                                            No
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center">
+                                                    <span className="mr-2">GRANT OPTION:</span>
+                                                    {mysqlPrivileges.has_grant_option ? (
+                                                        <span className="flex items-center text-green-600">
+                                                            <FaCheckCircle className="w-4 h-4 mr-1" />
+                                                            Yes
+                                                        </span>
+                                                    ) : (
+                                                        <span className="flex items-center text-red-600">
+                                                            <FaTimesCircle className="w-4 h-4 mr-1" />
+                                                            No
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            
+                                            {mysqlPrivileges.grants && mysqlPrivileges.grants.length > 0 && (
+                                                <div className="mt-3">
+                                                    <h4 className="text-sm font-medium mb-2">Current Privileges:</h4>
+                                                    <div className="bg-gray-50 p-2 rounded text-xs font-mono max-h-32 overflow-y-auto">
+                                                        {mysqlPrivileges.grants.map((grant, index) => (
+                                                            <div key={index}>{grant}</div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
 
                         <div className="flex justify-end pt-2">
                             <button type="submit" className="btn-primary">
