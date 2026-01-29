@@ -1,5 +1,6 @@
 import os
 import subprocess
+import shutil
 from datetime import datetime
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -7,178 +8,149 @@ from cryptography.x509.oid import NameOID
 
 class SSLService:
     def __init__(self):
-        # Allow overrides via environment for flexibility across systems
+        # Configuration
         self.certbot_path = os.getenv('CERTBOT_PATH', '/usr/bin/certbot')
         self.certificates_dir = os.getenv('LE_LIVE_DIR', '/etc/letsencrypt/live')
         self.nginx_config_dir = os.getenv('NGINX_SITES_AVAILABLE', '/etc/nginx/sites-available')
-        self.certbot_email = os.getenv('CERTBOT_EMAIL')  # Optional
+        self.nginx_enabled_dir = os.getenv('NGINX_SITES_ENABLED', '/etc/nginx/sites-enabled')
+        self.certbot_email = os.getenv('CERTBOT_EMAIL')
         self.certbot_staging = os.getenv('CERTBOT_STAGING', 'false').lower() in ('1', 'true', 'yes')
-        # DNS-01 support
-        self.certbot_auth_method = os.getenv('CERTBOT_AUTH_METHOD', '').lower()  # '', 'webroot', 'nginx', 'dns'
-        self.certbot_dns_plugin = os.getenv('CERTBOT_DNS_PLUGIN')  # e.g. 'dns-cloudflare', 'dns-digitalocean', 'dns-google', 'dns-route53'
-        self.certbot_dns_credentials = os.getenv('CERTBOT_DNS_CREDENTIALS')  # path to credentials file for the dns plugin
-        self.certbot_dns_propagation_seconds = os.getenv('CERTBOT_DNS_PROPAGATION_SECONDS')  # string seconds
+        
+        # Cloudflare DNS-01 Configuration
+        self.certbot_dns_plugin = 'dns-cloudflare'
+        self.certbot_dns_credentials = os.getenv('CERTBOT_DNS_CREDENTIALS', '/etc/letsencrypt/cloudflare.ini')
+        self.certbot_dns_propagation_seconds = os.getenv('CERTBOT_DNS_PROPAGATION_SECONDS', '60')
 
     def issue_certificate(self, domain, user_id=None, document_root=None):
-        """Issue a new SSL certificate using Let's Encrypt"""
+        """Issue a new SSL certificate using Let's Encrypt DNS-01"""
         try:
-            # Ensure webroot exists if provided
-            if document_root and not os.path.isdir(document_root):
-                raise Exception(f'Document root does not exist: {document_root}')
+            # 1. Pre-check: Credentials file
+            if not os.path.exists(self.certbot_dns_credentials):
+                raise Exception(f"Cloudflare credentials file not found at: {self.certbot_dns_credentials}")
 
-            # Prepare ACME challenge dir for webroot
-            if document_root:
-                well_known_dir = os.path.join(document_root, '.well-known', 'acme-challenge')
-                os.makedirs(well_known_dir, exist_ok=True)
-
-            command = self._build_certbot_command(domain, document_root=document_root)
-
-            result = subprocess.run(command, check=True, capture_output=True, text=True)
+            # 2. Build and Run Command
+            command = self._build_certbot_command(domain)
+            subprocess.run(command, check=True, capture_output=True, text=True)
             
-            # Get certificate paths
+            # 3. Get certificate paths
             cert_path = os.path.join(self.certificates_dir, domain, 'fullchain.pem')
             key_path = os.path.join(self.certificates_dir, domain, 'privkey.pem')
             chain_path = os.path.join(self.certificates_dir, domain, 'chain.pem')
             
-            # Get certificate details
+            if not os.path.exists(cert_path):
+                raise Exception("Certbot finished but certificate file was not found.")
+
+            # 4. Read Certificate Details
             with open(cert_path, 'rb') as f:
                 cert_data = x509.load_pem_x509_certificate(f.read(), default_backend())
-            
-
             
             return {
                 'certificate_path': cert_path,
                 'private_key_path': key_path,
                 'chain_path': chain_path,
                 'issuer': self._get_issuer(cert_data),
-                'valid_from': cert_data.not_valid_before,
-                'valid_until': cert_data.not_valid_after
+                'valid_from': self._get_date(cert_data, 'not_valid_before'),
+                'valid_until': self._get_date(cert_data, 'not_valid_after')
             }
             
         except subprocess.CalledProcessError as e:
-            stderr = e.stderr.strip() if e.stderr else ''
-            stdout = e.stdout.strip() if e.stdout else ''
-            raise Exception(f'Certbot failed (issue). Exit {e.returncode}. Stderr: {stderr}. Stdout: {stdout}')
+            raise Exception(f'Certbot failed. Exit code {e.returncode}. Error: {e.stderr}')
         except Exception as e:
             raise Exception(f'Failed to issue certificate: {str(e)}')
 
     def renew_certificate(self, domain, user_id=None):
         """Renew an SSL certificate"""
         try:
-            # Run certbot to renew certificate
             command = [self.certbot_path, 'renew', '--cert-name', domain, '--force-renewal']
             if self.certbot_staging:
                 command.append('--staging')
-            result = subprocess.run(command, check=True, capture_output=True, text=True)
+                
+            subprocess.run(command, check=True, capture_output=True, text=True)
             
-            # Get certificate paths
+            # Return new validity dates
             cert_path = os.path.join(self.certificates_dir, domain, 'fullchain.pem')
-            
-            # Get certificate details
             with open(cert_path, 'rb') as f:
                 cert_data = x509.load_pem_x509_certificate(f.read(), default_backend())
-            
 
-            
             return {
-                'valid_from': cert_data.not_valid_before,
-                'valid_until': cert_data.not_valid_after
+                'valid_from': self._get_date(cert_data, 'not_valid_before'),
+                'valid_until': self._get_date(cert_data, 'not_valid_after')
             }
-            
-        except subprocess.CalledProcessError as e:
-            stderr = e.stderr.strip() if e.stderr else ''
-            stdout = e.stdout.strip() if e.stdout else ''
-            raise Exception(f'Certbot failed (renew). Exit {e.returncode}. Stderr: {stderr}. Stdout: {stdout}')
         except Exception as e:
             raise Exception(f'Failed to renew certificate: {str(e)}')
 
     def revoke_certificate(self, domain):
-        """Revoke an SSL certificate"""
+        """Revoke SSL and Delete files"""
         try:
-            # Run certbot to revoke certificate
+            # 1. Revoke with Let's Encrypt
             command = [
-                self.certbot_path,
-                'revoke',
+                self.certbot_path, 'revoke',
                 '--cert-name', domain,
                 '--non-interactive'
             ]
+            # Use check=False because if cert is already gone/expired it might error, but we still want to delete files
+            subprocess.run(command, check=False, capture_output=True, text=True)
             
-            subprocess.run(command, check=True, capture_output=True, text=True)
-            
-            # Delete certificate files
+            # 2. Delete files and DB records
             self.delete_certificate(domain)
             
-        except subprocess.CalledProcessError as e:
-            raise Exception(f'Failed to revoke certificate: {e.stderr}')
         except Exception as e:
             raise Exception(f'Failed to revoke certificate: {str(e)}')
 
-    def delete_certificate(self, cert_id):
-        """Delete certificate by ID"""
+    def delete_certificate(self, domain, cert_id=None):
+        """Delete certificate files (OS) and Record (DB)"""
         try:
-            from models.ssl_certificate import SSLCertificate, SSLCertificateLog
-            from models.database import db
+            # --- Part 1: OS Level Deletion (Certbot & Nginx) ---
+            
+            # 1.1 Run Certbot Delete (The specific command you asked for)
+            cmd_delete = [
+                self.certbot_path, 'delete',
+                '--cert-name', domain,
+                '--non-interactive'
+            ]
+            subprocess.run(cmd_delete, check=False, capture_output=True, text=True)
 
-            # Get certificate
-            cert = SSLCertificate.query.get(cert_id)
-            if not cert:
-                print(f"Certificate ID {cert_id} not found")
-                return False
+            # 1.2 Remove Nginx Configs
+            conf_path = os.path.join(self.nginx_config_dir, f'{domain}-ssl.conf')
+            enabled_path = os.path.join(self.nginx_enabled_dir, f'{domain}-ssl.conf')
+            
+            if os.path.exists(enabled_path):
+                os.remove(enabled_path)
+            if os.path.exists(conf_path):
+                os.remove(conf_path)
 
-            # Delete logs first
-            SSLCertificateLog.query.filter_by(certificate_id=cert_id).delete()
+            # 1.3 Reload Nginx to apply changes
+            subprocess.run(['nginx', '-t'], check=False, capture_output=True) # Check config first
+            subprocess.run(['systemctl', 'reload', 'nginx'], check=False)
 
-            # Delete certificate record
-            db.session.delete(cert)
-            db.session.commit()
+            # --- Part 2: Database Level Deletion ---
+            if cert_id:
+                from models.ssl_certificate import SSLCertificate, SSLCertificateLog
+                from models.database import db
 
-            print(f"Certificate {cert_id} deleted successfully")
+                cert = SSLCertificate.query.get(cert_id)
+                if cert:
+                    SSLCertificateLog.query.filter_by(certificate_id=cert_id).delete()
+                    db.session.delete(cert)
+                    db.session.commit()
+                    print(f"Certificate DB record {cert_id} deleted.")
+
             return True
 
         except Exception as e:
-            print(f"Error deleting certificate {cert_id}: {str(e)}")
+            print(f"Error deleting certificate for {domain}: {str(e)}")
             return False
 
-    def get_certificate_info(self, domain):
-        """Get SSL certificate information"""
-        try:
-            cert_path = os.path.join(self.certificates_dir, domain, 'fullchain.pem')
-            
-            if not os.path.exists(cert_path):
-                return None
-            
-            with open(cert_path, 'rb') as f:
-                cert_data = x509.load_pem_x509_certificate(f.read(), default_backend())
-            
-            return {
-                'issuer': self._get_issuer(cert_data),
-                'valid_from': cert_data.not_valid_before,
-                'valid_until': cert_data.not_valid_after,
-                'serial_number': format(cert_data.serial_number, 'x'),
-                'subject': self._get_subject(cert_data)
-            }
-            
-        except Exception as e:
-            raise Exception(f'Failed to get certificate info: {str(e)}')
-
     def configure_nginx_ssl(self, domain, certificate_path, private_key_path, document_root=None):
-        """Configure Nginx to use SSL certificate"""
+        """Configure Nginx to use SSL"""
         try:
             config_path = os.path.join(self.nginx_config_dir, f'{domain}-ssl.conf')
-            
-            # Use provided document root or fallback to /var/www for backward compatibility
             if not document_root:
                 document_root = f'/var/www/{domain}'
             
-            # Use provided document root or fallback to /var/www for backward compatibility
-            if not document_root:
-                document_root = f'/var/www/{domain}'
-            
-            # Use provided document root or fallback to /var/www for backward compatibility
-            if not document_root:
-                document_root = f'/var/www/{domain}'
-            
-            # Create SSL configuration
+            # Adjust PHP socket path if needed
+            php_sock = "unix:/var/run/php/php8.3-fpm.sock"
+
             config = f'''server {{
     listen 443 ssl http2;
     server_name {domain};
@@ -187,8 +159,7 @@ class SSLService:
 
     ssl_certificate {certificate_path};
     ssl_certificate_key {private_key_path};
-    
-    # SSL configuration
+
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
     ssl_prefer_server_ciphers off;
@@ -201,121 +172,100 @@ class SSLService:
 
     location ~ \.php$ {{
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
+        fastcgi_pass {php_sock};
     }}
 
     location ~ /\.ht {{
         deny all;
     }}
 
-    error_log /var/log/nginx/{domain}-error.log;
-    access_log /var/log/nginx/{domain}-access.log;
-}}
-
-# Redirect HTTP to HTTPS
-server {{
-    listen 80;
-    server_name {domain};
-    return 301 https://$server_name$request_uri;
+    error_log /var/log/nginx/{domain}-ssl-error.log;
+    access_log /var/log/nginx/{domain}-ssl-access.log;
 }}'''
             
-            # Write configuration file
             with open(config_path, 'w') as f:
                 f.write(config)
             
-            # Enable site
-            subprocess.run(['ln', '-sf', config_path, f'/etc/nginx/sites-enabled/{domain}-ssl.conf'], check=True)
+            # Symlink
+            enabled_path = os.path.join(self.nginx_enabled_dir, f'{domain}-ssl.conf')
+            if not os.path.exists(enabled_path):
+                subprocess.run(['ln', '-sf', config_path, enabled_path], check=True)
             
-            # Remove .well-known directory after certificate issuance
+            # Cleanup .well-known
             if document_root and document_root != f'/var/www/{domain}':
                 well_known_dir = os.path.join(document_root, '.well-known')
                 if os.path.exists(well_known_dir):
-                    import shutil
                     shutil.rmtree(well_known_dir)
             
-            # Remove .well-known directory after certificate issuance
-            if document_root and document_root != f'/var/www/{domain}':
-                well_known_dir = os.path.join(document_root, '.well-known')
-                if os.path.exists(well_known_dir):
-                    import shutil
-                    shutil.rmtree(well_known_dir)
-            
-            # Test and reload Nginx
-            subprocess.run(['nginx', '-t'], check=True)
+            # Test & Reload
+            subprocess.run(['nginx', '-t'], check=True, capture_output=True)
             subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
             
         except subprocess.CalledProcessError as e:
-            stderr = e.stderr.decode('utf-8', errors='ignore') if isinstance(e.stderr, (bytes, bytearray)) else (e.stderr or '')
-            raise Exception(f'Failed to configure Nginx SSL: {stderr}')
-        except Exception as e:
-            raise Exception(f'Failed to configure Nginx SSL: {str(e)}')
+            err = e.stderr.decode() if e.stderr else str(e)
+            raise Exception(f'Nginx Config Failed: {err}')
 
-    def _build_certbot_command(self, domain: str, document_root: str = None):
-        """Build certbot command with proper flags and environment options."""
-        base_cmd = [self.certbot_path, 'certonly']
+    def get_certificate_info(self, domain):
+        try:
+            cert_path = os.path.join(self.certificates_dir, domain, 'fullchain.pem')
+            if not os.path.exists(cert_path):
+                return None
+            
+            with open(cert_path, 'rb') as f:
+                cert_data = x509.load_pem_x509_certificate(f.read(), default_backend())
+            
+            return {
+                'issuer': self._get_issuer(cert_data),
+                'valid_from': self._get_date(cert_data, 'not_valid_before'),
+                'valid_until': self._get_date(cert_data, 'not_valid_after'),
+                'serial_number': format(cert_data.serial_number, 'x'),
+                'subject': self._get_subject(cert_data)
+            }
+        except Exception:
+            return None
 
-        # Decide authenticator
-        use_dns = False
-        if self.certbot_auth_method == 'dns' or (self.certbot_dns_plugin and self.certbot_dns_plugin.startswith('dns-')):
-            use_dns = True
-
-        if use_dns:
-            plugin = self.certbot_dns_plugin
-            if not plugin:
-                raise Exception('DNS auth selected but CERTBOT_DNS_PLUGIN is not set (e.g. dns-cloudflare)')
-            base_cmd += [f'--{plugin}']
-
-            # Many plugins support credentials & propagation flags in a consistent naming scheme
-            cred_flag = f'--{plugin}-credentials'
-            prop_flag = f'--{plugin}-propagation-seconds'
-
-            # Route53 is special; skip credentials flag if not provided
-            if self.certbot_dns_credentials and plugin != 'dns-route53':
-                base_cmd += [cred_flag, self.certbot_dns_credentials]
-            if self.certbot_dns_propagation_seconds:
-                base_cmd += [prop_flag, str(self.certbot_dns_propagation_seconds)]
-
-        else:
-            # Fallback order: webroot if provided, else nginx plugin
-            if document_root:
-                base_cmd += ['--webroot', '--webroot-path', document_root]
-            else:
-                base_cmd += ['--nginx']
-
-        base_cmd += ['--non-interactive', '--agree-tos', '-d', domain, '--keep-until-expiring', '--expand']
-
+    def _build_certbot_command(self, domain):
+        """Helper to build certbot command"""
+        cmd = [
+            self.certbot_path, 'certonly',
+            '--dns-cloudflare',
+            '--dns-cloudflare-credentials', self.certbot_dns_credentials,
+            '--dns-cloudflare-propagation-seconds', str(self.certbot_dns_propagation_seconds),
+            '-d', domain,
+            '--non-interactive',
+            '--agree-tos',
+            '--keep-until-expiring',
+            '--expand'
+        ]
+        
         if self.certbot_email:
-            base_cmd += ['--email', self.certbot_email]
+            cmd += ['--email', self.certbot_email]
         else:
-            # For non-interactive mode without email, allow unsafe registration (testing/dev)
-            base_cmd.append('--register-unsafely-without-email')
+            cmd.append('--register-unsafely-without-email')
 
         if self.certbot_staging:
-            base_cmd.append('--staging')
-
-        return base_cmd
+            cmd.append('--staging')
+            
+        return cmd
 
     def _get_issuer(self, cert_data):
-        """Get certificate issuer name"""
-        try:
-            issuer = cert_data.issuer.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-            return issuer
-        except:
-            return None
+        try: return cert_data.issuer.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+        except: return None
 
     def _get_subject(self, cert_data):
-        """Get certificate subject name"""
+        try: return cert_data.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+        except: return None
+
+    def _get_date(self, cert_data, attr_name):
+        """Helper to safely get date across cryptography versions"""
         try:
-            subject = cert_data.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-            return subject
-        except:
-            return None
+            return getattr(cert_data, f"{attr_name}_utc")
+        except AttributeError:
+            return getattr(cert_data, attr_name)
 
     def get_certificates_by_user(self, user_id: int) -> list:
-        """Get all SSL certificates owned by a specific user"""
         try:
             from models.ssl_certificate import SSLCertificate
             return SSLCertificate.query.filter_by(user_id=user_id).all()
-        except Exception as e:
-            print(f"Error getting certificates for user {user_id}: {str(e)}")
-            return [] 
+        except Exception:
+            return []

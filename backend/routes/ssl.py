@@ -9,13 +9,15 @@ ssl_service = SSLService()
 
 
 def _is_admin(user):
+    """ตรวจสอบว่า User เป็น Admin หรือไม่"""
     return bool(getattr(user, 'is_admin', False) or getattr(user, 'role', '') == 'admin' or getattr(user, 'username', '') == 'root')
 
 
 def _user_domains(current_user):
+    """ดึงรายชื่อโดเมนที่ User มีสิทธิ์จัดการ"""
     from models.virtual_host import VirtualHost
     if _is_admin(current_user):
-        return None  # Admin sees all domains
+        return None  # Admin จัดการได้ทุกโดเมน
     vhosts = VirtualHost.query.filter(
         (VirtualHost.user_id == current_user.id) | (VirtualHost.linux_username == current_user.username)
     ).all()
@@ -24,6 +26,7 @@ def _user_domains(current_user):
 @ssl_bp.route('/api/ssl/certificates', methods=['GET'])
 @permission_required('ssl', 'read')
 def get_certificates(current_user):
+    """ดึงรายชื่อใบเซอร์ทั้งหมด (ตามสิทธิ์)"""
     try:
         domains = _user_domains(current_user)
         if domains is None:
@@ -37,6 +40,7 @@ def get_certificates(current_user):
 @ssl_bp.route('/api/ssl/certificates/<int:id>', methods=['GET'])
 @permission_required('ssl', 'read')
 def get_certificate(current_user, id):
+    """ดูรายละเอียดใบเซอร์รายตัว"""
     certificate = SSLCertificate.query.get_or_404(id)
     domains = _user_domains(current_user)
     if domains is not None and certificate.domain not in domains:
@@ -46,52 +50,48 @@ def get_certificate(current_user, id):
 @ssl_bp.route('/api/ssl/certificates', methods=['POST'])
 @permission_required('ssl', 'create')
 def create_certificate(current_user):
+    """ออกใบเซอร์ใหม่"""
     data = request.get_json()
     
-    # Validate required fields
+    # ตรวจสอบข้อมูลเบื้องต้น
     if 'domain' not in data:
         return jsonify({'error': 'Missing required field: domain'}), 400
     if not isinstance(data['domain'], str) or not data['domain'].strip():
         return jsonify({'error': 'Invalid domain value'}), 400
     
-    # Ownership check: domain must belong to the user (by vhost)
+    # ตรวจสอบสิทธิ์ความเป็นเจ้าของโดเมน
     domains = _user_domains(current_user)
     if domains is not None and data['domain'] not in domains:
         return jsonify({'error': 'Access denied'}), 403
     
     try:
-        # Check if certificate already exists
+        # เช็คว่ามีใบเซอร์เดิมในระบบฐานข้อมูลหรือไม่
         existing_cert = SSLCertificate.query.filter_by(domain=data['domain']).first()
         if existing_cert:
             return jsonify({'error': 'Certificate already exists for this domain'}), 400
         
-        # Get document root for the domain
-        document_root = None
-        if 'document_root' in data and data['document_root']:
-            document_root = data['document_root']
-        else:
-            # Try to get document root from virtual host
+        # ค้นหา Document Root
+        document_root = data.get('document_root')
+        if not document_root:
             from models.virtual_host import VirtualHost
             virtual_host = VirtualHost.query.filter_by(domain=data['domain']).first()
             if virtual_host:
                 document_root = virtual_host.document_root
             else:
-                return jsonify({'error': 'Document root not provided and virtual host not found for this domain'}), 400
+                return jsonify({'error': 'Document root not provided and virtual host not found'}), 400
 
-        # Validate document root exists
-        try:
-            import os as _os
-            if not _os.path.isdir(document_root):
-                return jsonify({'error': f'Document root not found: {document_root}'}), 400
-        except Exception:
-            return jsonify({'error': f'Cannot access document root: {document_root}'}), 400
+        # ตรวจสอบว่ามีโฟลเดอร์อยู่จริงหรือไม่
+        import os as _os
+        if not _os.path.isdir(document_root):
+            return jsonify({'error': f'Document root not found: {document_root}'}), 400
         
-        # Issue certificate using SSL service
+        # สั่งออกใบเซอร์ผ่าน SSL Service (ระดับ OS)
         cert_info = ssl_service.issue_certificate(
             domain=data['domain'], 
             document_root=document_root
         )
         
+        # บันทึกลงฐานข้อมูล
         certificate = SSLCertificate(
             domain=data['domain'],
             certificate_path=cert_info['certificate_path'],
@@ -104,7 +104,6 @@ def create_certificate(current_user):
             status='active'
         )
         
-        # Create log entry
         log = SSLCertificateLog(
             certificate=certificate,
             action='issue',
@@ -115,7 +114,7 @@ def create_certificate(current_user):
         db.session.add(certificate)
         db.session.add(log)
         
-        # Best-effort: configure Nginx SSL for the domain
+        # ตั้งค่า Nginx อัตโนมัติ (Best-effort)
         try:
             ssl_service.configure_nginx_ssl(
                 domain=data['domain'],
@@ -124,10 +123,9 @@ def create_certificate(current_user):
                 document_root=document_root,
             )
         except Exception as e:
-            print(f"Warning: Nginx SSL configuration failed for {data['domain']}: {str(e)}")
+            print(f"Warning: Nginx SSL configuration failed: {str(e)}")
         
         db.session.commit()
-        
         return jsonify(certificate.to_dict()), 201
         
     except Exception as e:
@@ -137,21 +135,21 @@ def create_certificate(current_user):
 @ssl_bp.route('/api/ssl/certificates/<int:id>/renew', methods=['POST'])
 @permission_required('ssl', 'update')
 def renew_certificate(current_user, id):
+    """ต่ออายุใบเซอร์"""
     certificate = SSLCertificate.query.get_or_404(id)
     domains = _user_domains(current_user)
     if domains is not None and certificate.domain not in domains:
         return jsonify({'error': 'Access denied'}), 403
     
     try:
-        # Renew certificate
+        # สั่งต่ออายุผ่าน SSL Service
         cert_info = ssl_service.renew_certificate(certificate.domain)
         
-        # Update certificate record
+        # อัปเดตข้อมูลใน DB
         certificate.valid_from = cert_info['valid_from']
         certificate.valid_until = cert_info['valid_until']
         certificate.updated_at = datetime.utcnow()
         
-        # Create log entry
         log = SSLCertificateLog(
             certificate=certificate,
             action='renew',
@@ -161,7 +159,6 @@ def renew_certificate(current_user, id):
         
         db.session.add(log)
         db.session.commit()
-        
         return jsonify(certificate.to_dict())
         
     except Exception as e:
@@ -171,20 +168,35 @@ def renew_certificate(current_user, id):
 @ssl_bp.route('/api/ssl/certificates/<int:id>', methods=['DELETE'])
 @permission_required('ssl', 'delete')
 def delete_certificate(current_user, id):
+    """ลบใบเซอร์ออกจากระบบ (ทั้ง OS และ DB)"""
     try:
         certificate = SSLCertificate.query.get_or_404(id)
         domains = _user_domains(current_user)
         if domains is not None and certificate.domain not in domains:
             return jsonify({'error': 'Access denied'}), 403
         
-        # Delete related logs first to avoid foreign key constraint issues
+        domain = certificate.domain
+        
+        # 1. พยายาม Revoke และ Delete ในระดับ OS (Certbot & Nginx)
+        try:
+            # ใช้ฟังก์ชัน revoke_certificate ซึ่งภายในจะสั่ง delete ต่อทันที
+            ssl_service.revoke_certificate(domain)
+        except Exception as e:
+            # หาก Revoke ไม่สำเร็จ (เช่น ใบเซอร์หมดอายุไปแล้ว) ให้พยายามสั่ง Delete ตรงๆ
+            try:
+                ssl_service.delete_certificate(domain, cert_id=id)
+            except Exception as delete_error:
+                # Log ข้อผิดพลาดไว้ แต่ให้ดำเนินการลบใน DB ต่อไป
+                print(f"Warning: OS cleanup failed for {domain}: {str(delete_error)}")
+        
+        # 2. ลบข้อมูล Log ที่เกี่ยวข้อง (เพื่อเลี่ยงปัญหา Foreign Key)
         SSLCertificateLog.query.filter_by(certificate_id=id).delete()
         
-        # Then delete the certificate
+        # 3. ลบจากฐานข้อมูล
         db.session.delete(certificate)
         db.session.commit()
         
-        return jsonify({'success': True, 'message': 'Certificate deleted successfully'})
+        return jsonify({'success': True, 'message': 'Certificate deleted successfully from system and database'})
         
     except Exception as e:
         db.session.rollback()
@@ -193,6 +205,7 @@ def delete_certificate(current_user, id):
 @ssl_bp.route('/api/ssl/certificates/<int:id>/logs', methods=['GET'])
 @permission_required('ssl', 'read')
 def get_certificate_logs(current_user, id):
+    """ดึง Log ประวัติของใบเซอร์นั้นๆ"""
     certificate = SSLCertificate.query.get_or_404(id)
     domains = _user_domains(current_user)
     if domains is not None and certificate.domain not in domains:
